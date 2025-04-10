@@ -4,11 +4,15 @@ import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import Constants from 'expo-constants';
 
 export default function SplashScreen() {
   const router = useRouter();
   const fadeAnim = React.useRef(new Animated.Value(0)).current;
   const scaleAnim = React.useRef(new Animated.Value(0.9)).current;
+  
+  // Récupérer le numéro de version depuis app.json
+  const appVersion = Constants.expoConfig?.version || '1.0.0';
 
   useEffect(() => {
     // Animation d'entrée
@@ -71,6 +75,9 @@ export default function SplashScreen() {
           </View>
         </View>
       </Animated.View>
+      
+      {/* Affichage du numéro de version en bas de l'écran */}
+      <Text style={styles.versionText}>V{appVersion}</Text>
     </View>
   );
 }
@@ -150,5 +157,12 @@ const styles = StyleSheet.create({
     top: 25,
     left: -20,
     transform: [{ rotateX: '60deg' }],
+  },
+  versionText: {
+    position: 'absolute',
+    bottom: 20,
+    color: 'rgba(255, 255, 255, 0.5)',
+    fontSize: 12,
+    fontWeight: '300',
   }
 });
