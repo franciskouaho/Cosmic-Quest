@@ -1,0 +1,14 @@
+version: "3.9"
+
+services:
+  database:
+    image: postgis/postgis:latest
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: root
+      POSTGRES_PASSWORD: root
+      POSTGRES_DB: cosmic-quest
+
+volumes:
+  psql-data:
