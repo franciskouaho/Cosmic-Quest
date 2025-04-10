@@ -1,40 +1,18 @@
-import React from 'react';
-import { Stack } from 'expo-router';
-import { AuthProvider } from '../context/AuthContext';
+import { Stack, usePathname, useRouter } from "expo-router";
+import { useEffect } from "react";
 
 export default function RootLayout() {
-  return (
-    <AuthProvider>
-      <Stack 
-        screenOptions={{
-          headerShown: false,
-          contentStyle: { backgroundColor: 'transparent' },
-          animation: 'fade'
-        }}
-        initialRouteName="splash"
-      >
-        <Stack.Screen name="splash" />
-        <Stack.Screen name="auth/login" />
-        <Stack.Screen 
-          name="game/[id]" 
-          options={{
-            gestureEnabled: false,
-          }} 
-        />
-        <Stack.Screen 
-          name="index" 
-          options={{
-            animation: 'slide_from_right'
-          }} 
-        />
-        <Stack.Screen 
-          name="room/[id]" 
-          options={{
-            animation: 'slide_from_right'
-          }} 
-        />
-      </Stack>
-    </AuthProvider>
-  );
+  const router = useRouter();
+  const pathname = usePathname();
+  
+  useEffect(() => {
+    // Rediriger vers /splash si on est à la racine
+    if (pathname === "/") {
+      router.replace("/splash");
+    }
+  }, [pathname]);
+
+  // Ajouter screenOptions pour masquer les en-têtes de navigation
+  return <Stack screenOptions={{ headerShown: false }} />;
 }
 

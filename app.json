@@ -37,6 +37,14 @@
     ],
     "experiments": {
       "typedRoutes": true
-    }
+    },
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#1a0933"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ]
   }
 }

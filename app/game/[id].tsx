@@ -8,7 +8,7 @@ import AnswerPhase from '../../components/game/AnswerPhase';
 import VotePhase from '../../components/game/VotePhase';
 import ResultsPhase from '../../components/game/ResultsPhase';
 import LoadingOverlay from '../../components/common/LoadingOverlay';
-import { useAuth } from '../../context/AuthContext';
+import { useAuth } from '../../contexts/AuthContext';
 import { Player, GamePhase, GameState, Answer, Question } from '../../types/gameTypes';
 import { generateQuestion } from '../../utils/questionGenerator';
 
