@@ -3,9 +3,16 @@ import { StatusBar } from "expo-status-bar"
 import { LinearGradient } from "expo-linear-gradient"
 import { useAuth } from "@/contexts/AuthContext"
 import { Feather } from "@expo/vector-icons"
+import { router } from "expo-router"
+import BottomTabBar from "@/components/BottomTabBar"
+import TopBar from "@/components/TopBar"
 
 export default function HomeScreen() {
   const { user, signOut } = useAuth()
+  
+  const goToSettings = () => {
+    router.push("/settings")
+  }
   
   return (
     <View style={styles.container}>
@@ -16,25 +23,23 @@ export default function HomeScreen() {
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
       >
-        <ScrollView style={styles.scrollView}>
-          {/* Header */}
-          <View style={styles.header}>
-            <View>
-              <Text style={styles.headerTitle}>Cosmic Quest</Text>
-              <Text style={styles.headerSubtitle}>
-                Bonjour, {user?.username || "Joueur"}
-              </Text>
-            </View>
-
-            <TouchableOpacity style={styles.profileButton} onPress={signOut}>
-              <Feather name="user" size={24} color="white" />
-            </TouchableOpacity>
-          </View>
+        <ScrollView 
+          style={styles.scrollView}
+          contentContainerStyle={styles.scrollViewContent}
+        >
+          {/* Header avec position ajustée */}
+          <TopBar
+            rightButtons={
+              <TouchableOpacity style={styles.iconButton} onPress={goToSettings}>
+                <Feather name="settings" size={22} color="white" />
+              </TouchableOpacity>
+            }
+          />
 
           {/* Game Categories */}
           <View style={styles.categoriesContainer}>
             {/* Category Slider */}
-            <Text style={styles.sectionTitle}>CATÉGORIES</Text>
+            <Text style={styles.sectionTitle}>LES PACKS DU MOIS</Text>
             
             <ScrollView 
               horizontal 
@@ -43,8 +48,8 @@ export default function HomeScreen() {
             >
               <TouchableOpacity style={styles.categoryCard}>
                 <LinearGradient
-                  colors={["#1E3B8D", "#3B5FD9"]}
-                  style={styles.cardGradient}
+                  colors={["rgba(30, 59, 141, 0.3)", "rgba(59, 95, 217, 0.3)"]}
+                  style={[styles.cardGradient, styles.glowingCategoryBorder]}
                   start={{ x: 0, y: 0 }}
                   end={{ x: 1, y: 1 }}
                 >
@@ -76,8 +81,8 @@ export default function HomeScreen() {
 
               <TouchableOpacity style={styles.categoryCard}>
                 <LinearGradient
-                  colors={["#6A1B9A", "#9C27B0"]}
-                  style={styles.cardGradient}
+                  colors={["rgba(106, 27, 154, 0.3)", "rgba(156, 39, 176, 0.3)"]}
+                  style={[styles.cardGradient, styles.glowingCategoryBorder]}
                   start={{ x: 0, y: 0 }}
                   end={{ x: 1, y: 1 }}
                 >
@@ -92,8 +97,8 @@ export default function HomeScreen() {
               
               <TouchableOpacity style={styles.categoryCard}>
                 <LinearGradient
-                  colors={["#C41A5F", "#FF5252"]}
-                  style={styles.cardGradient}
+                  colors={["rgba(196, 26, 95, 0.3)", "rgba(255, 82, 82, 0.3)"]}
+                  style={[styles.cardGradient, styles.glowingCategoryBorder]}
                   start={{ x: 0, y: 0 }}
                   end={{ x: 1, y: 1 }}
                 >
@@ -113,8 +118,8 @@ export default function HomeScreen() {
               
               <TouchableOpacity style={styles.categoryCard}>
                 <LinearGradient
-                  colors={["#1565C0", "#42A5F5"]}
-                  style={styles.cardGradient}
+                  colors={["rgba(21, 101, 192, 0.3)", "rgba(66, 165, 245, 0.3)"]}
+                  style={[styles.cardGradient, styles.glowingCategoryBorder]}
                   start={{ x: 0, y: 0 }}
                   end={{ x: 1, y: 1 }}
                 >
@@ -136,20 +141,25 @@ export default function HomeScreen() {
             {/* Game Modes */}
             <Text style={styles.sectionTitle}>MODES DE JEU</Text>
             
+            {/* Game Mode Card with Single Color and Glowing Border */}
             <TouchableOpacity style={styles.modeCard}>
               <LinearGradient
-                colors={["#0D2F6B", "#1E5AAD"]}
-                style={styles.modeGradient}
+                colors={["rgba(42, 59, 181, 0.30)", "rgba(42, 59, 181, 0.30)"]} 
+                style={[styles.modeGradient, styles.glowingBorder]}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 1 }}
-                borderRadius={20}
+                borderRadius={8}
               >
                 <View style={styles.modeContent}>
                   <View style={styles.characterContainer}>
-                    <Image source={{ uri: "/placeholder.svg?height=120&width=120" }} style={styles.characterImage} />
+                    <Image 
+                      source={require('@/assets/images/taupeTranspa.png')} 
+                      style={styles.characterImage}
+                      resizeMode="contain"
+                    />
                   </View>
                   <View style={styles.modeTextContainer}>
-                    <Text style={styles.modeName}>INSIGHT</Text>
+                    <Text style={styles.modeName}>On ecoute mais on ne juge pas</Text>
                     <Text style={styles.modeDescription}>Un mode gratuit pour rigoler tranquillement entre potes.</Text>
                   </View>
                   <View style={styles.freeTagContainer}>
@@ -158,48 +168,11 @@ export default function HomeScreen() {
                 </View>
               </LinearGradient>
             </TouchableOpacity>
-
-            <TouchableOpacity style={styles.modeCard}>
-              <LinearGradient
-                colors={["#8E0D3C", "#C41A5F"]}
-                style={styles.modeGradient}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                borderRadius={20}
-              >
-                <View style={styles.modeContent}>
-                  <View style={styles.characterContainer}>
-                    <Image source={{ uri: "/placeholder.svg?height=120&width=120" }} style={styles.characterImage} />
-                  </View>
-                  <View style={styles.modeTextContainer}>
-                    <Text style={styles.modeName}>SPICY</Text>
-                    <Text style={styles.modeDescription}>Questions coquines et déplacées... Prêts à assumer ?</Text>
-                  </View>
-                </View>
-              </LinearGradient>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.modeCard}>
-              <LinearGradient
-                colors={["#1A1A1A", "#333333"]}
-                style={styles.modeGradient}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                borderRadius={20}
-              >
-                <View style={styles.modeContent}>
-                  <View style={styles.characterContainer}>
-                    <Image source={{ uri: "/placeholder.svg?height=120&width=120" }} style={styles.characterImage} />
-                  </View>
-                  <View style={styles.modeTextContainer}>
-                    <Text style={styles.modeName}>HARDCORE</Text>
-                    <Text style={styles.modeDescription}>Plus de pitié. Il est temps de dire les termes.</Text>
-                  </View>
-                </View>
-              </LinearGradient>
-            </TouchableOpacity>
           </View>
         </ScrollView>
+        
+        {/* Bottom Tab Bar */}
+        <BottomTabBar />
       </LinearGradient>
     </View>
   )
@@ -215,57 +188,14 @@ const styles = StyleSheet.create({
   scrollView: {
     flex: 1,
   },
-  header: {
-    paddingTop: 60,
-    paddingHorizontal: 20,
-    paddingBottom: 20,
-    position: "relative",
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  headerTitle: {
-    fontSize: 28,
-    fontWeight: "bold",
-    color: "white",
-    letterSpacing: 1,
-  },
-  headerSubtitle: {
-    fontSize: 18,
-    color: "rgba(255, 255, 255, 0.7)",
-    marginTop: 5,
-  },
-  rulesContainer: {
-    position: "absolute",
-    right: 20,
-    top: 60,
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  rulesText: {
-    color: "rgba(255, 255, 255, 0.7)",
-    fontSize: 16,
-    marginRight: 10,
-  },
-  questionMarkContainer: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    borderWidth: 2,
-    borderColor: "rgba(255, 255, 255, 0.7)",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  questionMark: {
-    color: "rgba(255, 255, 255, 0.7)",
-    fontSize: 18,
-    fontWeight: "bold",
+  scrollViewContent: {
+    paddingBottom: 100, // Ajoutez de l'espace en bas pour que le contenu ne soit pas caché par la barre d'onglets
   },
   categoriesContainer: {
     padding: 20,
   },
   sectionTitle: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: "bold",
     color: "white",
     marginBottom: 15,
@@ -277,15 +207,25 @@ const styles = StyleSheet.create({
     marginBottom: 25,
   },
   categoryCard: {
-    borderRadius: 20,
-    overflow: "hidden",
-    height: 180,
-    width: 180,
+    borderRadius: 12,
+    overflow: "visible", 
+    height: 150, 
+    width: 150, 
     marginRight: 15,
   },
   cardGradient: {
     flex: 1,
     padding: 15,
+    borderRadius: 12, 
+  },
+  glowingCategoryBorder: {
+    borderWidth: 1.5,
+    borderColor: "#3B5FD9",
+    shadowColor: "#3B5FD9",
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.8,
+    shadowRadius: 4,
+    elevation: 8,
   },
   cardContent: {
     flex: 1,
@@ -316,25 +256,36 @@ const styles = StyleSheet.create({
   },
   cardTitle: {
     color: "white",
-    fontSize: 22,
+    fontSize: 16,
     fontWeight: "bold",
     textAlign: "center",
     marginTop: 10,
   },
   modeCard: {
     height: 120,
-    borderRadius: 20,
+    borderRadius: 12,
     marginBottom: 20,
-    overflow: "hidden",
+    overflow: "visible", 
   },
   modeGradient: {
     flex: 1,
+    borderRadius: 12,
+  },
+  glowingBorder: {
+    borderWidth: 1.5,
+    borderColor: "#5D6DFF",
+    shadowColor: "#5D6DFF",
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.8,
+    shadowRadius: 5,
+    elevation: 8,
   },
   modeContent: {
     flex: 1,
     flexDirection: "row",
     alignItems: "center",
     padding: 15,
+    position: "relative",
   },
   characterContainer: {
     width: 90,
@@ -348,31 +299,35 @@ const styles = StyleSheet.create({
   },
   modeTextContainer: {
     flex: 1,
-    marginLeft: 15,
+    paddingHorizontal: 15,
+    maxWidth: "60%",
+    paddingRight: 40,
   },
   modeName: {
     color: "white",
-    fontSize: 26,
+    fontSize: 18,
     fontWeight: "bold",
     marginBottom: 5,
   },
   modeDescription: {
     color: "rgba(255, 255, 255, 0.8)",
-    fontSize: 14,
+    fontSize: 9,
   },
   freeTagContainer: {
-    backgroundColor: "#8E44AD",
-    paddingHorizontal: 15,
-    paddingVertical: 8,
-    borderRadius: 20,
+    backgroundColor: "rgba(156, 39, 176, 0.8)",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
     position: "absolute",
     right: 15,
     top: 15,
+    zIndex: 10,
+    elevation: 5,
   },
   freeTag: {
     color: "white",
     fontWeight: "bold",
-    fontSize: 14,
+    fontSize: 12,
   },
   profileButton: {
     width: 40,
@@ -382,5 +337,17 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
+  headerButtons: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  iconButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "rgba(255,255,255,0.2)",
+    justifyContent: "center",
+    alignItems: "center",
+    marginLeft: 10,
+  },
 })
-

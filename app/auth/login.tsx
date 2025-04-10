@@ -42,12 +42,6 @@ export default function LoginScreen() {
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="light-content" />
-      <LinearGradient
-        colors={["#1a0933", "#2d0f4c", "#3b1366"]}
-        style={styles.container}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-      >
         {/* Main content */}
         <View style={styles.content}>
           {/* Logo and title */}
@@ -92,7 +86,6 @@ export default function LoginScreen() {
             <View style={styles.homeIndicator} />
           </View>
         </View>
-      </LinearGradient>
     </SafeAreaView>
   )
 }
