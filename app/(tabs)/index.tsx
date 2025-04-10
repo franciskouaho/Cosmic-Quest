@@ -14,6 +14,20 @@ export default function HomeScreen() {
     router.push("/settings")
   }
   
+  // Fonction pour créer une nouvelle salle de jeu
+  const createGameRoom = (modeId: string) => {
+    // Génération d'un ID aléatoire à 8 caractères pour la salle
+    const characters = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // Caractères sans ambiguïté (pas de 0, O, 1, I)
+    let roomId = '';
+    
+    for (let i = 0; i < 8; i++) {
+      roomId += characters.charAt(Math.floor(Math.random() * characters.length));
+    }
+    
+    // Navigation vers la page de la salle avec l'ID généré
+    router.push(`/room/${roomId}?mode=${modeId}`);
+  }
+  
   return (
     <View style={styles.container}>
       <StatusBar style="light" />
@@ -142,7 +156,10 @@ export default function HomeScreen() {
             <Text style={styles.sectionTitle}>MODES DE JEU</Text>
             
             {/* Game Mode Card with Single Color and Glowing Border */}
-            <TouchableOpacity style={styles.modeCard}>
+            <TouchableOpacity 
+              style={styles.modeCard} 
+              onPress={() => createGameRoom('on-ecoute-mais-on-ne-juge-pas')}
+            >
               <LinearGradient
                 colors={["rgba(42, 59, 181, 0.30)", "rgba(42, 59, 181, 0.30)"]} 
                 style={[styles.modeGradient, styles.glowingBorder]}
@@ -164,6 +181,37 @@ export default function HomeScreen() {
                   </View>
                   <View style={styles.freeTagContainer}>
                     <Text style={styles.freeTag}>GRATUIT</Text>
+                  </View>
+                </View>
+              </LinearGradient>
+            </TouchableOpacity>
+            
+            {/* Vous pouvez ajouter d'autres modes de jeu ici */}
+            <TouchableOpacity 
+              style={styles.modeCard} 
+              onPress={() => createGameRoom('spicy')}
+            >
+              <LinearGradient
+                colors={["rgba(156, 39, 176, 0.30)", "rgba(156, 39, 176, 0.30)"]} 
+                style={[styles.modeGradient, styles.glowingBorder]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                borderRadius={8}
+              >
+                <View style={styles.modeContent}>
+                  <View style={styles.characterContainer}>
+                    <Image 
+                      source={require('@/assets/images/taupeTranspa.png')} 
+                      style={styles.characterImage}
+                      resizeMode="contain"
+                    />
+                  </View>
+                  <View style={styles.modeTextContainer}>
+                    <Text style={styles.modeName}>SPICY</Text>
+                    <Text style={styles.modeDescription}>Un mode avancé avec encore plus de questions et de fun.</Text>
+                  </View>
+                  <View style={[styles.freeTagContainer, { backgroundColor: "rgba(255, 193, 7, 0.8)" }]}>
+                    <Text style={styles.freeTag}>PREMIUM</Text>
                   </View>
                 </View>
               </LinearGradient>

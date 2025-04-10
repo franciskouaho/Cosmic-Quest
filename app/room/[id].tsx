@@ -6,6 +6,7 @@ import { MaterialCommunityIcons, FontAwesome5, Ionicons } from '@expo/vector-ico
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import InviteModal from '../../components/room/InviteModal';
 import RulesDrawer from '../../components/room/RulesDrawer';
+import LoadingOverlay from '../../components/common/LoadingOverlay';
 
 // Type pour les joueurs
 type Player = {
@@ -42,7 +43,7 @@ export default function Room() {
       id: '3', 
       name: 'Alex', 
       isHost: false, 
-      isReady: false, 
+      isReady: true, 
       avatar: 'https://randomuser.me/api/portraits/men/67.jpg',
       level: 15
     },
@@ -60,10 +61,16 @@ export default function Room() {
   const maxPlayers = 6;
   const [inviteModalVisible, setInviteModalVisible] = useState(false);
   const [rulesVisible, setRulesVisible] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadingMessage, setLoadingMessage] = useState('Chargement de la salle...');
+  const [buttonLoading, setButtonLoading] = useState(false); // État pour les boutons
 
   // Simuler le chargement des données de la salle à partir de l'ID
   useEffect(() => {
     if (id) {
+      setIsLoading(true);
+      setLoadingMessage('Chargement des détails de la salle...');
+      
       // Ici, vous feriez normalement un appel API pour obtenir les détails de la salle
       console.log(`Chargement des détails de la salle ${id}`);
       
@@ -77,25 +84,33 @@ export default function Room() {
       } else {
         setRoomName(`Salle #${id}`);
       }
+      
+      // Simuler un délai de chargement pour montrer notre beau composant
+      setTimeout(() => {
+        setIsLoading(false);
+      }, 1500);
     }
   }, [id]);
 
   const handleToggleReady = () => {
-    setIsReady(!isReady);
-    // Ici, envoyez une mise à jour au serveur
+    setButtonLoading(true);
+    setLoadingMessage('Mise à jour du statut...');
+    
+    // Simulons une requête réseau
+    setTimeout(() => {
+      setIsReady(!isReady);
+      setButtonLoading(false);
+    }, 800);
   };
 
   const handleStartGame = () => {
-    const allPlayersReady = players.every(player => player.isReady);
+    setIsLoading(true);
+    setLoadingMessage('Préparation de la partie...');
     
-    if (!allPlayersReady) {
-      Alert.alert('Attention', 'Tous les joueurs ne sont pas prêts');
-      return;
-    }
-    
-    Alert.alert('Démarrage', 'La partie va commencer...');
-    // Logique pour démarrer la partie
-    // router.push('/game');
+    // Simuler un temps de chargement avant la redirection
+    setTimeout(() => {
+      router.push(`/game/${id}`);
+    }, 1500);
   };
 
   const handleLeaveRoom = () => {
@@ -110,14 +125,27 @@ export default function Room() {
         {
           text: 'Quitter',
           style: 'destructive',
-          onPress: () => router.back(),
+          onPress: () => {
+            setIsLoading(true);
+            setLoadingMessage('Retour au menu principal...');
+            setTimeout(() => {
+              router.back();
+            }, 800);
+          },
         },
       ]
     );
   };
 
   const handleInviteFriend = () => {
-    setInviteModalVisible(true);
+    setButtonLoading(true);
+    setLoadingMessage('Génération du QR code...');
+    
+    // Simulons une requête réseau pour générer le code
+    setTimeout(() => {
+      setButtonLoading(false);
+      setInviteModalVisible(true);
+    }, 600);
   };
 
   const handleCopyCode = () => {
@@ -191,6 +219,12 @@ export default function Room() {
         style={styles.background}
       />
       
+      {/* Notre composant de loading pour les opérations globales */}
+      {isLoading && <LoadingOverlay message={loadingMessage} />}
+      
+      {/* Notre composant de loading pour les actions sur les boutons */}
+      {buttonLoading && <LoadingOverlay message={loadingMessage} />}
+      
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity style={styles.backButton} onPress={handleLeaveRoom}>
@@ -242,7 +276,7 @@ export default function Room() {
             <TouchableOpacity 
               style={[styles.actionButton, styles.startGameButton]}
               onPress={handleStartGame}
-              disabled={players.some(player => !player.isReady)}
+              disabled={isLoading || buttonLoading}
             >
               <MaterialCommunityIcons name="rocket-launch" size={24} color="white" />
               <Text style={styles.actionButtonText}>Lancer la partie</Text>
@@ -251,6 +285,7 @@ export default function Room() {
             <TouchableOpacity 
               style={[styles.actionButton, isReady ? styles.notReadyButton : styles.readyButton]}
               onPress={handleToggleReady}
+              disabled={isLoading || buttonLoading}
             >
               {isReady ? (
                 <>

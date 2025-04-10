@@ -1,28 +1,40 @@
-import { useColorScheme } from "react-native"
-import { Stack } from "expo-router"
-import { StatusBar } from "expo-status-bar"
-import { useFonts } from "expo-font"
-import Colors from "../constants/Colors"
-import {AuthProvider} from "@/contexts/AuthContext";
+import React from 'react';
+import { Stack } from 'expo-router';
+import { AuthProvider } from '../context/AuthContext';
 
 export default function RootLayout() {
-  const colorScheme = useColorScheme() ?? "dark"
-
-
   return (
-      <AuthProvider>
-            <StatusBar style={colorScheme === "dark" ? "light" : "dark"} />
-            <Stack
-                screenOptions={{
-                  headerShown: false,
-                  contentStyle: {
-                    backgroundColor: Colors[colorScheme].background,
-                  },
-                  animation: "slide_from_right",
-                }}
-            >
-            </Stack>
-      </AuthProvider>
-  )
+    <AuthProvider>
+      <Stack 
+        screenOptions={{
+          headerShown: false,
+          contentStyle: { backgroundColor: 'transparent' },
+          animation: 'fade'
+        }}
+        initialRouteName="splash"
+      >
+        <Stack.Screen name="splash" />
+        <Stack.Screen name="auth/login" />
+        <Stack.Screen 
+          name="game/[id]" 
+          options={{
+            gestureEnabled: false,
+          }} 
+        />
+        <Stack.Screen 
+          name="index" 
+          options={{
+            animation: 'slide_from_right'
+          }} 
+        />
+        <Stack.Screen 
+          name="room/[id]" 
+          options={{
+            animation: 'slide_from_right'
+          }} 
+        />
+      </Stack>
+    </AuthProvider>
+  );
 }
 

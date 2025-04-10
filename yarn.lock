@@ -2088,14 +2088,14 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@react-native-async-storage/async-storage@npm:^1.22.3":
-  version: 1.24.0
-  resolution: "@react-native-async-storage/async-storage@npm:1.24.0"
+"@react-native-async-storage/async-storage@npm:1.23.1":
+  version: 1.23.1
+  resolution: "@react-native-async-storage/async-storage@npm:1.23.1"
   dependencies:
     merge-options: "npm:^3.0.4"
   peerDependencies:
     react-native: ^0.0.0-0 || >=0.60 <1.0
-  checksum: 10c0/cad2098ef84251f2ab8ebc07b750e585a20ac7ca07f26e5441e957a76f2b66f01d10ef5fbddb63d675431377b31beb5208548093e1eb17d262d2184b51133f4d
+  checksum: 10c0/6cfdcab91f0e04f80f4aa91397eb4aedcd1124bf2a997cb730c7f2c70dad75d2aa0ca0f41576ed4e34544a1f79e090169f566366c32a89a41b74bf74bea1c1db
   languageName: node
   linkType: hard
 
@@ -2604,12 +2604,30 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@types/react-native-confetti@npm:^0":
+  version: 0.1.4
+  resolution: "@types/react-native-confetti@npm:0.1.4"
+  dependencies:
+    "@types/react": "npm:*"
+  checksum: 10c0/26b1f3039ed3c6d3f05e5b0e80f3c0dc38ae53ce2fb38285baf1aa038aad2e70c6cdbfb989c41aad323f0634dbfbd4665f596ed0d127691d2b13e9390fba41e1
+  languageName: node
+  linkType: hard
+
 "@types/react-test-renderer@npm:^18.3.0":
   version: 18.3.1
   resolution: "@types/react-test-renderer@npm:18.3.1"
   dependencies:
     "@types/react": "npm:^18"
   checksum: 10c0/9fc8467ff1a3f14be6cc3498a75fc788d2c92c0fffa7bf21269ed5d9d82db9195bf2178ddc42ea16a0836995c1b77601c6be8abb27bd1864668c418c6d0e5a3b
+  languageName: node
+  linkType: hard
+
+"@types/react@npm:*":
+  version: 19.1.0
+  resolution: "@types/react@npm:19.1.0"
+  dependencies:
+    csstype: "npm:^3.0.2"
+  checksum: 10c0/632fd20ee176e55801a61c5f854141b043571a3e363ef106b047b766a813a12735cbb37abb3d61d126346979f530f2ed269a60c8ef3cdee54e5e9fe4174e5dad
   languageName: node
   linkType: hard
 
@@ -3812,13 +3830,14 @@ __metadata:
   dependencies:
     "@babel/core": "npm:^7.25.2"
     "@expo/vector-icons": "npm:^14.0.2"
-    "@react-native-async-storage/async-storage": "npm:^1.22.3"
+    "@react-native-async-storage/async-storage": "npm:1.23.1"
     "@react-native-community/netinfo": "npm:^11.3.1"
     "@react-native-community/slider": "npm:^4.5.0"
     "@react-navigation/bottom-tabs": "npm:^7.2.0"
     "@react-navigation/native": "npm:^7.0.14"
     "@types/jest": "npm:^29.5.12"
     "@types/react": "npm:~18.3.12"
+    "@types/react-native-confetti": "npm:^0"
     "@types/react-test-renderer": "npm:^18.3.0"
     expo: "npm:~52.0.43"
     expo-blur: "npm:~14.0.3"
@@ -3838,6 +3857,7 @@ __metadata:
     react: "npm:18.3.1"
     react-dom: "npm:18.3.1"
     react-native: "npm:0.76.9"
+    react-native-confetti: "npm:^0.1.0"
     react-native-gesture-handler: "npm:~2.20.2"
     react-native-qrcode-svg: "npm:^6.3.15"
     react-native-reanimated: "npm:~3.16.1"
@@ -8354,6 +8374,13 @@ __metadata:
   version: 16.13.1
   resolution: "react-is@npm:16.13.1"
   checksum: 10c0/33977da7a5f1a287936a0c85639fec6ca74f4f15ef1e59a6bc20338fc73dc69555381e211f7a3529b8150a1f71e4225525b41b60b52965bda53ce7d47377ada1
+  languageName: node
+  linkType: hard
+
+"react-native-confetti@npm:^0.1.0":
+  version: 0.1.0
+  resolution: "react-native-confetti@npm:0.1.0"
+  checksum: 10c0/61734846d4e25c1f2991adc9d2af009546431b4ce40438107d7507d7c04d39c718fccfdf25140a4dc985e38182ef22b03ce22cc99e031d51951f66fbd8fb6c0e
   languageName: node
   linkType: hard
 
