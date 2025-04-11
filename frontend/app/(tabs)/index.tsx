@@ -14,6 +14,7 @@ import { useEffect } from 'react';
 import NetInfo from '@react-native-community/netinfo';
 import { useCreateRoom } from '@/hooks/useCreateRoom';
 import LoadingOverlay from '@/components/common/LoadingOverlay';
+import {Socket} from "socket.io-client";
 
 export default function HomeScreen() {
   const { user } = useAuth()
@@ -261,13 +262,13 @@ export default function HomeScreen() {
                 <View style={styles.modeContent}>
                   <View style={styles.characterContainer}>
                     <Image 
-                      source={require('@/assets/images/taupeTranspa.png')} 
+                      source={require('@/assets/images/cochon.png')}
                       style={styles.characterImage}
                       resizeMode="contain"
                     />
                   </View>
                   <View style={styles.modeTextContainer}>
-                    <Text style={styles.modeName}>SPICY</Text>
+                    <Text style={styles.modeName}>Spicy</Text>
                     <Text style={styles.modeDescription}>Un mode avancé avec encore plus de questions et de fun.</Text>
                   </View>
                   <View style={[styles.freeTagContainer, { backgroundColor: "rgba(255, 193, 7, 0.8)" }]}>
@@ -400,8 +401,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   characterImage: {
-    width: 80,
-    height: 80,
+    width: 110,
+    height: 110,
   },
   modeTextContainer: {
     flex: 1,
