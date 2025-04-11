@@ -1,15 +1,15 @@
 import React, { useEffect } from 'react';
-import { View, Text, StyleSheet, Image, Animated } from 'react-native';
+import { View, Text, StyleSheet, Animated } from 'react-native';
+import { SplashScreen, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import Constants from 'expo-constants';
 import { useAuth } from '@/contexts/AuthContext';
 
-export default function SplashScreen() {
+export default function SplashPage() {
   const router = useRouter();
-  const { user, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, initialized, checkAuthState } = useAuth();
   const fadeAnim = React.useRef(new Animated.Value(0)).current;
   const scaleAnim = React.useRef(new Animated.Value(0.9)).current;
   
@@ -31,21 +31,37 @@ export default function SplashScreen() {
       })
     ]).start();
 
-    // Vérifier l'authentification après l'animation
-    const timer = setTimeout(() => {
-      if (!isLoading) {
-        if (user) {
-          console.log('👤 Utilisateur trouvé, redirection vers (tabs)');
+    // Masquer le splash screen natif d'Expo une fois que notre composant est prêt
+    SplashScreen.hideAsync();
+  }, []);
+
+  // Gérer la redirection après initialisation de l'authentification
+  useEffect(() => {
+    const redirectUser = async () => {
+      if (initialized) {
+        console.log('🚀 État d\'authentification initialisé');
+        
+        // On attend au moins 2 secondes pour le splash screen "manuel"
+        const minDelay = new Promise(resolve => setTimeout(resolve, 2000));
+        
+        // On vérifie l'état d'authentification encore une fois pour être sûr
+        const authCheck = await checkAuthState();
+        
+        // Attendre que les deux promesses soient résolues
+        await minDelay;
+        
+        if (authCheck) {
+          console.log('👤 Utilisateur authentifié, redirection vers (tabs)');
           router.replace('/(tabs)');
         } else {
-          console.log('❌ Pas d\'utilisateur, redirection vers login');
+          console.log('👤 Utilisateur non authentifié, redirection vers login');
           router.replace('/auth/login');
         }
       }
-    }, 2000);
-
-    return () => clearTimeout(timer);
-  }, [user, isLoading]);
+    };
+    
+    redirectUser();
+  }, [initialized, isAuthenticated]);
 
   return (
     <View style={styles.container}>

@@ -12,19 +12,19 @@ export interface User {
   token?: string;
 }
 
+// Mettre à jour l'interface pour correspondre à la structure réelle de la réponse
 interface AuthResponse {
   status: string;
   message: string;
   data: {
-    user: {
-      id: number;
-      username: string;
-      displayName: string;
-      avatar: string | null;
-      level: number;
-      experiencePoints: number;
-    };
+    id: number;
+    username: string;
+    displayName: string;
+    avatar: string | null;
+    level?: number;
+    experiencePoints?: number;
     token: string;
+    created_at?: string;
   };
 }
 
@@ -49,6 +49,27 @@ class AuthService {
       console.log('🌐 Envoi requête POST:', `${API_URL}/auth/register-or-login`);
       const response = await axios.post(`${API_URL}/auth/register-or-login`, { username });
       console.log('✅ Authentification réussie:', response.data?.status === 'success' ? 'succès' : 'échec');
+      
+      // Stocker immédiatement le token et les données utilisateur
+      if (response.data?.status === 'success' && response.data?.data) {
+        const userData = {
+          id: response.data.data.id,
+          username: response.data.data.username,
+          displayName: response.data.data.displayName,
+          avatar: response.data.data.avatar,
+          level: response.data.data.level || 1,
+          experiencePoints: response.data.data.experiencePoints || 0,
+          token: response.data.data.token
+        };
+        
+        await Promise.all([
+          AsyncStorage.setItem('@auth_token', response.data.data.token),
+          AsyncStorage.setItem('@user_data', JSON.stringify(userData))
+        ]);
+        
+        console.log('✅ Token et données utilisateur stockés localement');
+      }
+      
       return response.data;
     } catch (error) {
       console.error('❌ Erreur d\'authentification:', error);

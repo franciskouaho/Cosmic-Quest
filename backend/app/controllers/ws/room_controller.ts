@@ -9,7 +9,7 @@ import UserRecentRoom from '#models/user_recent_room'
 
 // Fonction utilitaire pour générer un code de salle aléatoire
 const generateRoomCode = (length = 6) => {
-  const characters = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789' // Pas de caractères ambigus comme O, 0, 1, I
+  const characters = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
   let code = ''
   for (let i = 0; i < length; i++) {
     code += characters.charAt(Math.floor(Math.random() * characters.length))

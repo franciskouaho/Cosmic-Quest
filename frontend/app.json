@@ -10,7 +10,7 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.emplica.cosmicquest"
+      "bundleIdentifier": "com.anonymous.cosmicquest"
     },
     "android": {
       "adaptiveIcon": {
@@ -24,24 +24,11 @@
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
-      "expo-router",
-      [
-        "expo-splash-screen",
-        {
-          "image": "./assets/images/splash-icon.png",
-          "imageWidth": 200,
-          "resizeMode": "contain",
-          "backgroundColor": "#ffffff"
-        }
-      ]
+      "expo-router"
+      
     ],
     "experiments": {
       "typedRoutes": true
-    },
-    "splash": {
-      "image": "./assets/splash.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#1a0933"
     },
     "assetBundlePatterns": [
       "**/*"

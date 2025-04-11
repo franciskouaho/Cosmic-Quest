@@ -35,10 +35,15 @@ export function useLogin() {
         const response = await authService.registerOrLogin(username);
         console.log('👤 useLogin: Réponse reçue:', response.status);
         
-        if (response?.status === 'success' && response?.data?.user) {
-          // Fusionner les données utilisateur avec le token
+        if (response?.status === 'success' && response?.data) {
+          // Les données utilisateur sont directement dans response.data
           const userData = {
-            ...response.data.user,
+            id: response.data.id,
+            username: response.data.username,
+            displayName: response.data.displayName,
+            avatar: response.data.avatar,
+            level: response.data.level || 1,
+            experiencePoints: response.data.experiencePoints || 0,
             token: response.data.token
           };
           
@@ -48,11 +53,11 @@ export function useLogin() {
             AsyncStorage.setItem('@user_data', JSON.stringify(userData))
           ]);
           
-          // Mettre à jour le cache avec les données fusionnées
+          // Mettre à jour le cache avec les données utilisateur
           queryClient.setQueryData(['user'], userData);
           console.log('👤 useLogin: Cache mis à jour avec les données utilisateur');
           
-          return response;
+          return userData;
         }
         console.error('👤 useLogin: Format de réponse invalide', response);
         throw new Error('Format de réponse invalide');
