@@ -4,19 +4,42 @@ import NetInfo from '@react-native-community/netinfo';
 
 // Configuration pour les appels API
 
-// URL de base pour les requêtes API REST - à adapter selon l'environnement
-export const API_URL = Platform.OS === 'android' 
-  ? 'http://10.0.2.2:3333/api/v1'  // Android emulator
-  : 'http://localhost:3333/api/v1'; // iOS simulator or web
+// Détection de l'environnement d'exécution
+const isExpo = typeof process !== 'undefined' && process.env?.EXPO_PUBLIC_API_URL;
+const isAndroidEmulator = Platform.OS === 'android';
+const isIosSimulator = Platform.OS === 'ios';
 
-// URL pour les connexions WebSocket - à adapter selon l'environnement
-export const WS_URL = Platform.OS === 'android' 
-  ? 'http://10.0.2.2:3333'  // Android emulator
-  : 'http://localhost:3333'; // iOS simulator or web
+// Définir l'URL de base de l'API en fonction de l'environnement
+let apiBaseUrl = '';
+let socketBaseUrl = '';
+
+if (isExpo) {
+  // Utiliser la variable d'environnement d'Expo si disponible
+  apiBaseUrl = process.env.EXPO_PUBLIC_API_URL || '';
+  socketBaseUrl = process.env.EXPO_PUBLIC_WS_URL || '';
+} else if (isAndroidEmulator) {
+  // Adresse spéciale pour l'émulateur Android (10.0.2.2 pointe vers localhost de la machine hôte)
+  apiBaseUrl = 'http://10.0.2.2:3333';
+  socketBaseUrl = 'http://10.0.2.2:3333';
+} else if (isIosSimulator) {
+  // Pour le simulateur iOS, localhost fonctionne car il partage le réseau de l'hôte
+  apiBaseUrl = 'http://localhost:3333';
+  socketBaseUrl = 'http://localhost:3333';
+} else {
+  // Par défaut, utiliser localhost
+  apiBaseUrl = 'http://localhost:3333';
+  socketBaseUrl = 'http://localhost:3333';
+}
+
+// URL de base pour les requêtes API REST
+export const API_URL = `${apiBaseUrl}/api/v1`;
+
+// URL pour les connexions WebSocket
+export const SOCKET_URL = socketBaseUrl;
 
 console.log('📱 Platform.OS:', Platform.OS);
 console.log('🌍 API_URL configuré:', API_URL);
-console.log('🔌 WS_URL configuré:', WS_URL);
+console.log('🔌 SOCKET_URL configuré:', SOCKET_URL);
 
 // Vérifier périodiquement la connectivité
 NetInfo.addEventListener(state => {

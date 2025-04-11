@@ -63,7 +63,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     console.log('🔐 Tentative de connexion avec', username);
     setIsSigningIn(true);
     try {
-      await loginMutation.mutateAsync(username);
+      const userData = await loginMutation.mutateAsync(username);
+      
+      // Stockage du token après connexion réussie
+      if (userData && userData.token) {
+        await AsyncStorage.setItem('@auth_token', userData.token);
+        console.log('🔑 Token stocké après connexion');
+      }
+      
       await refetch(); // Actualiser les données utilisateur après connexion
       console.log('✅ Connexion réussie');
       return;
@@ -77,15 +84,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Fonction de déconnexion
   const signOut = async () => {
+    console.log('🔐 Tentative de déconnexion');
+    setIsSigningIn(true);
     try {
-      setIsSigningIn(true);
+      // Déconnexion via le service d'authentification
+      await logoutMutation.mutateAsync();
       
-      // Supprimer le token du stockage
-      await AsyncStorage.removeItem("userToken");
+      // Supprimer le token de stockage local
+      await AsyncStorage.removeItem('@auth_token');
+      await AsyncStorage.removeItem('@user_data');
       
       console.log("✅ Déconnexion réussie");
     } catch (error) {
       console.error("❌ Erreur lors de la déconnexion:", error);
+      
+      // Même en cas d'erreur, on supprime le token local pour assurer la déconnexion
+      await AsyncStorage.removeItem('@auth_token');
+      await AsyncStorage.removeItem('@user_data');
     } finally {
       setIsSigningIn(false);
     }

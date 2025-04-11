@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity } from 'react-native';
+import React from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { MaterialIcons } from '@expo/vector-icons';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Answer, Question } from '../../types/gameTypes';
 
 interface VotePhaseProps {
@@ -11,72 +11,43 @@ interface VotePhaseProps {
 }
 
 const VotePhase: React.FC<VotePhaseProps> = ({ answers, question, onVote }) => {
-  const [selectedAnswer, setSelectedAnswer] = useState<string | null>(null);
-  
-  const handleVote = () => {
-    if (selectedAnswer) {
-      onVote(selectedAnswer);
-    }
-  };
-  
-  const renderAnswerItem = ({ item }: { item: Answer }) => (
-    <TouchableOpacity
-      style={[
-        styles.answerCard,
-        selectedAnswer === item.playerId ? styles.selectedAnswerCard : null
-      ]}
-      onPress={() => setSelectedAnswer(item.playerId)}
-      activeOpacity={0.8}
-    >
-      <Text style={styles.answerText}>{item.content}</Text>
-      
-      {selectedAnswer === item.playerId && (
-        <View style={styles.selectedIndicator}>
-          <MaterialIcons name="check-circle" size={24} color="#694ED6" />
-        </View>
-      )}
-    </TouchableOpacity>
-  );
-  
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.title}>Choisissez votre réponse préférée</Text>
+        <Text style={styles.headerTitle}>Vote pour la meilleure réponse</Text>
       </View>
-      
-      <View style={styles.questionCard}>
-        <LinearGradient
-          colors={['rgba(105, 78, 214, 0.3)', 'rgba(105, 78, 214, 0.1)']}
-          style={styles.cardGradient}
-        >
-          <Text style={styles.questionText}>{question.text}</Text>
-        </LinearGradient>
-      </View>
-      
-      <View style={styles.answersContainer}>
-        <Text style={styles.sectionTitle}>Réponses</Text>
-        
-        <FlatList
-          data={answers}
-          renderItem={renderAnswerItem}
-          keyExtractor={(item) => item.playerId}
-          contentContainerStyle={styles.answersList}
-          showsVerticalScrollIndicator={false}
-        />
-      </View>
-      
-      <View style={styles.footer}>
-        <TouchableOpacity
-          style={[
-            styles.voteButton,
-            !selectedAnswer && styles.voteButtonDisabled
-          ]}
-          onPress={handleVote}
-          disabled={!selectedAnswer}
-        >
-          <Text style={styles.voteButtonText}>Voter</Text>
-        </TouchableOpacity>
-      </View>
+
+      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+        <View style={styles.questionCard}>
+          <LinearGradient
+            colors={['rgba(105, 78, 214, 0.3)', 'rgba(105, 78, 214, 0.1)']}
+            style={styles.cardGradient}
+          >
+            <Text style={styles.questionText}>{question.text}</Text>
+          </LinearGradient>
+        </View>
+
+        <Text style={styles.sectionTitle}>Sélectionne ta réponse préférée</Text>
+
+        {answers.map((answer) => (
+          <TouchableOpacity 
+            key={answer.playerId}
+            style={styles.answerCard}
+            onPress={() => onVote(answer.playerId)}
+          >
+            <LinearGradient
+              colors={['rgba(255, 255, 255, 0.1)', 'rgba(255, 255, 255, 0.05)']}
+              style={styles.answerGradient}
+            >
+              <Text style={styles.answerText}>{answer.content}</Text>
+              <View style={styles.voteButton}>
+                <MaterialCommunityIcons name="heart" size={24} color="#ff6b6b" />
+                <Text style={styles.voteText}>Voter</Text>
+              </View>
+            </LinearGradient>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
     </View>
   );
 };
@@ -89,75 +60,62 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 20,
   },
-  title: {
+  headerTitle: {
     fontSize: 24,
     fontWeight: 'bold',
     color: '#ffffff',
-    textAlign: 'center',
+  },
+  content: {
+    flex: 1,
   },
   questionCard: {
     borderRadius: 16,
     overflow: 'hidden',
-    marginBottom: 20,
+    marginBottom: 25,
   },
   cardGradient: {
-    padding: 20,
+    padding: 16,
     borderRadius: 16,
   },
   questionText: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: 'bold',
     color: '#ffffff',
     textAlign: 'center',
   },
-  answersContainer: {
-    flex: 1,
-  },
   sectionTitle: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: 'bold',
     color: '#b3a5d9',
     marginBottom: 16,
   },
-  answersList: {
-    paddingBottom: 20,
-  },
   answerCard: {
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    marginBottom: 16,
     borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
+    overflow: 'hidden',
   },
-  selectedAnswerCard: {
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    borderColor: '#694ED6',
-    borderWidth: 2,
+  answerGradient: {
+    padding: 16,
+    borderRadius: 12,
   },
   answerText: {
     fontSize: 16,
     color: '#ffffff',
-  },
-  selectedIndicator: {
-    position: 'absolute',
-    top: 12,
-    right: 12,
-  },
-  footer: {
-    marginTop: 16,
+    marginBottom: 12,
   },
   voteButton: {
-    backgroundColor: '#694ED6',
-    borderRadius: 12,
-    padding: 16,
+    flexDirection: 'row',
     alignItems: 'center',
+    alignSelf: 'flex-end',
+    backgroundColor: 'rgba(255, 107, 107, 0.2)',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 20,
   },
-  voteButtonDisabled: {
-    backgroundColor: 'rgba(105, 78, 214, 0.5)',
-  },
-  voteButtonText: {
+  voteText: {
     color: '#ffffff',
-    fontSize: 16,
-    fontWeight: '600',
+    fontWeight: 'bold',
+    marginLeft: 6,
   },
 });
 

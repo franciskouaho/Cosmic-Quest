@@ -16,17 +16,40 @@ export class SocketService {
         cors: {
           origin: '*',
           methods: ['GET', 'POST'],
+          credentials: true,
         },
         transports: ['websocket', 'polling'],
+        allowEIO3: true,
+        pingTimeout: 20000,
+        pingInterval: 25000,
+        connectTimeout: 30000,
+        maxHttpBufferSize: 1e8, // 100 MB
       })
 
       console.log('⚡ Initialisation du service WebSocket...')
 
+      this.io.use((socket, next) => {
+        try {
+          const token = socket.handshake.auth?.token
+          console.log(`🔐 Nouvelle connexion WebSocket - Token présent: ${!!token}`)
+
+          // Vous pouvez vérifier le token ici si nécessaire
+          // Pour l'instant on accepte toutes les connexions
+          next()
+        } catch (error) {
+          console.error("❌ Erreur d'authentification WebSocket:", error)
+          next(new Error("Erreur d'authentification"))
+        }
+      })
+
       this.io.on('connection', (socket) => {
         console.log(`🟢 Nouveau client connecté: ${socket.id}`)
 
+        // Envoyer un événement de confirmation pour tester la connexion
+        socket.emit('connection:success', { message: 'Connexion WebSocket établie avec succès' })
+
         // Gestion des salles
-        socket.on('join:room', (data) => {
+        socket.on('join-room', (data) => {
           try {
             const roomCode = typeof data === 'object' ? data.roomCode : data
             const roomChannel = `room:${roomCode}`
@@ -42,18 +65,62 @@ export class SocketService {
           }
         })
 
-        socket.on('leave:room', (data) => {
-          const roomCode = typeof data === 'object' ? data.roomCode : data
-          const roomChannel = `room:${roomCode}`
+        socket.on('leave-room', (data) => {
+          try {
+            const roomCode = typeof data === 'object' ? data.roomCode : data
+            const roomChannel = `room:${roomCode}`
 
-          socket.leave(roomChannel)
-          console.log(`🚪 Client ${socket.id} a quitté la salle ${roomCode}`)
+            socket.leave(roomChannel)
+            console.log(`🚪 Client ${socket.id} a quitté la salle ${roomCode}`)
+
+            // Confirmer au client qu'il a bien quitté la salle
+            socket.emit('room:left', { roomCode })
+          } catch (error) {
+            console.error(`❌ Erreur lors du départ de la salle:`, error)
+            socket.emit('error', { message: 'Erreur lors du départ de la salle' })
+          }
         })
 
         // Gestion des jeux
-        socket.on('join:game', (gameId) => {
-          socket.join(`game:${gameId}`)
-          console.log(`🎮 Client ${socket.id} a rejoint le jeu ${gameId}`)
+        socket.on('join-game', (data) => {
+          try {
+            const gameId = typeof data === 'object' ? data.gameId : data
+            const gameChannel = `game:${gameId}`
+
+            socket.join(gameChannel)
+            console.log(`🎮 Client ${socket.id} a rejoint le jeu ${gameId}`)
+
+            // Confirmer au client qu'il a bien rejoint le jeu
+            socket.emit('game:joined', { gameId })
+          } catch (error) {
+            console.error(`❌ Erreur lors de la jointure au jeu:`, error)
+            socket.emit('error', { message: 'Erreur lors de la jointure au jeu' })
+          }
+        })
+
+        socket.on('leave-game', (data) => {
+          try {
+            const gameId = typeof data === 'object' ? data.gameId : data
+            const gameChannel = `game:${gameId}`
+
+            socket.leave(gameChannel)
+            console.log(`🎮 Client ${socket.id} a quitté le jeu ${gameId}`)
+
+            // Confirmer au client qu'il a bien quitté le jeu
+            socket.emit('game:left', { gameId })
+          } catch (error) {
+            console.error(`❌ Erreur lors du départ du jeu:`, error)
+            socket.emit('error', { message: 'Erreur lors du départ du jeu' })
+          }
+        })
+
+        // Événement pour tester la connexion
+        socket.on('ping', (callback) => {
+          if (typeof callback === 'function') {
+            callback({ status: 'success', time: new Date().toISOString() })
+          } else {
+            socket.emit('pong', { status: 'success', time: new Date().toISOString() })
+          }
         })
 
         socket.on('disconnect', () => {
@@ -80,6 +147,39 @@ export class SocketService {
       throw new Error('Socket.IO non initialisé')
     }
     return this.io
+  }
+
+  // Méthode pour diffuser un message à tous les clients
+  broadcast(event: string, data: any) {
+    if (!this.io) {
+      console.error('❌ Socket.IO non initialisé, impossible de diffuser le message')
+      return
+    }
+
+    this.io.emit(event, data)
+    console.log(`📢 Message diffusé sur l'événement "${event}"`)
+  }
+
+  // Méthode pour diffuser un message à une salle spécifique
+  broadcastToRoom(roomCode: string, event: string, data: any) {
+    if (!this.io) {
+      console.error('❌ Socket.IO non initialisé, impossible de diffuser le message')
+      return
+    }
+
+    this.io.to(`room:${roomCode}`).emit(event, data)
+    console.log(`📢 Message diffusé à la salle "${roomCode}" sur l'événement "${event}"`)
+  }
+
+  // Méthode pour diffuser un message à un jeu spécifique
+  broadcastToGame(gameId: string, event: string, data: any) {
+    if (!this.io) {
+      console.error('❌ Socket.IO non initialisé, impossible de diffuser le message')
+      return
+    }
+
+    this.io.to(`game:${gameId}`).emit(event, data)
+    console.log(`📢 Message diffusé au jeu "${gameId}" sur l'événement "${event}"`)
   }
 }
 

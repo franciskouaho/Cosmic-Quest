@@ -11,7 +11,8 @@ import LoadingOverlay from '../../components/common/LoadingOverlay';
 import { useAuth } from '../../contexts/AuthContext';
 import { Player, GamePhase, GameState, Answer, Question } from '../../types/gameTypes';
 import { gameService } from '../../services/queries/game';
-import { generateQuestionObject } from '../../utils/questionGenerator';
+import { SocketService } from '../../services/socketService';
+import axios from 'axios';
 
 export default function GameScreen() {
   const router = useRouter();
@@ -32,117 +33,156 @@ export default function GameScreen() {
   
   const [isHost, setIsHost] = useState(false);
   const [isReady, setIsReady] = useState(false);
+  const [loadingError, setLoadingError] = useState<string | null>(null);
   
-  // Simuler l'obtention des données du jeu (remplacé par des appels API dans le futur)
+  // Charger les données du jeu depuis le backend
   useEffect(() => {
-    // Dans un vrai backend, on récupérerait ces données depuis un serveur
     const fetchGameData = async () => {
       try {
-        // Tentative de récupération des données depuis le backend
-        try {
-          const gameData = await gameService.getGameState(id as string);
-          // Initialiser le jeu avec les données du serveur
-          // ... code pour initialiser avec gameData ...
-          setIsReady(true);
-          return;
-        } catch (apiError) {
-          console.log('Impossible de charger les données depuis le serveur, utilisation du mode hors ligne', apiError);
-          // Continuer avec la génération locale de données
+        console.log(`🎮 Récupération des données du jeu ${id}...`);
+        
+        const gameData = await gameService.getGameState(id as string);
+        console.log('✅ Données du jeu récupérées:', gameData);
+        
+        // Rejoindre le canal de jeu via WebSocket
+        SocketService.joinGameChannel(id as string);
+        
+        // Transformer les données reçues en format compatible avec notre état
+        const currentUser = user?.id;
+        
+        // Extraire les données du joueur cible et de la question actuelle
+        const targetPlayer = gameData.currentQuestion?.targetPlayer 
+          ? {
+              id: gameData.currentQuestion.targetPlayer.id.toString(),
+              name: gameData.currentQuestion.targetPlayer.displayName || gameData.currentQuestion.targetPlayer.username,
+              avatar: gameData.currentQuestion.targetPlayer.avatar,
+            }
+          : null;
+        
+        // Formater la question actuelle
+        const currentQuestion = gameData.currentQuestion 
+          ? {
+              id: gameData.currentQuestion.id,
+              text: gameData.currentQuestion.text,
+              theme: gameData.game.gameMode,
+              roundNumber: gameData.currentQuestion.roundNumber,
+            }
+          : null;
+        
+        // Formater les réponses
+        const answers = gameData.answers 
+          ? gameData.answers.map(answer => ({
+              playerId: answer.playerId.toString(),
+              content: answer.content,
+              votes: answer.votesCount || 0,
+            }))
+          : [];
+        
+        // Formater les joueurs
+        const players = gameData.players
+          ? gameData.players.map(player => ({
+              id: player.id.toString(),
+              name: player.displayName || player.username,
+              avatar: player.avatar || '',
+              isHost: player.isHost,
+              score: gameData.game.scores[player.id] || 0,
+            }))
+          : [];
+        
+        // Déterminer si l'utilisateur est l'hôte
+        setIsHost(gameData.room.hostId === currentUser);
+        
+        // Déterminer la phase de jeu à partir des données du backend
+        let phase;
+        switch(gameData.game.currentPhase) {
+          case 'question':
+            phase = GamePhase.QUESTION;
+            break;
+          case 'answer':
+            phase = GamePhase.ANSWER;
+            break;
+          case 'vote':
+            phase = GamePhase.VOTE;
+            break;
+          case 'results':
+            phase = GamePhase.RESULTS;
+            break;
+          case 'waiting':
+            phase = GamePhase.WAITING;
+            break;
+          default:
+            phase = GamePhase.QUESTION;
         }
-
-        // Simulation d'un chargement de données
-        setTimeout(() => {
-          // Créer des joueurs fictifs + le joueur actuel
-          const mockPlayers: Player[] = [
-            { id: '1', name: 'Francis', avatar: 'avatar1', isReady: true },
-            { id: '2', name: 'Sophie', avatar: 'avatar2', isReady: true },
-            { id: '3', name: 'Thomas', avatar: 'avatar3', isReady: true },
-            { id: '4', name: 'Emma', avatar: 'avatar4', isReady: true },
-          ];
-          
-          // Identifier le joueur courant dans la liste et définir s'il est l'hôte
-          const currentPlayer = mockPlayers.find(p => p.id === '1') || mockPlayers[0];
-          setIsHost(currentPlayer.id === '1');
-          
-          // Initialiser les scores à 0 pour tous les joueurs
-          const initialScores: Record<string, number> = {};
-          mockPlayers.forEach(player => {
-            initialScores[player.id] = 0;
-          });
-          
-          // Choisir un joueur cible au hasard (différent du joueur courant si possible)
-          const eligiblePlayers = mockPlayers.filter(p => p.id !== currentPlayer.id);
-          const targetPlayer = eligiblePlayers.length > 0 
-            ? eligiblePlayers[Math.floor(Math.random() * eligiblePlayers.length)] 
-            : mockPlayers[Math.floor(Math.random() * mockPlayers.length)];
-          
-          // Générer une question aléatoire avec notre nouvelle fonction
-          const questionObj = gameService.generateOfflineQuestion('standard', targetPlayer);
-          
-          setGameState({
-            ...gameState,
-            phase: GamePhase.QUESTION,
-            players: mockPlayers,
-            targetPlayer: targetPlayer,
-            currentQuestion: questionObj,
-            scores: initialScores,
-            theme: 'standard',
-          });
-          
-          setIsReady(true);
-        }, 1500);
+        
+        // Déterminer si l'utilisateur est le joueur cible
+        const isTargetPlayer = gameData.currentUserState?.isTargetPlayer;
+        
+        // Définir l'état du jeu avec les données du backend
+        setGameState({
+          phase: isTargetPlayer && phase === GamePhase.ANSWER ? GamePhase.WAITING : phase,
+          currentRound: gameData.game.currentRound,
+          totalRounds: gameData.game.totalRounds,
+          targetPlayer: targetPlayer,
+          currentQuestion: currentQuestion,
+          answers: answers,
+          players: players,
+          scores: gameData.game.scores,
+          theme: gameData.game.gameMode,
+        });
+        
+        setIsReady(true);
       } catch (error) {
-        console.error('Erreur lors du chargement des données du jeu', error);
-        Alert.alert('Erreur', 'Impossible de charger les données du jeu');
+        console.error('❌ Erreur lors de la récupération des données du jeu:', error);
+        
+        if (axios.isAxiosError(error) && error.response?.status === 404) {
+          setLoadingError('Partie introuvable. Elle est peut-être terminée ou n\'existe pas.');
+        } else if (axios.isAxiosError(error) && error.response?.status === 401) {
+          setLoadingError('Session expirée. Veuillez vous reconnecter.');
+          // Redirection vers la page de connexion après un délai
+          setTimeout(() => {
+            router.replace('/auth/login');
+          }, 2000);
+        } else {
+          setLoadingError('Impossible de se connecter au serveur. Vérifiez votre connexion internet.');
+        }
       }
     };
     
     fetchGameData();
-  }, [id]);
+    
+    // Mettre en place un intervalle pour rafraîchir régulièrement les données
+    const refreshInterval = setInterval(fetchGameData, 5000); // Toutes les 5 secondes
+    
+    // Nettoyage à la fermeture du composant
+    return () => {
+      clearInterval(refreshInterval);
+      // Quitter le canal de jeu WebSocket
+      if (id) {
+        SocketService.leaveGameChannel(id as string);
+      }
+    };
+  }, [id, user, router]);
   
   // Gérer la soumission d'une réponse
   const handleSubmitAnswer = async (answer: string) => {
     if (!user || !gameState.currentQuestion) return;
     
-    // Ajouter un log pour déboguer
-    console.log("Tentative de soumission de réponse:", answer);
-    
     try {
-      // Essayer d'envoyer la réponse au serveur
+      console.log("🎮 Tentative de soumission de réponse...");
+      
+      // Envoyer la réponse au serveur
       await gameService.submitAnswer(id as string, answer);
       
-      // En mode connecté, on attendrait que le serveur nous notifie du changement d'état
-      // Mais pour le mode hors ligne, on simule la transition
-
-      const newAnswer: Answer = {
-        playerId: user.id || '1', // Utilisez l'ID réel de l'utilisateur
-        content: answer,
-        votes: 0,
-      };
-      
-      // Simuler la transition vers la phase suivante (attente)
+      // Afficher un message de confirmation
       Alert.alert("Réponse envoyée", "En attente des autres joueurs...");
       
-      // Simuler que tous les joueurs ont répondu
-      setTimeout(() => {
-        // Simuler les réponses des autres joueurs
-        const mockAnswers: Answer[] = [
-          newAnswer,
-          { playerId: '2', content: 'Une réponse de Sophie', votes: 0 },
-          { playerId: '3', content: 'Une réponse de Thomas', votes: 0 },
-          { playerId: '4', content: 'Une réponse d\'Emma', votes: 0 },
-        ];
-        
-        setGameState(prev => ({
-          ...prev,
-          phase: gameState.targetPlayer?.id === (user.id || '1') 
-            ? GamePhase.VOTE 
-            : GamePhase.WAITING,
-          answers: mockAnswers,
-        }));
-      }, 2000);
+      // Passer en phase d'attente
+      setGameState(prev => ({
+        ...prev,
+        phase: GamePhase.WAITING,
+      }));
     } catch (error) {
-      console.error("Erreur lors de la soumission de la réponse:", error);
+      console.error("❌ Erreur lors de la soumission de la réponse:", error);
       Alert.alert("Erreur", "Impossible d'envoyer votre réponse. Veuillez réessayer.");
     }
   };
@@ -152,52 +192,24 @@ export default function GameScreen() {
     if (!gameState.targetPlayer || !gameState.currentQuestion) return;
     
     try {
-      // Essayer d'envoyer le vote au serveur
+      console.log("🎮 Tentative de vote...");
+      
+      // Envoyer le vote au serveur
       if (gameState.currentQuestion.id) {
         await gameService.submitVote(id as string, answerId, gameState.currentQuestion.id);
       }
       
-      // Mise à jour locale des votes
-      const updatedAnswers = gameState.answers.map(answer => 
-        answer.playerId === answerId 
-          ? { ...answer, votes: answer.votes + 1 } 
-          : answer
-      );
+      // Afficher un message de confirmation
+      Alert.alert("Vote enregistré", "En attente des résultats...");
       
-      // Mise à jour des scores
-      const updatedScores = { ...gameState.scores };
-      updatedScores[answerId] = (updatedScores[answerId] || 0) + 1;
-      
+      // Passer en phase d'attente des résultats
       setGameState(prev => ({
         ...prev,
-        answers: updatedAnswers,
-        scores: updatedScores,
-        phase: GamePhase.RESULTS,
+        phase: GamePhase.WAITING,
       }));
     } catch (error) {
-      console.error("Erreur lors du vote:", error);
+      console.error("❌ Erreur lors du vote:", error);
       Alert.alert("Erreur", "Impossible d'enregistrer votre vote. Veuillez réessayer.");
-    }
-  };
-  
-  // Générer une nouvelle question
-  const generateNewQuestion = async (theme: string, targetPlayer: Player) => {
-    try {
-      // Essayer d'abord de récupérer une question depuis le backend
-      const questionFromAPI = await gameService.getRandomQuestion(theme, targetPlayer.name);
-      
-      if (questionFromAPI) {
-        console.log('Question récupérée depuis le backend');
-        return questionFromAPI;
-      } else {
-        // Si le backend ne répond pas, utiliser la génération locale
-        console.log('Utilisation de la génération locale de questions');
-        return gameService.generateOfflineQuestion(theme, targetPlayer);
-      }
-    } catch (error) {
-      console.error('Erreur lors de la génération de question:', error);
-      // En cas d'erreur, utiliser la génération locale
-      return gameService.generateOfflineQuestion(theme, targetPlayer);
     }
   };
   
@@ -210,30 +222,18 @@ export default function GameScreen() {
     }
     
     try {
-      // Essayer d'envoyer la demande de tour suivant au serveur
+      console.log("🎮 Tentative de passage au tour suivant...");
+      
+      // Envoyer la demande de tour suivant au serveur
       await gameService.nextRound(id as string);
       
-      // Pour le mode hors ligne, simuler le passage au tour suivant
-      
-      // Sélectionner un nouveau joueur cible et générer une nouvelle question
-      const eligiblePlayers = gameState.players.filter(p => p.id !== (user?.id || '1'));
-      const targetPlayer = eligiblePlayers.length > 0 
-        ? eligiblePlayers[Math.floor(Math.random() * eligiblePlayers.length)] 
-        : gameState.players[Math.floor(Math.random() * gameState.players.length)];
-      
-      // Utiliser notre nouvelle fonction pour générer une question
-      const questionObj = await generateNewQuestion(gameState.theme, targetPlayer);
-      
+      // Afficher un message de chargement
       setGameState(prev => ({
         ...prev,
-        phase: GamePhase.QUESTION,
-        currentRound: prev.currentRound + 1,
-        targetPlayer: targetPlayer,
-        currentQuestion: questionObj,
-        answers: [],
+        phase: GamePhase.LOADING,
       }));
     } catch (error) {
-      console.error("Erreur lors du passage au tour suivant:", error);
+      console.error("❌ Erreur lors du passage au tour suivant:", error);
       Alert.alert("Erreur", "Impossible de passer au tour suivant. Veuillez réessayer.");
     }
   };
@@ -261,7 +261,7 @@ export default function GameScreen() {
   const renderGamePhase = () => {
     switch (gameState.phase) {
       case GamePhase.LOADING:
-        return <LoadingOverlay message="Préparation de la partie..." />;
+        return <LoadingOverlay message="Préparation de la partie" />;
         
       case GamePhase.QUESTION:
         return (
@@ -277,7 +277,7 @@ export default function GameScreen() {
       case GamePhase.WAITING:
         return (
           <LoadingOverlay 
-            message={`${gameState.targetPlayer?.name} est en train de lire les réponses...`}
+            message={`Attente des autres joueurs...`}
           />
         );
         
@@ -315,7 +315,7 @@ export default function GameScreen() {
           colors={['#1a0933', '#321a5e']}
           style={styles.background}
         />
-        <LoadingOverlay message="Chargement de la partie..." />
+        <LoadingOverlay message={loadingError || "Chargement de la partie..."} />
       </View>
     );
   }

@@ -9,6 +9,7 @@
 
 import router from '@adonisjs/core/services/router'
 import { middleware } from '#start/kernel'
+import socketService from '#services/socket_service'
 
 // Importation des contrôleurs
 const AuthController = () => import('#controllers/auth_controller')
@@ -75,7 +76,32 @@ router
 
     // Route publique pour récupérer des questions aléatoires
     router.get('/questions/random', [QuestionsController, 'getRandom'])
+
+    // Route de diagnostic WebSocket
+    router.get('/ws/status', ({ response }) => {
+      try {
+        const io = socketService.getInstance()
+        const sockets = io.sockets.sockets
+
+        const clientCount = io.engine?.clientsCount || 0
+        const socketCount = sockets ? sockets.size : 0
+
+        return response.ok({
+          status: 'success',
+          data: {
+            initialized: !!io,
+            clientCount,
+            socketCount,
+            wsUrl: process.env.WS_HOST + ':' + process.env.WS_PORT,
+          },
+        })
+      } catch (error) {
+        return response.internalServerError({
+          status: 'error',
+          message: 'WebSocket not initialized',
+          error: error.message,
+        })
+      }
+    })
   })
   .prefix('/api/v1')
-
-// Pas besoin de routes d'admin pour les questions, elles seront prédéfinies

@@ -1,6 +1,5 @@
-import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { API_URL } from '@/config/axios';
+import api from '@/services/api';
 
 export interface User {
   id: number;
@@ -43,34 +42,52 @@ export async function getToken(): Promise<string | null> {
 
 class AuthService {
   // Enregistrement ou connexion (selon si l'utilisateur existe déjà)
-  async registerOrLogin(username: string): Promise<AuthResponse> {
+  async registerOrLogin(username: string): Promise<User> {
     console.log(`🔐 Tentative d'authentification pour l'utilisateur: ${username}`);
     try {
-      console.log('🌐 Envoi requête POST:', `${API_URL}/auth/register-or-login`);
-      const response = await axios.post(`${API_URL}/auth/register-or-login`, { username });
+      console.log('🌐 Envoi requête POST:', `/auth/register-or-login`);
+      const response = await api.post(`/auth/register-or-login`, { username });
       console.log('✅ Authentification réussie:', response.data?.status === 'success' ? 'succès' : 'échec');
       
-      // Stocker immédiatement le token et les données utilisateur
-      if (response.data?.status === 'success' && response.data?.data) {
-        const userData = {
-          id: response.data.data.id,
-          username: response.data.data.username,
-          displayName: response.data.data.displayName,
-          avatar: response.data.data.avatar,
-          level: response.data.data.level || 1,
-          experiencePoints: response.data.data.experiencePoints || 0,
-          token: response.data.data.token
-        };
+      // Extraire les données utilisateur
+      let userData;
+      
+      if (response.data?.status === 'success') {
+        if (response.data?.data?.user) {
+          // Format de réponse avec un niveau nested 'user'
+          userData = {
+            id: response.data.data.user.id,
+            username: response.data.data.user.username,
+            displayName: response.data.data.user.displayName,
+            avatar: response.data.data.user.avatar,
+            level: response.data.data.user.level || 1,
+            experiencePoints: response.data.data.user.experiencePoints || 0,
+            token: response.data.data.token
+          };
+        } else if (response.data?.data) {
+          // Format de réponse plat
+          userData = {
+            id: response.data.data.id,
+            username: response.data.data.username,
+            displayName: response.data.data.displayName,
+            avatar: response.data.data.avatar,
+            level: response.data.data.level || 1,
+            experiencePoints: response.data.data.experiencePoints || 0,
+            token: response.data.data.token
+          };
+        }
         
-        await Promise.all([
-          AsyncStorage.setItem('@auth_token', response.data.data.token),
-          AsyncStorage.setItem('@user_data', JSON.stringify(userData))
-        ]);
+        // Stocker le token et les données utilisateur
+        if (userData?.token) {
+          await AsyncStorage.setItem('@auth_token', userData.token);
+          await AsyncStorage.setItem('@user_data', JSON.stringify(userData));
+          console.log('✅ Token et données utilisateur stockés localement');
+        }
         
-        console.log('✅ Token et données utilisateur stockés localement');
+        return userData;
       }
       
-      return response.data;
+      throw new Error('Format de réponse invalide');
     } catch (error) {
       console.error('❌ Erreur d\'authentification:', error);
       console.error('Détails:', error.response?.data || error.message);
@@ -110,6 +127,29 @@ class AuthService {
   async getCurrentUser(): Promise<User | null> {
     console.log('🔐 Récupération des informations utilisateur');
     try {
+      // Essayer d'obtenir les données depuis l'API en premier
+      try {
+        const response = await api.get(`/users/profile`);
+        if (response.data?.status === 'success' && response.data?.data) {
+          const userData = {
+            id: response.data.data.id,
+            username: response.data.data.username,
+            displayName: response.data.data.display_name,
+            avatar: response.data.data.avatar,
+            level: response.data.data.level,
+            experiencePoints: response.data.data.experience_points,
+          };
+          
+          // Mettre à jour le stockage local avec les données fraîches
+          await AsyncStorage.setItem('@user_data', JSON.stringify(userData));
+          console.log('✅ Données utilisateur récupérées depuis l\'API et mises en cache');
+          return userData;
+        }
+      } catch (apiError) {
+        console.log('⚠️ Impossible d\'obtenir les données utilisateur depuis l\'API, tentative de récupération locale');
+      }
+      
+      // Fallback au stockage local si l'API échoue
       const userData = await AsyncStorage.getItem('@user_data');
       if (!userData) {
         console.log('🔐 Aucune donnée utilisateur trouvée');
@@ -117,7 +157,7 @@ class AuthService {
       }
       
       const user = JSON.parse(userData);
-      console.log('✅ Données utilisateur récupérées:', user.username);
+      console.log('✅ Données utilisateur récupérées du cache local:', user.username);
       return user;
     } catch (error) {
       console.error('❌ Erreur lors de la récupération des données utilisateur:', error);
