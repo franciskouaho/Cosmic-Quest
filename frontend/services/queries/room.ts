@@ -2,6 +2,7 @@ import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { API_URL } from '@/config/axios';
 import NetInfo from '@react-native-community/netinfo';
+import SocketService from '@/services/socketService'; // Ajout de l'import manquant
 
 export interface Room {
   id: number;
@@ -202,13 +203,31 @@ class RoomService {
       const url = `${API_URL}/rooms/${roomCode}/join`;
       console.log('🌐 Envoi requête POST:', url);
       
-      const response = await axios.post(url, {}, { 
-        headers,
-        timeout: 20000 // 20 secondes
-      });
-      
-      console.log('✅ Salle rejointe avec succès:', response.status);
-      return response.data;
+      try {
+        const response = await axios.post(url, {}, { 
+          headers,
+          timeout: 20000 // 20 secondes
+        });
+        
+        console.log('✅ Salle rejointe avec succès:', response.status);
+        
+        // Rejoindre également via WebSocket après succès HTTP en utilisant try/catch
+        try {
+          // Utilisation sécurisée avec import existant
+          SocketService.joinRoom(roomCode);
+          console.log(`✅ Demande WebSocket pour rejoindre la salle ${roomCode} envoyée`);
+        } catch (socketError) {
+          console.error('❌ Erreur WebSocket ignorée:', socketError);
+          // Continue malgré l'erreur WebSocket car la requête HTTP a réussi
+        }
+        
+        return response.data;
+      } catch (axiosError: any) {
+        console.error(`❌ Erreur HTTP lors de la tentative de rejoindre la salle ${roomCode}:`, 
+          axiosError.response?.status || 'Sans statut', 
+          axiosError.response?.data || axiosError.message);
+        throw axiosError;
+      }
     } catch (error: any) {
       console.error(`❌ Erreur lors de la tentative de rejoindre la salle ${roomCode}:`, error);
       
@@ -243,6 +262,15 @@ class RoomService {
       });
       
       console.log('✅ Salle quittée avec succès:', response.status);
+      
+      // Également quitter la salle via WebSocket
+      try {
+        SocketService.leaveRoom(roomCode);
+        console.log(`✅ Demande WebSocket pour quitter la salle ${roomCode} envoyée`);
+      } catch (socketError) {
+        console.error('❌ Erreur WebSocket ignorée lors de la tentative de quitter:', socketError);
+      }
+      
       return response.data;
     } catch (error: any) {
       console.error(`❌ Erreur lors de la tentative de quitter la salle ${roomCode}:`, error);

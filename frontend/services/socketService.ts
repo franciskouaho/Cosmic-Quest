@@ -88,22 +88,44 @@ class SocketService {
     const socket = this.getInstance();
     console.log(`🚪 Tentative de rejoindre la salle ${roomCode}`);
     
+    if (!roomCode) {
+      console.error('❌ Code de salle non valide ou manquant');
+      return;
+    }
+    
     // Ajouter à la liste des salles actives
     this.activeRooms.add(roomCode);
     
+    // Envoyer l'événement join:room avec le code de la salle
     socket.emit('join:room', { roomCode });
     console.log(`✅ Demande d'entrée dans la salle ${roomCode} envoyée`);
+    
+    // Vérification de connexion
+    if (!socket.connected) {
+      console.warn(`⚠️ Socket non connecté lors de l'envoi de la demande pour rejoindre ${roomCode}`);
+    }
   }
 
   static leaveRoom(roomCode: string) {
     const socket = this.getInstance();
     console.log(`🚪 Tentative de quitter la salle ${roomCode}`);
     
+    if (!roomCode) {
+      console.error('❌ Code de salle non valide ou manquant');
+      return;
+    }
+    
     // Retirer de la liste des salles actives
     this.activeRooms.delete(roomCode);
     
+    // Envoyer l'événement leave:room avec le code de la salle
     socket.emit('leave:room', { roomCode });
     console.log(`✅ Demande de sortie de la salle ${roomCode} envoyée`);
+    
+    // Vérification de connexion
+    if (!socket.connected) {
+      console.warn(`⚠️ Socket non connecté lors de l'envoi de la demande pour quitter ${roomCode}`);
+    }
   }
 
   static isConnected(): boolean {

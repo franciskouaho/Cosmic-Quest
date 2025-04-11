@@ -68,25 +68,6 @@ class RoomService {
         throw new Error('Pas de connexion internet. Veuillez vérifier votre connexion et réessayer.');
       }
 
-      // Vérification et initialisation de la connexion WebSocket
-      if (!SocketService.isConnected()) {
-        console.log('⚠️ WebSocket non connecté. Tentative de reconnexion...');
-        try {
-          const socket = SocketService.reconnect();
-          // Attendre un peu pour que la connexion s'établisse
-          await new Promise(resolve => setTimeout(resolve, 1000));
-          
-          if (!socket.connected) {
-            console.log('⚠️ WebSocket toujours non connecté après tentative. Continuons avec la requête HTTP...');
-          } else {
-            console.log('✅ WebSocket reconnecté avec succès');
-          }
-        } catch (wsError) {
-          console.error('❌ Échec de la reconnexion WebSocket:', wsError);
-          // Continuons avec la requête HTTP même si WebSocket échoue
-        }
-      }
-
       // Récupération du token d'authentification
       const token = await AsyncStorage.getItem('@auth_token');
       if (!token) {
@@ -100,12 +81,29 @@ class RoomService {
       };
 
       console.log(`🌐 Envoi de la requête pour rejoindre la salle ${roomCode}`);
+      
+      // Première étape : vérifier l'état de la connexion WebSocket mais sans dépendre du résultat
+      const isSocketConnected = SocketService.isConnected();
+      console.log(`🔌 État de la connexion WebSocket: ${isSocketConnected ? 'Connecté' : 'Non connecté'}`);
+      
+      // Deuxième étape : effectuer la requête HTTP
       const response = await api.post(`/rooms/${roomCode}/join`, {}, { headers });
       console.log('✅ Salle rejointe avec succès:', response.data?.status);
       
-      // Rejoindre le canal WebSocket de la salle, même si la connexion échoue,
-      // cela permettra de rejoindre automatiquement lors de la reconnexion
-      SocketService.joinRoom(roomCode);
+      // Troisième étape : essayer d'envoyer un message WebSocket dans un bloc try-catch séparé
+      try {
+        // Appel direct sans stocker de référence intermédiaire
+        import('./socketService').then(module => {
+          const socketServiceModule = module.default;
+          socketServiceModule.joinRoom(roomCode);
+          console.log(`✅ Demande WebSocket pour rejoindre la salle ${roomCode} envoyée`);
+        }).catch(err => {
+          console.error('❌ Erreur lors du chargement du module socketService:', err);
+        });
+      } catch (socketError) {
+        // Ne pas faire échouer l'opération à cause d'une erreur WebSocket
+        console.error('❌ Erreur WebSocket ignorée:', socketError);
+      }
       
       return response.data;
     } catch (error: any) {

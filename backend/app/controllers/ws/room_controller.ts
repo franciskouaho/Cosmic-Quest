@@ -227,18 +227,43 @@ export default class RoomsController {
   /**
    * Rejoindre une salle existante
    */
-  async join({ request, response, auth }: HttpContext) {
+  async join({ request, response, auth, params }: HttpContext) {
     try {
       const user = await auth.authenticate()
-      const { roomCode } = request.params()
+      const roomCode = params.code
+
+      console.log(`Tentative de rejoindre la salle avec le code: ${roomCode}`)
 
       const room = await Room.findBy('code', roomCode)
       if (!room) {
         return response.notFound({ error: 'Salle non trouvée' })
       }
 
-      // Ajouter le joueur à la salle
-      await room.related('players').attach([user.id])
+      // Vérifier si l'utilisateur est déjà dans la salle
+      const isAlreadyInRoom = await room
+        .related('players')
+        .query()
+        .where('user_id', user.id)
+        .first()
+
+      if (isAlreadyInRoom) {
+        console.log(
+          `L'utilisateur ${user.username} (ID: ${user.id}) est déjà dans la salle ${roomCode}`
+        )
+        return response.ok({
+          status: 'success',
+          message: 'Vous êtes déjà dans cette salle',
+          data: { alreadyJoined: true },
+        })
+      }
+
+      // Ajouter le joueur à la salle avec la date de jointure
+      await room.related('players').attach({
+        [user.id]: {
+          is_ready: false, // Par défaut, le joueur qui rejoint n'est pas prêt
+          joined_at: DateTime.now().toSQL(),
+        },
+      })
 
       // Notifier les autres joueurs via Socket.IO
       const io = socketService.getInstance()
@@ -270,7 +295,9 @@ export default class RoomsController {
   async leave({ response, auth, params }: HttpContext) {
     try {
       const user = await auth.authenticate()
-      const { roomCode } = params
+      const roomCode = params.code
+
+      console.log(`Tentative de quitter la salle avec le code: ${roomCode}`)
 
       const room = await Room.findBy('code', roomCode)
       if (!room) {
