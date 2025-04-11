@@ -7,15 +7,30 @@ export const createRoomValidator = vine.compile(
   vine.object({
     name: vine.string().trim().minLength(3).maxLength(50),
 
+    // Accepter à la fois is_private et isPrivate
     is_private: vine.boolean().optional(),
+    isPrivate: vine.boolean().optional(),
 
+    // Accepter à la fois max_players et maxPlayers
     max_players: vine.number().range(2, 8).optional(),
+    maxPlayers: vine.number().range(2, 8).optional(),
 
-    game_mode: vine.string().in(['standard', 'crazy', 'fun', 'dark', 'personal']).optional(),
+    // Mode de jeu avec validation de caractères alphanumériques et tirets
+    game_mode: vine
+      .string()
+      .regex(/^[a-zA-Z0-9-]+$/)
+      .optional(),
+    gameMode: vine
+      .string()
+      .regex(/^[a-zA-Z0-9-]+$/)
+      .optional(),
 
+    // Nombre de tours
     total_rounds: vine.number().range(1, 10).optional(),
+    totalRounds: vine.number().range(1, 10).optional(),
 
-    settings: vine.object().optional(),
+    // Utiliser un type plus générique pour settings
+    settings: vine.any().optional(),
   })
 )
 
@@ -24,7 +39,7 @@ export const createRoomValidator = vine.compile(
  */
 export const joinRoomValidator = vine.compile(
   vine.object({
-    code: vine.string().trim().minLength(6).maxLength(8),
+    code: vine.string().trim().minLength(4).maxLength(8),
   })
 )
 

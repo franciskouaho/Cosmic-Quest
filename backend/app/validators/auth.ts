@@ -1,6 +1,6 @@
 import vine, { SimpleMessagesProvider } from '@vinejs/vine'
 
-// Configuration du provider de messages
+// Configuration du provider de messages personnalisés
 vine.messagesProvider = new SimpleMessagesProvider({
   'username.regex':
     "Le nom d'utilisateur doit contenir uniquement des lettres, chiffres et underscores",
@@ -8,6 +8,8 @@ vine.messagesProvider = new SimpleMessagesProvider({
   'username.maxLength': "Le nom d'utilisateur ne doit pas dépasser 30 caractères",
   'displayName.minLength': "Le nom d'affichage doit contenir au moins 2 caractères",
   'displayName.maxLength': "Le nom d'affichage ne doit pas dépasser 50 caractères",
+  'game_mode.regex': 'Mode de jeu invalide',
+  'gameMode.regex': 'Mode de jeu invalide',
 })
 
 /**

@@ -9,83 +9,90 @@ import {
   TouchableOpacity,
   KeyboardAvoidingView,
   Platform,
-  useColorScheme,
   Image,
   StatusBar,
   SafeAreaView,
+  Alert,
+  ActivityIndicator,
 } from "react-native"
 import { LinearGradient } from "expo-linear-gradient"
 import { useAuth } from "@/contexts/AuthContext"
-import Colors from "@/constants/Colors"
 import { Feather } from "@expo/vector-icons"
 
 export default function LoginScreen() {
-  const colorScheme = useColorScheme() ?? "dark"
-  const colors = Colors[colorScheme]
-  const { signIn } = useAuth()
+  const { signIn, isSigningIn } = useAuth()
   const [username, setUsername] = useState("")
-  const [isLoading, setIsLoading] = useState(false)
 
   const handleLogin = async () => {
-    if (!username.trim()) return
+    if (!username.trim() || isSigningIn) return
 
-    setIsLoading(true)
     try {
-      await signIn(username)
-    } catch (error) {
-      console.error("Erreur de connexion:", error)
-    } finally {
-      setIsLoading(false)
+      await signIn(username.trim())
+    } catch (error: any) {
+      console.error('❌ Login échoué:', error)
+      Alert.alert(
+        "Erreur de connexion",
+        error?.response?.data?.error || "Une erreur est survenue lors de la connexion."
+      )
     }
   }
 
+  const isButtonDisabled = isSigningIn || !username.trim()
+
   return (
     <SafeAreaView style={styles.safeArea}>
+      <LinearGradient
+        colors={["#1a0933", "#321a5e"]}
+        style={StyleSheet.absoluteFill}
+      />
       <StatusBar barStyle="light-content" />
-        {/* Main content */}
-        <View style={styles.content}>
-          {/* Logo and title */}
-          <View style={styles.logoContainer}>
-            <Text style={styles.title}>Cosmic Quest</Text>
-            <Text style={styles.subtitle}>play with friends</Text>
-          </View>
-
-          {/* Characters image placeholder */}
-          <View style={styles.charactersContainer}>
-            <Image
-              source={{ uri: "https://placeholder.svg?height=400&width=400" }}
-              style={styles.charactersImage}
-              resizeMode="contain"
-            />
-          </View>
-
-          {/* Input field at bottom */}
-          <View style={styles.inputBottomContainer}>
-            <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.inputWrapper}>
-              <View style={styles.inputContainer}>
-                <TextInput
-                  style={styles.inputField}
-                  placeholder="Francis"
-                  placeholderTextColor="rgba(255,255,255,0.6)"
-                  value={username}
-                  onChangeText={setUsername}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  maxLength={15}
-                />
-              </View>
-              <TouchableOpacity
-                style={[styles.sendButton, { opacity: isLoading || !username.trim() ? 0.7 : 1 }]}
-                onPress={handleLogin}
-                disabled={isLoading || !username.trim()}
-              >
-                <Feather name="send" color="#ffffff" size={24} />
-              </TouchableOpacity>
-            </KeyboardAvoidingView>
-            {/* Home indicator */}
-            <View style={styles.homeIndicator} />
-          </View>
+      <View style={styles.content}>
+        <View style={styles.logoContainer}>
+          <Text style={styles.title}>Cosmic Quest</Text>
+          <Text style={styles.subtitle}>play with friends</Text>
         </View>
+
+        {/*<View style={styles.charactersContainer}>
+          <Image
+            source={require("@/assets/images/characters.png")}
+            style={styles.charactersImage}
+            resizeMode="contain"
+          />
+        </View>*/}
+
+        <View style={styles.inputBottomContainer}>
+          <KeyboardAvoidingView 
+            behavior={Platform.OS === "ios" ? "padding" : "height"} 
+            style={styles.inputWrapper}
+          >
+            <View style={styles.inputContainer}>
+              <TextInput
+                style={styles.inputField}
+                placeholder="Entrez votre pseudo"
+                placeholderTextColor="rgba(255,255,255,0.6)"
+                value={username}
+                onChangeText={setUsername}
+                autoCapitalize="none"
+                autoCorrect={false}
+                maxLength={15}
+                editable={!isSigningIn}
+              />
+            </View>
+            <TouchableOpacity
+              style={[styles.sendButton, { opacity: isButtonDisabled ? 0.7 : 1 }]}
+              onPress={handleLogin}
+              disabled={isButtonDisabled}
+            >
+              {isSigningIn ? (
+                <ActivityIndicator color="#ffffff" />
+              ) : (
+                <Feather name="send" color="#ffffff" size={24} />
+              )}
+            </TouchableOpacity>
+          </KeyboardAvoidingView>
+          <View style={styles.homeIndicator} />
+        </View>
+      </View>
     </SafeAreaView>
   )
 }

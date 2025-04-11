@@ -1,51 +1,53 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, KeyboardAvoidingView, Platform, Image, ScrollView, Alert } from 'react-native';
+import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, Alert } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
-import { MaterialCommunityIcons, FontAwesome5, Ionicons } from '@expo/vector-icons';
+import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 import BottomTabBar from '../components/BottomTabBar';
 import { useRouter } from 'expo-router';
+import { useJoinRoom } from '@/hooks/useRooms';
+import { useQuery } from '@tanstack/react-query';
+import { userService } from '@/services/queries/user';
+import LoadingOverlay from '@/components/common/LoadingOverlay';
 
 export default function JointSalle() {
   const router = useRouter();
   const [roomCode, setRoomCode] = useState('');
-  const [recentRooms, setRecentRooms] = useState([
-    { id: '1', name: 'Salle de Francis', players: 3, maxPlayers: 5, isPrivate: false },
-    { id: '2', name: 'Tournoi Stellaire', players: 4, maxPlayers: 4, isPrivate: true },
-    { id: '3', name: 'Débutants Bienvenus', players: 2, maxPlayers: 6, isPrivate: false },
-  ]);
+
+  const { mutate: joinRoom, isPending: isJoining } = useJoinRoom();
+
+  const {
+    data: recentRooms = [],
+    isLoading: isLoadingRecentRooms,
+    error: recentRoomsError,
+  } = useQuery({
+    queryKey: ['user', 'recentRooms'],
+    queryFn: () => userService.getUserRecentRooms(),
+    staleTime: 1000 * 60 * 5,
+  });
 
   const handleJoinRoom = (code = roomCode) => {
-    // Logique pour rejoindre une salle avec le code fourni
-    console.log(`Rejoindre la salle avec le code: ${code}`);
-    
-    // Vérifie si le code est valide
     if (code) {
-      // Afficher une alerte pour indiquer que la connexion est en cours
-      Alert.alert("Connexion en cours", `Tentative de connexion à la salle ${code}...`);
-      
-      // Navigation vers la page de la salle avec l'ID
-      setTimeout(() => {
-        router.push(`/room/${code}`);
-      }, 500);
+      joinRoom(code);
+    } else {
+      Alert.alert('Erreur', 'Veuillez entrer un code de salle valide');
     }
   };
 
   const handleScanQR = () => {
-    // Logique pour ouvrir le scanner QR code
     console.log('Ouverture du scanner QR code');
-    Alert.alert("Scanner QR", "Ouverture du scanner de code QR...");
+    Alert.alert('Scanner QR', 'Ouverture du scanner de code QR...');
   };
+
+  if (isJoining) {
+    return <LoadingOverlay message="Tentative de connexion à la salle..." />;
+  }
 
   return (
     <View style={styles.container}>
       <StatusBar style="light" />
-      
-      {/* Fond dégradé */}
-      <LinearGradient
-        colors={['#1a0933', '#321a5e']}
-        style={styles.background}
-      />
+
+      <LinearGradient colors={['#1a0933', '#321a5e']} style={styles.background} />
 
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Rejoindre une partie</Text>
@@ -62,25 +64,25 @@ export default function JointSalle() {
                 onChangeText={setRoomCode}
                 placeholder="Entrez le code à 6 chiffres"
                 placeholderTextColor="rgba(255,255,255,0.5)"
-                keyboardType="number-pad"
+                keyboardType="default"
                 maxLength={6}
                 autoCapitalize="characters"
               />
             </View>
-            
+
             <View style={styles.buttonsContainer}>
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={[styles.actionButton, styles.qrButton]}
                 onPress={handleScanQR}
                 activeOpacity={0.7}
               >
                 <Ionicons name="qr-code" size={22} color="#fff" />
               </TouchableOpacity>
-              
-              <TouchableOpacity 
+
+              <TouchableOpacity
                 style={[styles.actionButton, styles.joinButton, !roomCode ? styles.joinButtonDisabled : null]}
                 onPress={() => handleJoinRoom()}
-                disabled={!roomCode}
+                disabled={!roomCode || isJoining}
                 activeOpacity={0.8}
               >
                 <Text style={styles.joinButtonText}>Rejoindre</Text>
@@ -97,48 +99,62 @@ export default function JointSalle() {
 
         <View style={styles.recentSection}>
           <Text style={styles.sectionTitle}>Parties récentes</Text>
-          {recentRooms.map(room => (
-            <TouchableOpacity 
-              key={room.id}
-              style={styles.roomCard}
-              onPress={() => handleJoinRoom(room.id)}
-              activeOpacity={0.8}
-            >
-              <LinearGradient
-                colors={['rgba(93, 109, 255, 0.2)', 'rgba(93, 109, 255, 0.05)']}
-                style={styles.roomCardGradient}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
+
+          {isLoadingRecentRooms ? (
+            <Text style={styles.loadingText}>Chargement des salles récentes...</Text>
+          ) : recentRoomsError ? (
+            <Text style={styles.errorText}>Impossible de charger les salles récentes</Text>
+          ) : recentRooms.length === 0 ? (
+            <Text style={styles.emptyText}>Aucune salle récente trouvée</Text>
+          ) : (
+            recentRooms.map((room) => (
+              <TouchableOpacity
+                key={room.id}
+                style={styles.roomCard}
+                onPress={() => handleJoinRoom(room.code)}
+                activeOpacity={0.8}
               >
-                <View style={styles.roomInfo}>
-                  <Text style={styles.roomName}>{room.name}</Text>
-                  <View style={styles.roomDetails}>
-                    <View style={styles.playerCount}>
-                      <FontAwesome5 name="user-astronaut" size={14} color="rgba(255,255,255,0.8)" />
-                      <Text style={styles.playerCountText}>{room.players}/{room.maxPlayers}</Text>
-                    </View>
-                    {room.isPrivate && (
-                      <View style={styles.privateTag}>
-                        <MaterialCommunityIcons name="lock" size={14} color="rgba(255,255,255,0.8)" />
-                        <Text style={styles.privateTagText}>Privée</Text>
+                <LinearGradient
+                  colors={['rgba(93, 109, 255, 0.2)', 'rgba(93, 109, 255, 0.05)']}
+                  style={styles.roomCardGradient}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                >
+                  <View style={styles.roomInfo}>
+                    <Text style={styles.roomName}>{room.name}</Text>
+                    <View style={styles.roomDetails}>
+                      <View style={styles.playerCount}>
+                        <Text style={styles.playerCountText}>{room.game_mode}</Text>
                       </View>
-                    )}
+                      {room.status !== 'waiting' && (
+                        <View style={styles.privateTag}>
+                          <MaterialCommunityIcons
+                            name={room.status === 'playing' ? 'gamepad-variant' : 'check-circle'}
+                            size={14}
+                            color="rgba(255,255,255,0.8)"
+                          />
+                          <Text style={styles.privateTagText}>
+                            {room.status === 'playing' ? 'En cours' : 'Terminée'}
+                          </Text>
+                        </View>
+                      )}
+                    </View>
                   </View>
-                </View>
-                <MaterialCommunityIcons 
-                  name="arrow-right-circle" 
-                  size={28} 
-                  color="#5D6DFF" 
-                  style={styles.joinIcon} 
-                />
-              </LinearGradient>
-            </TouchableOpacity>
-          ))}
+                  <MaterialCommunityIcons
+                    name="arrow-right-circle"
+                    size={28}
+                    color="#5D6DFF"
+                    style={styles.joinIcon}
+                  />
+                </LinearGradient>
+              </TouchableOpacity>
+            ))
+          )}
         </View>
 
         <View style={styles.bottomTabBarPlaceholder} />
       </ScrollView>
-      
+
       <BottomTabBar />
     </View>
   );
@@ -305,28 +321,22 @@ const styles = StyleSheet.create({
   joinIcon: {
     marginLeft: 10,
   },
-  createRoomSection: {
-    marginBottom: 50,
-  },
-  createRoomButton: {
-    borderRadius: 12,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(93, 109, 255, 0.5)',
-  },
-  createRoomGradient: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 16,
-  },
-  createRoomText: {
-    color: 'white',
-    fontWeight: 'bold',
-    fontSize: 16,
-    marginLeft: 10,
-  },
   bottomTabBarPlaceholder: {
-    height: 70, // hauteur approximative de la BottomTabBar
+    height: 70,
+  },
+  loadingText: {
+    color: 'rgba(255,255,255,0.7)',
+    textAlign: 'center',
+    padding: 20,
+  },
+  errorText: {
+    color: '#ff6b6b',
+    textAlign: 'center',
+    padding: 20,
+  },
+  emptyText: {
+    color: 'rgba(255,255,255,0.5)',
+    textAlign: 'center',
+    padding: 20,
   },
 });

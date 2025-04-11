@@ -30,3 +30,9 @@ export const nextRoundValidator = vine.compile(
     game_id: vine.number().positive(),
   })
 )
+
+export const gameValidator = vine.compile(
+  vine.object({
+    displayName: vine.string().optional(),
+  })
+)

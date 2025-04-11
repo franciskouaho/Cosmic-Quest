@@ -1,8 +1,6 @@
 import User from '#models/user'
 import { HttpContext } from '@adonisjs/core/http'
 import { updateUserValidator } from '#validators/user'
-import { DateTime } from 'luxon'
-import UserAchievement from '#models/user_achievement'
 import UserRecentRoom from '#models/user_recent_room'
 
 export default class UsersController {
@@ -29,7 +27,7 @@ export default class UsersController {
         data: {
           id: user.id,
           username: user.username,
-          display_name: user.display_name,
+          display_name: user.displayName,
           avatar: user.avatar,
           level: user.level,
           experience_points: user.experiencePoints,
@@ -82,7 +80,7 @@ export default class UsersController {
 
       // Mise à jour des champs
       if (payload.display_name !== undefined) {
-        user.display_name = payload.display_name
+        user.displayName = payload.display_name
       }
 
       if (payload.avatar !== undefined) {
@@ -97,7 +95,7 @@ export default class UsersController {
         data: {
           id: user.id,
           username: user.username,
-          display_name: user.display_name,
+          display_name: user.displayName,
           avatar: user.avatar,
           level: user.level,
           experience_points: user.experiencePoints,

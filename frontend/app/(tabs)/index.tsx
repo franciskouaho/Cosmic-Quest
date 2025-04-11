@@ -1,4 +1,6 @@
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Image } from "react-native"
+"use client"
+
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Image, Alert } from "react-native"
 import { StatusBar } from "expo-status-bar"
 import { LinearGradient } from "expo-linear-gradient"
 import { useAuth } from "@/contexts/AuthContext"
@@ -6,49 +8,107 @@ import { Feather } from "@expo/vector-icons"
 import { router } from "expo-router"
 import BottomTabBar from "@/components/BottomTabBar"
 import TopBar from "@/components/TopBar"
+import SocketService from '@/services/socketService';
+import RoomService from '@/services/roomService';
+import { useEffect } from 'react';
+import NetInfo from '@react-native-community/netinfo';
+import { useCreateRoom } from '@/hooks/useCreateRoom';
+import LoadingOverlay from '@/components/common/LoadingOverlay';
 
 export default function HomeScreen() {
-  const { user, signOut } = useAuth()
+  const { user } = useAuth()
+
+  // Gérer la création d'une salle de jeu
+  const { mutate: createRoom, isPending: isCreatingRoom } = useCreateRoom();
   
-  const goToSettings = () => {
-    router.push("/settings")
-  }
-  
-  // Fonction pour créer une nouvelle salle de jeu
-  const createGameRoom = (modeId: string) => {
-    // Génération d'un ID aléatoire à 8 caractères pour la salle
-    const characters = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // Caractères sans ambiguïté (pas de 0, O, 1, I)
-    let roomId = '';
-    
-    for (let i = 0; i < 8; i++) {
-      roomId += characters.charAt(Math.floor(Math.random() * characters.length));
+  const createGameRoom = async (modeId: string) => {
+    // Vérifier la connexion internet
+    const netInfo = await NetInfo.fetch();
+    if (!netInfo.isConnected) {
+      Alert.alert(
+        'Erreur de connexion',
+        'Pas de connexion internet. Veuillez vérifier votre connexion et réessayer.'
+      );
+      return;
     }
     
-    // Navigation vers la page de la salle avec l'ID généré
-    router.push(`/room/${roomId}?mode=${modeId}`);
+    try {
+      console.log('🎮 Tentative de création de salle avec mode:', modeId);
+      
+      // S'assurer que toutes les propriétés sont correctement définies et nommées
+      createRoom({
+        name: `Salle de ${user?.username || 'Joueur'}`,
+        game_mode: modeId,
+        max_players: 6,
+        total_rounds: 5,
+        // Ne pas envoyer is_private si undefined
+      });
+    } catch (error: any) {
+      console.error('❌ Erreur lors de la création de la salle:', error);
+      Alert.alert(
+        'Erreur',
+        error.message || 'Impossible de créer la salle'
+      );
+    }
+  };
+
+  // Gérer les connexions WebSocket
+  useEffect(() => {
+    let socket: Socket;
+    
+    try {
+      console.log('🔌 Initialisation du socket sur la page d\'accueil');
+      socket = SocketService.getInstance();
+
+      // Écouter les événements spécifiques à la salle
+      socket.on('room:update', (data) => {
+        console.log('🎮 Mise à jour de la salle reçue:', data);
+      });
+      
+      // Vérifier l'état de la connexion
+      NetInfo.fetch().then(state => {
+        console.log(`🌐 État connexion: ${state.isConnected ? 'Connecté' : 'Non connecté'} (${state.type})`);
+      });
+    } catch (error) {
+      console.error('❌ Erreur lors de l\'initialisation du socket:', error);
+    }
+
+    return () => {
+      console.log('🔌 Nettoyage du socket sur la page d\'accueil');
+      // Pas besoin de déconnecter complètement le socket à chaque fois 
+      // pour éviter de multiples reconnexions, seulement se désabonner des événements
+      if (socket) {
+        socket.off('room:update');
+      }
+    };
+  }, []);
+  
+  // Rendu conditionnel pour le chargement
+  if (isCreatingRoom) {
+    return (
+      <View style={[styles.container, styles.loadingContainer]}>
+        <LinearGradient
+          colors={["#1A0938", "#2D1155"]}
+          style={styles.background}
+        />
+        <LoadingOverlay message="Création de la salle en cours..." />
+      </View>
+    );
   }
   
   return (
     <View style={styles.container}>
-      <StatusBar style="light" />
       <LinearGradient
         colors={["#1A0938", "#2D1155"]}
         style={styles.background}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
+       
       >
         <ScrollView 
           style={styles.scrollView}
           contentContainerStyle={styles.scrollViewContent}
         >
           {/* Header avec position ajustée */}
-          <TopBar
-            rightButtons={
-              <TouchableOpacity style={styles.iconButton} onPress={goToSettings}>
-                <Feather name="settings" size={22} color="white" />
-              </TouchableOpacity>
-            }
-          />
+          <TopBar />
 
           {/* Game Categories */}
           <View style={styles.categoriesContainer}>
@@ -236,9 +296,7 @@ const styles = StyleSheet.create({
   scrollView: {
     flex: 1,
   },
-  scrollViewContent: {
-    paddingBottom: 100, // Ajoutez de l'espace en bas pour que le contenu ne soit pas caché par la barre d'onglets
-  },
+ 
   categoriesContainer: {
     padding: 20,
   },
@@ -397,5 +455,9 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     marginLeft: 10,
+  },
+  loadingContainer: {
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 })

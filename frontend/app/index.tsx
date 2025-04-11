@@ -3,10 +3,10 @@
 import { useEffect } from "react"
 import { View, ActivityIndicator, StyleSheet } from "react-native"
 import { useRouter } from "expo-router"
-import { useAuth } from "@/contexts/AuthContext"
 import { LinearGradient } from "expo-linear-gradient"
+import { useAuth } from "@/contexts/AuthContext"  // Correction du chemin d'import
 
-export default function Index() {
+const  Index = () => {
     const { user, isLoading } = useAuth()
     const router = useRouter()
     
@@ -39,3 +39,6 @@ const styles = StyleSheet.create({
         alignItems: "center",
     },
 })
+
+
+export default Index

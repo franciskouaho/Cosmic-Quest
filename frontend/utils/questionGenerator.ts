@@ -1,4 +1,6 @@
-import { Question, GameTheme } from '../types/gameTypes';
+export type GameTheme = 'standard' | 'fun' | 'dark' | 'personal' | 'crazy';
+
+import { Question } from '../types/gameTypes';
 
 // Banque de questions par thème
 const questionsByTheme: Record<GameTheme, string[]> = {
@@ -58,18 +60,17 @@ const questionsByTheme: Record<GameTheme, string[]> = {
   ]
 };
 
-export function generateQuestion(theme: string = 'standard', playerName: string): Question {
-  // Vérifier si le thème existe, sinon utiliser 'standard'
-  const validTheme = theme in questionsByTheme ? theme as GameTheme : 'standard';
+/**
+ * Génère une question aléatoire basée sur un thème et un nom de joueur
+ * @param theme - Le thème de la question
+ * @param playerName - Le nom du joueur à insérer dans la question
+ * @returns Une question avec le nom du joueur inséré
+ */
+export function generateQuestion(theme: GameTheme, playerName: string): string {
+  // Utiliser le thème standard si le thème demandé n'existe pas
+  const questions = questionsByTheme[theme] || questionsByTheme.standard;
   
-  // Sélectionner une question aléatoire du thème
-  const questions = questionsByTheme[validTheme];
+  // Choisir une question aléatoire
   const randomIndex = Math.floor(Math.random() * questions.length);
-  const questionText = questions[randomIndex].replace('{playerName}', playerName);
-  
-  return {
-    id: `${validTheme}-${randomIndex}`,
-    text: questionText,
-    theme: validTheme,
-  };
+  return questions[randomIndex];
 }

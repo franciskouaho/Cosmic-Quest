@@ -5,9 +5,11 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import Constants from 'expo-constants';
+import { useAuth } from '@/contexts/AuthContext';
 
 export default function SplashScreen() {
   const router = useRouter();
+  const { user, isLoading } = useAuth();
   const fadeAnim = React.useRef(new Animated.Value(0)).current;
   const scaleAnim = React.useRef(new Animated.Value(0.9)).current;
   
@@ -29,13 +31,21 @@ export default function SplashScreen() {
       })
     ]).start();
 
-    // Redirection vers le login après un délai
+    // Vérifier l'authentification après l'animation
     const timer = setTimeout(() => {
-      router.replace('/auth/login');
-    }, 2500);
+      if (!isLoading) {
+        if (user) {
+          console.log('👤 Utilisateur trouvé, redirection vers (tabs)');
+          router.replace('/(tabs)');
+        } else {
+          console.log('❌ Pas d\'utilisateur, redirection vers login');
+          router.replace('/auth/login');
+        }
+      }
+    }, 2000);
 
     return () => clearTimeout(timer);
-  }, []);
+  }, [user, isLoading]);
 
   return (
     <View style={styles.container}>

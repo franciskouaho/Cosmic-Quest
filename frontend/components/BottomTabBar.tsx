@@ -82,12 +82,15 @@ export default function BottomTabBar() {
 const styles = StyleSheet.create({
   container: {
     position: 'absolute',
-    bottom: 40,
+    bottom: 0, // Changé de 40 à 0
     left: 0,
     right: 0,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 20,
+    paddingBottom: 20, // Ajout d'un padding bottom
+    backgroundColor: 'transparent',
+    zIndex: 1000,
   },
   tabBarContainer: {
     flexDirection: 'row',

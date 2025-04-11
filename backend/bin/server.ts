@@ -42,7 +42,15 @@ new Ignitor(APP_ROOT, { importer: IMPORTER })
   .httpServer()
   .start((handler) => {
     const httpServer = http.createServer(handler)
-    socketService.init(httpServer)
+
+    try {
+      // Initialisation unique de Socket.IO
+      socketService.init(httpServer)
+      console.log('💬 Service WebSocket initialisé')
+    } catch (error) {
+      console.error("❌ Erreur lors de l'initialisation du WebSocket:", error)
+    }
+
     return httpServer
   })
   .catch((error) => {

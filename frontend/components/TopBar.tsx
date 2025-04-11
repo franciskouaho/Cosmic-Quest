@@ -1,37 +1,21 @@
 import React from 'react';
 import { View, StyleSheet, TouchableOpacity, Text } from 'react-native';
-import { Feather, Ionicons } from '@expo/vector-icons';
+import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
+import { useAuth } from '@/contexts/AuthContext';
 
 type TopBarProps = {
-  title?: string;
-  userName?: string;
-  showBackButton?: boolean;
-  showProfileButton?: boolean;
   showNotificationButton?: boolean;
-  onBackPress?: () => void;
+  rightButtons?: React.ReactNode;
 };
 
 export default function TopBar({ 
-  title, 
-  userName,
-  showBackButton = false,
-  showProfileButton = true,
   showNotificationButton = true,
-  onBackPress 
+  rightButtons
 }: TopBarProps) {
   const router = useRouter();
-
-  const handleBackPress = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    if (onBackPress) {
-      onBackPress();
-    } else {
-      router.back();
-    }
-  };
-
+  const { user } = useAuth();
 
   const handleNotificationPress = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -41,19 +25,16 @@ export default function TopBar({
   return (
     <View style={styles.container}>
       <View style={styles.leftContainer}>
-              
         <View style={styles.greetingContainer}>
-            <Text style={styles.greeting}>Bonjour </Text>
-            <Text style={styles.userName}>{userName || "Francis"}</Text>
+          <Text style={styles.greeting}>Bonjour </Text>
+          <Text style={styles.userName}>{user?.displayName || user?.username}</Text>
         </View>
       </View>
       
       <View style={styles.rightContainer}>
-        {showNotificationButton && (
-          <TouchableOpacity style={styles.iconButton} onPress={handleNotificationPress}>
+       <TouchableOpacity style={styles.iconButton} onPress={handleNotificationPress}>
             <Feather name="bell" size={22} color="#FFFFFF" />
           </TouchableOpacity>
-        )}
       </View>
     </View>
   );

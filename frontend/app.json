@@ -10,7 +10,7 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.anonymous.Cosmic-Quest"
+      "bundleIdentifier": "com.emplica.cosmicquest"
     },
     "android": {
       "adaptiveIcon": {

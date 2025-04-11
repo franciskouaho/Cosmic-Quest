@@ -7,6 +7,9 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import InviteModal from '../../components/room/InviteModal';
 import RulesDrawer from '../../components/room/RulesDrawer';
 import LoadingOverlay from '../../components/common/LoadingOverlay';
+import SocketService from '@/services/socketService';
+import { useRoom, useToggleReadyStatus, useLeaveRoom, useStartGame } from '@/hooks/useRooms';
+import { useUser } from '@/hooks/useAuth';
 
 // Type pour les joueurs
 type Player = {
@@ -21,96 +24,129 @@ type Player = {
 export default function Room() {
   const router = useRouter();
   const { id } = useLocalSearchParams();
+  const { data: user } = useUser();
+
+  // Utiliser le hook pour récupérer les détails de la salle
+  const { data: roomData, isLoading: isLoadingRoom, error: roomError } = useRoom(id as string);
+
+  // Utiliser les hooks de mutation
+  const { mutate: toggleReady, isPending: isTogglingReady } = useToggleReadyStatus();
+  const { mutate: leaveRoom, isPending: isLeavingRoom } = useLeaveRoom();
+  const { mutate: startGame, isPending: isStartingGame } = useStartGame();
+
   const [roomName, setRoomName] = useState<string>('');
-  const [players, setPlayers] = useState<Player[]>([
-    { 
-      id: '1', 
-      name: 'Francis', 
-      isHost: true, 
-      isReady: true, 
-      avatar: 'https://randomuser.me/api/portraits/men/32.jpg',
-      level: 42
-    },
-    { 
-      id: '2', 
-      name: 'Sophia', 
-      isHost: false, 
-      isReady: true, 
-      avatar: 'https://randomuser.me/api/portraits/women/44.jpg',
-      level: 38
-    },
-    { 
-      id: '3', 
-      name: 'Alex', 
-      isHost: false, 
-      isReady: true, 
-      avatar: 'https://randomuser.me/api/portraits/men/67.jpg',
-      level: 15
-    },
-    { 
-      id: '4', 
-      name: 'Luna', 
-      isHost: false, 
-      isReady: true, 
-      avatar: 'https://randomuser.me/api/portraits/women/33.jpg',
-      level: 27
-    },
-  ]);
+  const [players, setPlayers] = useState<Player[]>([]);
   const [isReady, setIsReady] = useState(false);
-  const [isHost] = useState(true); // Normalement, cette valeur proviendrait du backend
-  const maxPlayers = 6;
+  const [isHost, setIsHost] = useState(false);
+  const [maxPlayers, setMaxPlayers] = useState(6);
   const [inviteModalVisible, setInviteModalVisible] = useState(false);
   const [rulesVisible, setRulesVisible] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
   const [loadingMessage, setLoadingMessage] = useState('Chargement de la salle...');
-  const [buttonLoading, setButtonLoading] = useState(false); // État pour les boutons
 
-  // Simuler le chargement des données de la salle à partir de l'ID
+  // Mettre à jour les états en fonction des données récupérées
   useEffect(() => {
-    if (id) {
-      setIsLoading(true);
-      setLoadingMessage('Chargement des détails de la salle...');
+    if (roomData) {
+      setRoomName(roomData.name);
+      setMaxPlayers(roomData.maxPlayers);
       
-      // Ici, vous feriez normalement un appel API pour obtenir les détails de la salle
-      console.log(`Chargement des détails de la salle ${id}`);
-      
-      // Simulons des données différentes selon l'ID
-      if (id === '1') {
-        setRoomName('Salle de Francis');
-      } else if (id === '2') {
-        setRoomName('Tournoi Stellaire');
-      } else if (id === '3') {
-        setRoomName('Débutants Bienvenus');
+      // S'assurer que players existe avant de faire le mapping
+      if (roomData.players && Array.isArray(roomData.players)) {
+        // Convertir les joueurs au format requis
+        const formattedPlayers = roomData.players.map(player => ({
+          id: player.id.toString(),
+          name: player.displayName || player.username,
+          isHost: player.isHost,
+          isReady: player.isReady,
+          avatar: player.avatar || 'https://randomuser.me/api/portraits/men/32.jpg',
+          level: player.level || 1
+        }));
+        
+        setPlayers(formattedPlayers);
       } else {
-        setRoomName(`Salle #${id}`);
+        // Initialiser avec un tableau vide si players n'existe pas
+        console.log('⚠️ Aucun joueur trouvé dans roomData');
+        setPlayers([]);
       }
       
-      // Simuler un délai de chargement pour montrer notre beau composant
-      setTimeout(() => {
-        setIsLoading(false);
-      }, 1500);
+      // Vérifier si l'utilisateur actuel est l'hôte
+      if (user) {
+        setIsHost(roomData.host.id === user.id);
+        
+        // Trouver le statut "prêt" de l'utilisateur actuel si players existe
+        if (roomData.players && Array.isArray(roomData.players)) {
+          const currentPlayer = roomData.players.find(player => player.id === user.id);
+          if (currentPlayer) {
+            setIsReady(currentPlayer.isReady);
+          }
+        }
+      }
     }
-  }, [id]);
+  }, [roomData, user]);
+
+  useEffect(() => {
+    if (id) {
+      // Connexion WebSocket et rejoindre la salle
+      const socket = SocketService.getInstance();
+      SocketService.joinRoom(id as string);
+
+      // Écouter les événements de la salle
+      socket.on('room:update', (data) => {
+        switch (data.type) {
+          case 'player_joined':
+            // Mettre à jour la liste des joueurs
+            setPlayers(prev => [...prev, {
+              id: data.player.id,
+              name: data.player.displayName || data.player.username,
+              isHost: false,
+              isReady: false,
+              avatar: data.player.avatar || 'https://randomuser.me/api/portraits/men/32.jpg',
+              level: data.player.level || 1
+            }]);
+            break;
+          
+          case 'player_left':
+            // Retirer le joueur de la liste
+            setPlayers(prev => prev.filter(p => p.id !== data.playerId));
+            break;
+          
+          case 'player_ready_status':
+            // Mettre à jour le statut d'un joueur
+            setPlayers(prev => prev.map(p => 
+              p.id === data.playerId 
+                ? { ...p, isReady: data.isReady }
+                : p
+            ));
+            
+            // Mettre à jour l'état local si c'est l'utilisateur actuel
+            if (user && data.playerId === user.id) {
+              setIsReady(data.isReady);
+            }
+            break;
+            
+          case 'game_started':
+            // Rediriger vers la page de jeu
+            router.push(`/game/${data.gameId}`);
+            break;
+        }
+      });
+
+      // Nettoyage lors du démontage
+      return () => {
+        SocketService.leaveRoom(id as string);
+      };
+    }
+  }, [id, user]);
 
   const handleToggleReady = () => {
-    setButtonLoading(true);
-    setLoadingMessage('Mise à jour du statut...');
-    
-    // Simulons une requête réseau
-    setTimeout(() => {
-      setIsReady(!isReady);
-      setButtonLoading(false);
-    }, 800);
+    if (id) {
+      toggleReady({ roomCode: id as string, isReady: !isReady });
+    }
   };
 
   const handleStartGame = () => {
-    setIsLoading(true);
-    setLoadingMessage('Préparation de la partie...');
-    
-    // Simuler un temps de chargement avant la redirection
-    setTimeout(() => {
-      router.push(`/game/${id}`);
-    }, 1500);
+    if (id) {
+      startGame(id as string);
+    }
   };
 
   const handleLeaveRoom = () => {
@@ -126,11 +162,9 @@ export default function Room() {
           text: 'Quitter',
           style: 'destructive',
           onPress: () => {
-            setIsLoading(true);
-            setLoadingMessage('Retour au menu principal...');
-            setTimeout(() => {
-              router.back();
-            }, 800);
+            if (id) {
+              leaveRoom(id as string);
+            }
           },
         },
       ]
@@ -138,14 +172,7 @@ export default function Room() {
   };
 
   const handleInviteFriend = () => {
-    setButtonLoading(true);
-    setLoadingMessage('Génération du QR code...');
-    
-    // Simulons une requête réseau pour générer le code
-    setTimeout(() => {
-      setButtonLoading(false);
-      setInviteModalVisible(true);
-    }, 600);
+    setInviteModalVisible(true);
   };
 
   const handleCopyCode = () => {
@@ -175,6 +202,23 @@ export default function Room() {
       Alert.alert('Erreur', 'Une erreur s\'est produite lors du partage');
     }
   };
+
+  // Afficher le loading pendant chargement ou opérations
+  const isLoading = isLoadingRoom || isTogglingReady || isLeavingRoom || isStartingGame;
+
+  // Si erreur lors de la récupération des données
+  if (roomError) {
+    return (
+      <View style={[styles.container, styles.centerContent]}>
+        <StatusBar style="light" />
+        <LinearGradient colors={['#1a0933', '#321a5e']} style={styles.background} />
+        <Text style={styles.errorText}>Salle non trouvée ou inaccessible</Text>
+        <TouchableOpacity style={styles.backToHomeButton} onPress={() => router.replace('/(tabs)/')}>
+          <Text style={styles.backToHomeText}>Retourner à l'accueil</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   const showRules = () => {
     setRulesVisible(true);
@@ -219,11 +263,8 @@ export default function Room() {
         style={styles.background}
       />
       
-      {/* Notre composant de loading pour les opérations globales */}
+      {/* Notre composant de loading pour les opérations */}
       {isLoading && <LoadingOverlay message={loadingMessage} />}
-      
-      {/* Notre composant de loading pour les actions sur les boutons */}
-      {buttonLoading && <LoadingOverlay message={loadingMessage} />}
       
       {/* Header */}
       <View style={styles.header}>
@@ -276,7 +317,7 @@ export default function Room() {
             <TouchableOpacity 
               style={[styles.actionButton, styles.startGameButton]}
               onPress={handleStartGame}
-              disabled={isLoading || buttonLoading}
+              disabled={isLoading}
             >
               <MaterialCommunityIcons name="rocket-launch" size={24} color="white" />
               <Text style={styles.actionButtonText}>Lancer la partie</Text>
@@ -285,7 +326,7 @@ export default function Room() {
             <TouchableOpacity 
               style={[styles.actionButton, isReady ? styles.notReadyButton : styles.readyButton]}
               onPress={handleToggleReady}
-              disabled={isLoading || buttonLoading}
+              disabled={isLoading}
             >
               {isReady ? (
                 <>
@@ -511,5 +552,25 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     fontSize: 16,
     marginLeft: 10,
+  },
+  centerContent: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  errorText: {
+    color: '#ff6b6b',
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 20,
+  },
+  backToHomeButton: {
+    backgroundColor: 'rgba(93, 109, 255, 0.8)',
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 8,
+  },
+  backToHomeText: {
+    color: 'white',
+    fontWeight: 'bold',
   },
 });

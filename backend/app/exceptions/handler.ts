@@ -13,6 +13,27 @@ export default class HttpExceptionHandler extends ExceptionHandler {
    * response to the client
    */
   async handle(error: unknown, ctx: HttpContext) {
+    // Gérer les erreurs de validation spécifiquement
+    if (error && typeof error === 'object' && 'name' in error) {
+      if (error.name === 'ValidationException') {
+        console.error('Erreur de validation:', error)
+        return ctx.response.badRequest({
+          error: 'Données de requête invalides',
+          details: error['messages'] || error['message'],
+        })
+      }
+
+      // Gérer les erreurs TypeScript
+      if (error.name === 'TypeError' || error.name === 'Error') {
+        console.error('Erreur technique:', error)
+        return ctx.response.internalServerError({
+          error: 'Erreur interne du serveur',
+          message: error['message'],
+          status: 500,
+        })
+      }
+    }
+
     return super.handle(error, ctx)
   }
 
@@ -23,6 +44,16 @@ export default class HttpExceptionHandler extends ExceptionHandler {
    * @note You should not attempt to send a response from this method.
    */
   async report(error: unknown, ctx: HttpContext) {
+    // Ajouter des logs d'erreur supplémentaires pour faciliter le débogage
+    if (error && typeof error === 'object') {
+      console.error(`[${ctx.request.id()}] Erreur détaillée:`, {
+        route: ctx.route?.pattern,
+        method: ctx.request.method(),
+        body: ctx.request.all(),
+        error,
+      })
+    }
+
     return super.report(error, ctx)
   }
 }

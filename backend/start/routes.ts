@@ -12,8 +12,8 @@ import { middleware } from '#start/kernel'
 
 // Importation des contrôleurs
 const AuthController = () => import('#controllers/auth_controller')
-const RoomsController = () => import('#controllers/rooms_controller')
-const GamesController = () => import('#controllers/games_controller')
+const GamesController = () => import('#controllers/ws/game_controller')
+const RoomsController = () => import('#controllers/ws/room_controller')
 const UsersController = () => import('#controllers/users_controller')
 const AchievementsController = () => import('#controllers/achievements_controller')
 
@@ -23,9 +23,7 @@ router.get('/health', ({ response }) => response.noContent())
 router
   .group(() => {
     // Routes d'authentification (publiques)
-    router.post('/auth/register', [AuthController, 'register'])
-    router.post('/auth/login', [AuthController, 'login'])
-    router.post('/auth/register-or-login', [AuthController, 'registerOrLogin'])
+    router.post('register-or-login', [AuthController, 'registerOrLogin']).prefix('/auth')
 
     // Routes protégées par authentification
     router

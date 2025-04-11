@@ -3,7 +3,6 @@ import { BaseModel, column, hasMany, manyToMany } from '@adonisjs/lucid/orm'
 import type { HasMany, ManyToMany } from '@adonisjs/lucid/types/relations'
 
 import Room from '#models/room'
-import Game from '#models/game'
 import Answer from '#models/answer'
 import Vote from '#models/vote'
 import UserAchievement from '#models/user_achievement'
@@ -17,7 +16,7 @@ export default class User extends BaseModel {
   @column()
   declare username: string
 
-  @column({ columnName: 'display_name' })
+  @column()
   declare displayName: string | null
 
   @column()
