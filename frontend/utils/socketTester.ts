@@ -43,11 +43,22 @@ export const testSocketConnection = () => {
       console.log('✅ Confirmation de départ de la salle:', data);
     });
     
+    // Écouter les événements de jeu pour le débogage
+    socket.on('game:update', (data) => {
+      console.log('🎮 Événement game:update reçu:', data);
+    });
+
+    // Écouter les événements de phase
+    socket.on('phase_change', (data) => {
+      console.log('🔄 Événement phase_change reçu:', data);
+    });
+    
     // Nettoyer les écouteurs après 5 secondes
     setTimeout(() => {
       socket.off('pong');
       socket.off('room:joined');
       socket.off('room:left');
+      // Ne pas supprimer les écouteurs de débogage du jeu pour suivre la partie
       console.log('🧹 Nettoyage des écouteurs de test terminé');
     }, 5000);
     
@@ -80,7 +91,39 @@ export const checkSocketStatus = () => {
   }
 };
 
+/**
+ * Diagnostic avancé des événements de jeu
+ * Utile pour le débogage des parties en cours
+ * @param gameId ID de la partie à surveiller
+ */
+export const monitorGameEvents = (gameId) => {
+  try {
+    const socket = SocketService.getInstance();
+    console.log(`🔍 Démarrage du monitoring pour le jeu ${gameId}...`);
+    
+    // Rejoindre le canal de la partie
+    SocketService.joinRoom(`game:${gameId}`);
+    
+    // Écouter les événements de mise à jour de la partie
+    socket.on('game:update', (data) => {
+      console.log(`📊 [Jeu ${gameId}] Mise à jour:`, data);
+    });
+    
+    // Écouter les événements d'erreur
+    socket.on('error', (error) => {
+      console.error(`❌ [Jeu ${gameId}] Erreur:`, error);
+    });
+    
+    console.log(`✅ Monitoring actif pour le jeu ${gameId}`);
+    return true;
+  } catch (error) {
+    console.error('❌ Échec du monitoring:', error);
+    return false;
+  }
+};
+
 export default {
   testSocketConnection,
   checkSocketStatus,
+  monitorGameEvents,
 };

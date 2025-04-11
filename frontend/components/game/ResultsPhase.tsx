@@ -66,8 +66,8 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
 
   // Obtenir le nom du joueur correspondant à chaque réponse
   const getPlayerName = (playerId: string | number) => {
-    const player = players.find(p => p.id === playerId);
-    return player ? (player.name || player.displayName || player.username) : 'Joueur inconnu';
+    const player = players.find(p => p.id === playerId.toString() || p.id === Number(playerId));
+    return player ? (player.name || player.displayName || player.username || "Joueur inconnu") : "Joueur inconnu";
   };
   
   // Pour les parties à 2 joueurs où il n'y a pas de vote (donc pas de gagnant clairement défini)
@@ -155,13 +155,19 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
           {Object.entries(scores).length > 0 ? (
             Object.entries(scores)
               .sort(([, scoreA], [, scoreB]) => scoreB - scoreA)
-              .map(([playerId, score], index) => (
-                <View key={playerId} style={styles.scoreRow}>
-                  <Text style={styles.scoreRank}>{index + 1}</Text>
-                  <Text style={styles.scoreName}>{getPlayerName(playerId)}</Text>
-                  <Text style={styles.scoreValue}>{score} pts</Text>
-                </View>
-              ))
+              .map(([playerId, score], index) => {
+                // Trouver le joueur correspondant à cet ID
+                const player = players.find(p => p.id === playerId.toString() || p.id === Number(playerId));
+                const playerName = player ? (player.name || player.displayName || player.username || "Joueur inconnu") : "Joueur inconnu";
+                
+                return (
+                  <View key={playerId} style={styles.scoreRow}>
+                    <Text style={styles.scoreRank}>{index + 1}</Text>
+                    <Text style={styles.scoreName}>{playerName}</Text>
+                    <Text style={styles.scoreValue}>{score} pts</Text>
+                  </View>
+                );
+              })
           ) : (
             <Text style={styles.noAnswersText}>Aucun score à afficher</Text>
           )}

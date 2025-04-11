@@ -517,7 +517,7 @@ export default class RoomsController {
         )
 
         // Définir les durées pour chaque phase
-        const isSmallGame = count <= 2
+        const isSmallGame = count <= 3 // Modifier pour considérer 3 joueurs ou moins comme "petite partie"
         const questionPhaseDuration = isSmallGame ? 10 : 15 // Réduire à 10s pour les petites parties
         const answerPhaseDuration = isSmallGame ? 25 : 45 // Réduire à 25s pour les petites parties
         const io = socketService.getInstance()
@@ -558,6 +558,63 @@ export default class RoomsController {
           })
 
           console.log(`✅ Passage à la phase 'answer' pour le jeu ${game.id}`)
+
+          // NOUVEAU: Passer automatiquement à la phase vote après le délai de réponse
+          setTimeout(async () => {
+            try {
+              // Vérifier si le jeu existe toujours et est encore en phase de réponse
+              const currentGame = await Game.find(game.id)
+              if (currentGame && currentGame.currentPhase === 'answer') {
+                currentGame.currentPhase = 'vote'
+                await currentGame.save()
+
+                // Définir la durée de la phase de vote
+                const votePhaseDuration = isSmallGame ? 15 : 30
+
+                // Notifier les joueurs du changement de phase
+                io.to(`game:${currentGame.id}`).emit('game:update', {
+                  type: 'phase_change',
+                  phase: 'vote',
+                  timer: {
+                    duration: votePhaseDuration,
+                    startTime: Date.now(),
+                  },
+                })
+
+                console.log(
+                  `✅ Progression automatique vers la phase 'vote' pour le jeu ${currentGame.id}`
+                )
+
+                // NOUVEAU: Passer automatiquement à la phase résultats après le délai de vote
+                setTimeout(async () => {
+                  try {
+                    const updatedGame = await Game.find(game.id)
+                    if (updatedGame && updatedGame.currentPhase === 'vote') {
+                      updatedGame.currentPhase = 'results'
+                      await updatedGame.save()
+
+                      // Notifier les joueurs du changement de phase
+                      io.to(`game:${updatedGame.id}`).emit('game:update', {
+                        type: 'phase_change',
+                        phase: 'results',
+                      })
+
+                      console.log(
+                        `✅ Progression automatique vers la phase 'results' pour le jeu ${updatedGame.id}`
+                      )
+                    }
+                  } catch (error) {
+                    console.error(
+                      `❌ Erreur lors de la progression vers la phase 'results':`,
+                      error
+                    )
+                  }
+                }, votePhaseDuration * 1000)
+              }
+            } catch (error) {
+              console.error(`❌ Erreur lors de la progression vers la phase 'vote':`, error)
+            }
+          }, answerPhaseDuration * 1000)
         }, questionPhaseDuration * 1000) // Convertir en millisecondes
       } catch (questionError) {
         console.error('❌ Erreur lors de la génération de la première question:', questionError)
