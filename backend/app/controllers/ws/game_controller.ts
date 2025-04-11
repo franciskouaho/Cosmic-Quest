@@ -295,6 +295,8 @@ export default class GamesController {
 
         // Récupérer la salle pour les événements WebSocket
         const room = await Room.find(game.roomId)
+        const players = await room.related('players').query()
+        const totalPlayers = players.length
 
         // Utiliser Socket.IO pour notifier les joueurs
         const io = socketService.getInstance()
@@ -308,47 +310,132 @@ export default class GamesController {
           },
         })
 
-        // Vérifier si la phase actuelle est 'answer' et si tous les joueurs (sauf la cible) ont répondu
-        if (game.currentPhase === 'answer') {
-          // Vérifier si tous les joueurs (sauf la cible) ont répondu
-          const players = await room.related('players').query()
-          const totalPlayers = players.length
+        // Vérifier si tous les joueurs qui PEUVENT répondre ont répondu
+        const answersCount = await Answer.query()
+          .where('question_id', question.id)
+          .count('* as count')
+        const count = Number.parseInt(answersCount[0].$extras.count || '0', 10)
 
-          const answersCount = await Answer.query()
+        // Trouver combien de joueurs peuvent répondre (tous sauf la cible)
+        const nonTargetPlayers = players.filter(
+          (player) => player.id !== question.targetPlayerId
+        ).length
+
+        console.log(
+          `🎮 [submitAnswer] Réponses: ${count}/${nonTargetPlayers} (total joueurs minus cible)`
+        )
+
+        // Correction pour les parties à 2 joueurs:
+        // Si nous avons 2 joueurs (ou moins) et au moins une réponse, passer à la phase vote
+        const isSmallGame = totalPlayers <= 2
+
+        // Si tous les joueurs qui peuvent répondre ont répondu OU si c'est une petite partie avec au moins une réponse
+        if (count >= nonTargetPlayers || (isSmallGame && count > 0)) {
+          console.log(
+            `🎮 [submitAnswer] Condition pour passage à la phase vote satisfaite - Game: ${gameId}, Joueurs: ${totalPlayers}, Réponses: ${count}`
+          )
+
+          // Passer à la phase de vote même si le jeu n'est pas en phase answer
+          // Cela permet de récupérer des parties bloquées
+          game.currentPhase = 'vote'
+          await game.save()
+
+          console.log(`✅ [submitAnswer] Phase changée à 'vote' - Game: ${gameId}`)
+
+          // Récupérer toutes les réponses pour les envoyer aux clients
+          const allAnswers = await Answer.query()
             .where('question_id', question.id)
-            .count('* as count')
+            .preload('user')
+            .orderBy('created_at', 'asc')
 
-          const count = Number.parseInt(answersCount[0].$extras.count || '0', 10)
-          console.log(`🎮 [submitAnswer] Réponses soumises: ${count}/${totalPlayers - 1}`)
+          const formattedAnswers = allAnswers.map((answer) => ({
+            id: answer.id,
+            content: answer.content,
+            playerId: answer.userId,
+            playerName: answer.user.displayName || answer.user.username,
+            votesCount: 0,
+            isOwnAnswer: false, // Sera déterminé côté client
+          }))
 
-          // Tous les joueurs ont répondu sauf la cible (-1)
-          if (count >= totalPlayers - 1) {
-            // Passer à la phase de vote
-            console.log(`🎮 [submitAnswer] Passage à la phase de vote - Game: ${gameId}`)
-            game.currentPhase = 'vote'
-            await game.save()
+          // Timer pour la phase de vote
+          const votePhaseDuration = 20 // 20 secondes pour voter
 
-            // Ajout du timer pour la phase de vote
-            const votePhaseDuration = 20 // 20 secondes pour voter
+          // Notifier immédiatement du changement de phase
+          io.to(`game:${gameId}`).emit('game:update', {
+            type: 'phase_change',
+            phase: 'vote',
+            message: 'Toutes les réponses ont été reçues. Place au vote!',
+            answers: formattedAnswers,
+            timer: {
+              duration: votePhaseDuration,
+              startTime: Date.now(),
+            },
+          })
 
+          // Envoyer un rappel après 2 secondes pour s'assurer que tous les clients sont à jour
+          setTimeout(() => {
             io.to(`game:${gameId}`).emit('game:update', {
-              type: 'phase_change',
+              type: 'phase_reminder',
               phase: 'vote',
-              timer: {
-                duration: votePhaseDuration,
-                startTime: Date.now(),
-              },
+              message: 'Phase de vote en cours - votez pour votre réponse préférée!',
             })
+          }, 2000)
+
+          // Cas spécial: parties à 2 joueurs
+          if (isSmallGame) {
+            console.log(
+              `🎮 [submitAnswer] Partie à ${totalPlayers} joueurs détectée, traitement spécial`
+            )
+
+            // Dans une partie à 2 joueurs, la personne qui n'est pas la cible a répondu
+            // et la cible doit voter pour la réponse, mais ne peut pas voter pour sa propre réponse
+            // Si le joueur cible est la seule personne qui reste, on passe directement aux résultats
+
+            // En mode 2 joueurs, nous savons qu'il n'y a qu'un seul joueur qui peut voter (la cible)
+            // On attend un peu pour laisser le temps aux clients de s'adapter
+            setTimeout(async () => {
+              // Vérifier l'état actuel du jeu
+              const currentGame = await Game.find(gameId)
+              if (currentGame && currentGame.currentPhase === 'vote') {
+                // Dans une partie à 2, on peut directement passer aux résultats après un délai
+                // pour permettre à la cible de voir la réponse
+
+                // Vérifier si des votes existent déjà
+                const votesExist = await Vote.query().where('question_id', question.id).first()
+
+                if (!votesExist) {
+                  console.log(
+                    `🎮 [submitAnswer] Passage automatique aux résultats dans 10s pour partie à ${totalPlayers} joueurs`
+                  )
+
+                  // Après 10 secondes, si aucun vote n'a été enregistré, passer directement aux résultats
+                  setTimeout(async () => {
+                    const freshGame = await Game.find(gameId)
+                    if (freshGame && freshGame.currentPhase === 'vote') {
+                      freshGame.currentPhase = 'results'
+                      await freshGame.save()
+
+                      io.to(`game:${gameId}`).emit('game:update', {
+                        type: 'phase_change',
+                        phase: 'results',
+                        scores: freshGame.scores,
+                        timer: {
+                          duration: 15, // 15 secondes pour voir les résultats
+                          startTime: Date.now(),
+                        },
+                        message: 'Affichage des résultats',
+                      })
+
+                      console.log(
+                        `✅ [submitAnswer] Passage automatique aux résultats effectué - Game: ${gameId}`
+                      )
+                    }
+                  }, 10000) // 10 secondes après la mise en place de la phase vote
+                }
+              }
+            }, 2000)
           }
         }
-
-        return response.created({
-          status: 'success',
-          message: 'Réponse soumise avec succès',
-          data: {
-            answerId: answer.id,
-          },
-        })
       } catch (dbError) {
         console.error(`❌ [submitAnswer] Erreur lors de la création de la réponse:`, dbError)
         return response.internalServerError({
@@ -393,10 +480,18 @@ export default class GamesController {
       }
 
       // Vérifier que la phase actuelle est bien la phase de vote
+      // Assouplissement: accepter les votes même si la phase n'est pas 'vote'
+      // Cela permet de gérer les cas où le client est légèrement désynchronisé
       if (game.currentPhase !== 'vote') {
-        return response.badRequest({
-          error: "Ce n'est pas le moment de voter",
-        })
+        console.log(
+          `⚠️ [submitVote] Vote reçu en phase '${game.currentPhase}' au lieu de 'vote' - tentative de récupération`
+        )
+
+        // Si nous ne sommes pas en phase vote, forcer le passage en phase vote
+        game.currentPhase = 'vote'
+        await game.save()
+
+        console.log(`✅ [submitVote] Phase corrigée à 'vote' - Game: ${gameId}`)
       }
 
       // Vérifier que la question existe
@@ -466,14 +561,21 @@ export default class GamesController {
       // Vérifier si tous les joueurs (sauf ceux qui ont donné une réponse) ont voté
       const room = await Room.find(game.roomId)
       const players = await room.related('players').query()
+      const totalPlayers = players.length
 
       const votesCount = await Vote.query().where('question_id', question.id).count('* as count')
-
       const count = Number.parseInt(votesCount[0].$extras.count, 10)
 
-      // Tous les joueurs (sauf ceux qui n'ont pas répondu) ont voté
-      // Typiquement, cela signifie que tous les joueurs qui ne sont pas la cible ont voté
-      if (count >= players.length - 1) {
+      // Amélioration pour les petites parties
+      const isSmallGame = totalPlayers <= 2
+      const targetPlayer = await players.find((p) => p.id === question.targetPlayerId)
+
+      console.log(
+        `🎮 [submitVote] Votes: ${count}/${isSmallGame ? 1 : players.length - 1} (joueurs pouvant voter)`
+      )
+
+      // Tous les joueurs ont voté OU dans une partie à 2, dès qu'il y a un vote, on peut continuer
+      if (count >= players.length - 1 || (isSmallGame && count > 0)) {
         // Passer à la phase de résultats
         game.currentPhase = 'results'
         await game.save()
@@ -552,11 +654,17 @@ export default class GamesController {
         })
       }
 
-      // Vérifier que la phase actuelle est bien la phase de résultats
-      if (game.currentPhase !== 'results') {
-        console.error(`❌ [nextRound] Phase incorrecte: ${game.currentPhase}, attendu: results`)
+      // Assouplir la vérification de phase pour permettre plus de flexibilité
+      // Permettre le passage au tour suivant depuis les phases 'results' ou 'vote'
+      const validPhases = ['results', 'vote']
+      if (!validPhases.includes(game.currentPhase)) {
+        console.error(
+          `❌ [nextRound] Phase incorrecte: ${game.currentPhase}, attendu une des phases: ${validPhases.join(', ')}`
+        )
         return response.badRequest({
-          error: "Ce n'est pas le moment de passer au tour suivant",
+          error:
+            "Ce n'est pas le moment de passer au tour suivant. La phase actuelle doit être 'résultats' ou 'vote'.",
+          phase: game.currentPhase,
         })
       }
 

@@ -75,27 +75,35 @@ export default function GameScreen() {
         : null;
       
       const isTargetPlayer = gameData.currentUserState?.isTargetPlayer;
-      
       let effectivePhase = GamePhase.WAITING;
+      
       if (gameData.game.currentPhase === 'question') {
         effectivePhase = GamePhase.QUESTION;
       } else if (gameData.game.currentPhase === 'answer') {
-        if (isTargetPlayer || gameData.currentUserState?.hasAnswered) {
+        if (isTargetPlayer) {
           effectivePhase = GamePhase.WAITING;
+          console.log("👀 Joueur cible en attente pendant la phase de réponse");
+        } else if (gameData.currentUserState?.hasAnswered) {
+          effectivePhase = GamePhase.WAITING;
+          console.log("✓ Joueur a déjà répondu, en attente");
         } else {
           effectivePhase = GamePhase.ANSWER;
+          console.log("📝 Joueur doit répondre");
         }
       } else if (gameData.game.currentPhase === 'vote') {
         if (gameData.currentUserState?.hasVoted) {
           effectivePhase = GamePhase.WAITING;
+          console.log("✓ Joueur a déjà voté, en attente");
         } else {
           effectivePhase = GamePhase.VOTE;
+          console.log("🗳️ Phase de vote active pour ce joueur");
         }
       } else if (gameData.game.currentPhase === 'results') {
         effectivePhase = GamePhase.RESULTS;
-      } else {
-        effectivePhase = GamePhase.WAITING;
+        console.log("🎯 Affichage des résultats");
       }
+
+      console.log(`🎮 Phase effective pour l'UI: ${effectivePhase}, Phase serveur: ${gameData.game.currentPhase}`);
       
       setGameState({
         phase: effectivePhase,
@@ -138,27 +146,76 @@ export default function GameScreen() {
       if (data.type === 'phase_change') {
         console.log(`🎮 Changement de phase: ${data.phase}`);
         
-        if (data.timer) {
-          console.log(`⏱️ Timer reçu: ${data.timer.duration}s`);
-          setGameState(prev => ({
-            ...prev,
-            timer: data.timer
-          }));
+        // Mise à jour immédiate de la phase, plus fiable que d'attendre fetchGameData
+        let newPhase;
+        switch(data.phase) {
+          case 'vote':
+            newPhase = GamePhase.VOTE;
+            break;
+          case 'results':
+            newPhase = GamePhase.RESULTS;
+            break;
+          case 'answer':
+            // Pour answer, on doit gérer le cas où l'utilisateur est la cible
+            if (gameState.currentUserState?.isTargetPlayer) {
+              newPhase = GamePhase.WAITING;
+            } else {
+              newPhase = GamePhase.ANSWER;
+            }
+            break;
+          case 'question':
+            newPhase = GamePhase.QUESTION;
+            break;
+          default:
+            newPhase = GamePhase.WAITING;
         }
         
+        // Mise à jour immédiate de l'état
+        setGameState(prev => ({
+          ...prev,
+          phase: newPhase,
+          timer: data.timer || prev.timer
+        }));
+        
+        // Si on a des réponses dans l'événement (pour vote)
+        if (data.answers && Array.isArray(data.answers) && data.phase === 'vote') {
+          setGameState(prev => ({
+            ...prev,
+            answers: data.answers.map(answer => ({
+              ...answer,
+              isOwnAnswer: answer.playerId === user?.id
+            }))
+          }));
+          console.log(`✅ Réponses mises à jour: ${data.answers.length} réponses reçues`);
+        }
+        
+        // Actualiser après un court délai pour obtenir les données complètes
+        setTimeout(fetchGameData, 500);
+      } else if (data.type === 'phase_reminder') {
+        // Force immédiate pour aller chercher les données complètes
         fetchGameData();
-      } else if (data.type === 'new_round') {
-        console.log(`🎮 Nouveau tour: ${data.round}`);
-        fetchGameData();
-      } else if (data.type === 'new_answer' || data.type === 'new_vote') {
+      } 
+    });
+
+    // Améliorer la détection et récupération de blocages
+    const recoveryInterval = setInterval(() => {
+      const currentTime = Date.now();
+      
+      // Si en attente depuis plus de 10 secondes sans timer actif, essayer de récupérer
+      if (gameState.phase === GamePhase.WAITING && 
+          (!gameState.timer || 
+           (gameState.timer && currentTime > gameState.timer.startTime + (gameState.timer.duration * 1000) + 5000))) {
+        console.log('⚠️ Détection possible blocage en phase d\'attente - forçage actualisation');
         fetchGameData();
       }
-    });
+    }, 5000);
     
-    const refreshInterval = setInterval(fetchGameData, 15000);
+    const normalRefreshInterval = setInterval(fetchGameData, 15000);
     
     return () => {
-      clearInterval(refreshInterval);
+      clearInterval(normalRefreshInterval);
+      clearInterval(recoveryInterval);
+      
       if (id) {
         try {
           SocketService.leaveGameChannel(id as string);
@@ -175,7 +232,6 @@ export default function GameScreen() {
   const handleSubmitAnswer = async (answer: string) => {
     if (!user || !gameState.currentQuestion) return;
     
-    // BLOCAGE CRITIQUE: Empêcher la soumission si l'utilisateur est la cible
     if (gameState.currentUserState?.isTargetPlayer) {
       console.log("❌ Soumission bloquée: l'utilisateur est la cible de la question");
       Alert.alert(
@@ -188,7 +244,6 @@ export default function GameScreen() {
     try {
       console.log("🎮 Tentative de soumission de réponse...");
       
-      // Désactiver les interactions pendant la soumission
       setIsSubmitting(true);
       
       await gameService.submitAnswer(id as string, gameState.currentQuestion.id, answer);
@@ -198,9 +253,12 @@ export default function GameScreen() {
       setGameState(prev => ({
         ...prev,
         phase: GamePhase.WAITING,
+        currentUserState: {
+          ...prev.currentUserState,
+          hasAnswered: true
+        }
       }));
       
-      // Recharger les données après la soumission
       setTimeout(() => {
         fetchGameData();
       }, 1000);
@@ -210,14 +268,12 @@ export default function GameScreen() {
       let errorMessage = "Impossible d'envoyer votre réponse. Veuillez réessayer.";
       if (error.message && typeof error.message === 'string' && error.message.includes("Ce n'est pas le moment")) {
         errorMessage = "Le délai de réponse est écoulé. Veuillez attendre la prochaine question.";
-        
-        // Forcer une mise à jour des données du jeu
         fetchGameData();
       }
       
       Alert.alert("Erreur", errorMessage);
     } finally {
-      setIsSubmitting(false); // Toujours réactiver les interactions
+      setIsSubmitting(false);
     }
   };
   
@@ -250,10 +306,20 @@ export default function GameScreen() {
       return;
     }
     
+    const validPhases = [GamePhase.RESULTS, GamePhase.VOTE];
+    if (!validPhases.includes(gameState.phase)) {
+      console.error(`❌ Tentative de passage au tour suivant dans une phase non autorisée: ${gameState.phase}`);
+      Alert.alert(
+        "Action impossible", 
+        "Vous ne pouvez passer au tour suivant que pendant les phases de résultat ou de vote.",
+        [{ text: "OK" }]
+      );
+      return;
+    }
+    
     try {
       console.log("🎮 Tentative de passage au tour suivant...");
       
-      // Désactiver les interactions pendant le traitement
       setIsSubmitting(true);
       
       await gameService.nextRound(id as string);
@@ -263,7 +329,6 @@ export default function GameScreen() {
         phase: GamePhase.LOADING,
       }));
       
-      // Recharger les données après un délai pour donner au backend le temps de traiter
       setTimeout(() => {
         if (typeof fetchGameData === 'function') {
           fetchGameData();
@@ -272,14 +337,23 @@ export default function GameScreen() {
       
     } catch (error) {
       console.error("❌ Erreur lors du passage au tour suivant:", error);
+      
+      let errorMessage = "Impossible de passer au tour suivant.";
+      if (error.message && typeof error.message === 'string') {
+        if (error.message.includes("Ce n'est pas le moment")) {
+          errorMessage = "Ce n'est pas encore le moment de passer au tour suivant. Veuillez attendre la fin de la phase actuelle.";
+        } else {
+          errorMessage = error.message;
+        }
+      }
+      
       Alert.alert(
         "Erreur", 
-        "Impossible de passer au tour suivant. Veuillez réessayer.",
+        errorMessage,
         [
           {
-            text: 'OK',
+            text: 'Actualiser',
             onPress: () => {
-              // Recharger les données pour synchroniser l'état
               if (typeof fetchGameData === 'function') {
                 fetchGameData();
               }
@@ -335,7 +409,6 @@ export default function GameScreen() {
           return <LoadingOverlay message="Chargement de la question..." />;
         }
         
-        // Vérification plus stricte pour la cible de la question
         const isTarget = Boolean(gameState.currentUserState?.isTargetPlayer);
         
         if (isTarget) {
@@ -359,7 +432,6 @@ export default function GameScreen() {
           );
         }
 
-        // Utilisateur a déjà répondu, montrer un message d'attente
         if (gameState.currentUserState && gameState.currentUserState.hasAnswered) {
           return (
             <View style={styles.messageContainer}>
@@ -379,7 +451,6 @@ export default function GameScreen() {
           );
         }
         
-        // Cas normal: l'utilisateur peut répondre
         return (
           <AnswerPhase
             question={gameState.currentQuestion}
@@ -391,9 +462,24 @@ export default function GameScreen() {
         
       case GamePhase.WAITING:
         return (
-          <LoadingOverlay 
-            message={`Attente des autres joueurs...`}
-          />
+          <View style={styles.waitingContainer}>
+            <LoadingOverlay 
+              message={`Attente des autres joueurs...`}
+              showSpinner={true}
+              retryFunction={fetchGameData}
+            />
+            {gameState.timer && (
+              <View style={styles.timerContainer}>
+                <GameTimer 
+                  duration={gameState.timer.duration}
+                  startTime={gameState.timer.startTime}
+                  onComplete={() => {
+                    fetchGameData();
+                  }}
+                />
+              </View>
+            )}
+          </View>
         );
         
       case GamePhase.VOTE:
@@ -465,7 +551,7 @@ const styles = StyleSheet.create({
   },
   background: {
     position: 'absolute',
-    left:0,
+    left: 0,
     right: 0,
     top: 0,
     bottom: 0,
@@ -500,4 +586,10 @@ const styles = StyleSheet.create({
     width: '100%',
     padding: 10,
   },
+  waitingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  }
 });

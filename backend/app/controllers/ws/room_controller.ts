@@ -438,6 +438,9 @@ export default class RoomsController {
         })
       }
 
+      // Ajouter un log pour le nombre de joueurs
+      console.log(`🎮 [startGame] Démarrage de partie avec ${count} joueurs`)
+
       // Mettre à jour le statut de la salle
       room.status = 'playing'
       room.startedAt = DateTime.now()
@@ -514,7 +517,9 @@ export default class RoomsController {
         )
 
         // Définir les durées pour chaque phase
-        const questionPhaseDuration = 15 // 15 secondes pour la phase question (augmenté de 10 à 15)
+        const isSmallGame = count <= 2
+        const questionPhaseDuration = isSmallGame ? 10 : 15 // Réduire à 10s pour les petites parties
+        const answerPhaseDuration = isSmallGame ? 25 : 45 // Réduire à 25s pour les petites parties
         const io = socketService.getInstance()
 
         // Notifier les clients du début de la phase question avec le compteur
@@ -541,9 +546,6 @@ export default class RoomsController {
         setTimeout(async () => {
           game.currentPhase = 'answer'
           await game.save()
-
-          // Définir la durée pour la phase réponse
-          const answerPhaseDuration = 45 // 45 secondes pour répondre (augmenté de 30 à 45)
 
           // Notifier les joueurs du changement de phase avec le compteur
           io.to(`game:${game.id}`).emit('game:update', {

@@ -97,6 +97,21 @@ class GameService {
   async nextRound(gameId: string) {
     console.log(`🎮 GameService: Passage au tour suivant pour le jeu ${gameId}`);
     try {
+      // Vérifier d'abord l'état actuel du jeu
+      try {
+        const gameState = await this.getGameState(gameId);
+        console.log(`🎮 GameService: Phase actuelle avant de passer au tour suivant: ${gameState.game.currentPhase}`);
+        
+        // Vérifier si la phase est correcte
+        if (gameState.game.currentPhase !== 'results' && gameState.game.currentPhase !== 'vote') {
+          console.error(`❌ GameService: Phase incorrecte pour passer au tour suivant: ${gameState.game.currentPhase}`);
+          throw new Error("Ce n'est pas le moment de passer au tour suivant. La phase actuelle doit être 'résultats' ou 'vote'.");
+        }
+      } catch (stateError) {
+        console.error('❌ GameService: Erreur lors de la vérification de l\'état du jeu avant de passer au tour suivant:', stateError);
+        // Continuer quand même, le backend fera la vérification finale
+      }
+      
       const url = `/games/${gameId}/next-round`;
       console.log('🔐 API Request: POST', url);
       
