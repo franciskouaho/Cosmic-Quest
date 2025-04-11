@@ -10,6 +10,9 @@
     "dev": "node ace serve --hmr",
     "test": "node ace test",
     "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "prettier": "prettier --check .",
+    "prettier:fix": "prettier --write .",
     "format": "prettier --write .",
     "typecheck": "tsc --noEmit"
   },
@@ -55,13 +58,13 @@
     "@adonisjs/core": "^6.17.2",
     "@adonisjs/cors": "^2.2.1",
     "@adonisjs/lucid": "^21.6.0",
-    "@adonisjs/transmit": "^2.0.2",
     "@poppinss/utils": "^6.9.2",
     "@vinejs/vine": "^3.0.0",
     "ioredis": "^5.3.2",
     "luxon": "^3.5.0",
     "pg": "^8.13.3",
-    "reflect-metadata": "^0.2.2"
+    "reflect-metadata": "^0.2.2",
+    "socket.io": "^4.8.1"
   },
   "hotHook": {
     "boundaries": [

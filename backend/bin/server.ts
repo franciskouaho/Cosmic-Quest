@@ -10,6 +10,8 @@
 */
 
 import 'reflect-metadata'
+import http from 'node:http'
+import socketService from '#services/socket_service'
 import { Ignitor, prettyPrintError } from '@adonisjs/core'
 
 /**
@@ -38,8 +40,13 @@ new Ignitor(APP_ROOT, { importer: IMPORTER })
     app.listenIf(app.managedByPm2, 'SIGINT', () => app.terminate())
   })
   .httpServer()
-  .start()
+  .start((handler) => {
+    const httpServer = http.createServer(handler)
+    socketService.init(httpServer)
+    return httpServer
+  })
   .catch((error) => {
+    console.error('🔥 Erreur au démarrage des serveurs:', error)
     process.exitCode = 1
     prettyPrintError(error)
   })

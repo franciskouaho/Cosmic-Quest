@@ -8,7 +8,6 @@
 */
 
 import router from '@adonisjs/core/services/router'
-import transmit from '@adonisjs/transmit/services/main'
 import { middleware } from '#start/kernel'
 
 // Importation des contrôleurs
@@ -71,73 +70,6 @@ router
             router.post('/award', [AchievementsController, 'awardAchievement'])
           })
           .prefix('/achievements')
-
-        // Routes pour les événements SSE
-        router.get('/events/room/:code', async ({ response, params }) => {
-          // Configurer la réponse avec les en-têtes SSE appropriés
-          response.response.writeHead(200, {
-            'Content-Type': 'text/event-stream',
-            'Cache-Control': 'no-cache',
-            'Connection': 'keep-alive',
-          })
-
-          // ID unique pour cette connexion
-          const connectionId = Math.random().toString(36).substring(2, 15)
-          const roomChannel = `room:${params.code}`
-
-          // Fonction pour envoyer des événements au client
-          const sendEvent = (event: any) => {
-            response.response.write(`event: room-update\n`)
-            response.response.write(`data: ${JSON.stringify(event)}\n\n`)
-          }
-
-          // S'abonner au canal
-          transmit.subscribe(roomChannel, sendEvent)
-
-          // Ping pour garder la connexion active
-          const pingInterval = setInterval(() => {
-            response.response.write(`: ping\n\n`)
-          }, 30000)
-
-          // Nettoyer lors de la fermeture de la connexion
-          response.response.on('close', () => {
-            clearInterval(pingInterval)
-            transmit.unsubscribe(roomChannel, sendEvent)
-          })
-        })
-
-        router.get('/events/game/:id', async ({ response, params }) => {
-          // Configurer la réponse avec les en-têtes SSE appropriés
-          response.response.writeHead(200, {
-            'Content-Type': 'text/event-stream',
-            'Cache-Control': 'no-cache',
-            'Connection': 'keep-alive',
-          })
-
-          // ID unique pour cette connexion
-          const connectionId = Math.random().toString(36).substring(2, 15)
-          const gameChannel = `game:${params.id}`
-
-          // Fonction pour envoyer des événements au client
-          const sendEvent = (event: any) => {
-            response.response.write(`event: game-update\n`)
-            response.response.write(`data: ${JSON.stringify(event)}\n\n`)
-          }
-
-          // S'abonner au canal
-          transmit.subscribe(gameChannel, sendEvent)
-
-          // Ping pour garder la connexion active
-          const pingInterval = setInterval(() => {
-            response.response.write(`: ping\n\n`)
-          }, 30000)
-
-          // Nettoyer lors de la fermeture de la connexion
-          response.response.on('close', () => {
-            clearInterval(pingInterval)
-            transmit.unsubscribe(gameChannel, sendEvent)
-          })
-        })
       })
       .use([middleware.auth()])
   })
