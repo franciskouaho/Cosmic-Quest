@@ -77,13 +77,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Fonction de déconnexion
   const signOut = async () => {
-    console.log('🔓 Tentative de déconnexion');
     try {
-      await logoutMutation.mutateAsync();
-      console.log('✅ Déconnexion réussie');
+      setIsSigningIn(true);
+      
+      // Supprimer le token du stockage
+      await AsyncStorage.removeItem("userToken");
+      
+      console.log("✅ Déconnexion réussie");
     } catch (error) {
-      console.error('❌ Erreur lors de la déconnexion', error);
-      throw error;
+      console.error("❌ Erreur lors de la déconnexion:", error);
+    } finally {
+      setIsSigningIn(false);
     }
   };
 

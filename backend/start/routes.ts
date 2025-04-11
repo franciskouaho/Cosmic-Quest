@@ -16,6 +16,7 @@ const GamesController = () => import('#controllers/ws/game_controller')
 const RoomsController = () => import('#controllers/ws/room_controller')
 const UsersController = () => import('#controllers/users_controller')
 const AchievementsController = () => import('#controllers/achievements_controller')
+const QuestionsController = () => import('#controllers/questions_controller')
 
 router.get('/', async ({ response }) => response.ok({ uptime: process.uptime() }))
 router.get('/health', ({ response }) => response.noContent())
@@ -71,5 +72,10 @@ router
           .prefix('/achievements')
       })
       .use([middleware.auth()])
+
+    // Route publique pour récupérer des questions aléatoires
+    router.get('/questions/random', [QuestionsController, 'getRandom'])
   })
   .prefix('/api/v1')
+
+// Pas besoin de routes d'admin pour les questions, elles seront prédéfinies

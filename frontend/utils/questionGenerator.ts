@@ -1,6 +1,6 @@
-export type GameTheme = 'standard' | 'fun' | 'dark' | 'personal' | 'crazy';
-
 import { Question } from '../types/gameTypes';
+
+export type GameTheme = 'standard' | 'fun' | 'dark' | 'personal' | 'crazy';
 
 // Banque de questions par thème
 const questionsByTheme: Record<GameTheme, string[]> = {
@@ -72,5 +72,30 @@ export function generateQuestion(theme: GameTheme, playerName: string): string {
   
   // Choisir une question aléatoire
   const randomIndex = Math.floor(Math.random() * questions.length);
-  return questions[randomIndex];
+  return questions[randomIndex].replace('{playerName}', playerName);
+}
+
+/**
+ * Convertit une chaîne de question en objet Question
+ * @param text - Le texte de la question
+ * @param theme - Le thème de la question
+ * @returns Un objet Question
+ */
+export function createQuestionObject(text: string, theme: GameTheme): Question {
+  return {
+    id: `local_${Date.now()}`,
+    text,
+    theme
+  };
+}
+
+/**
+ * Génère un objet Question complet basé sur un thème et un nom de joueur
+ * @param theme - Le thème de la question
+ * @param playerName - Le nom du joueur à insérer dans la question
+ * @returns Un objet Question avec le nom du joueur inséré
+ */
+export function generateQuestionObject(theme: GameTheme, playerName: string): Question {
+  const questionText = generateQuestion(theme, playerName);
+  return createQuestionObject(questionText, theme);
 }

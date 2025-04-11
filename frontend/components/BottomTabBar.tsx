@@ -68,11 +68,11 @@ export default function BottomTabBar() {
             <Feather 
               name="user" 
               size={22} 
-              color={pathname === '/profile' ? "#FFFFFF" : "rgba(255,255,255,0.7)"} 
+              color={pathname === '/(tabs)/profil' ? "#FFFFFF" : "rgba(255,255,255,0.7)"} 
             />
           }
-          isActive={pathname === '/profile'}
-          onPress={() => router.push('/profile')}
+          isActive={pathname === '/(tabs)/profil'}
+          onPress={() => router.push('/(tabs)/profil')}
         />
       </View>
     </View>

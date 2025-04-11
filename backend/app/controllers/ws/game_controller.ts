@@ -2,65 +2,13 @@ import { HttpContext } from '@adonisjs/core/http'
 import { DateTime } from 'luxon'
 import { answerValidator, voteValidator } from '#validators/game'
 import socketService from '#services/socket_service'
+import questionService from '#services/question_service'
 
 import Game from '#models/game'
 import Question from '#models/question'
 import Answer from '#models/answer'
 import Vote from '#models/vote'
 import Room from '#models/room'
-
-// Générer une question basée sur le thème et le nom du joueur cible
-const generateQuestion = (theme: string, playerName: string) => {
-  // Banque de questions par thème
-  const questionsByTheme = {
-    standard: [
-      `${playerName} participe à un jeu télévisé. Quelle serait sa phrase d'accroche ?`,
-      `Si ${playerName} était un super-héros, quel serait son pouvoir ?`,
-      `Quelle émission de télé-réalité conviendrait parfaitement à ${playerName} ?`,
-      `Quel emoji représente le mieux ${playerName} ?`,
-      `Si ${playerName} écrivait une autobiographie, quel en serait le titre ?`,
-      `Quel animal de compagnie conviendrait parfaitement à ${playerName} ?`,
-    ],
-    crazy: [
-      `Si ${playerName} pouvait fusionner avec un objet du quotidien, lequel choisirait-il ?`,
-      `Quelle capacité absurde ${playerName} aimerait développer ?`,
-      `Si ${playerName} était un sandwich, quels ingrédients le composeraient ?`,
-      `Quel serait le slogan publicitaire de ${playerName} s'il vendait des objets inutiles ?`,
-      `Dans une dimension parallèle, quelle est la profession improbable de ${playerName} ?`,
-      `Si les pensées de ${playerName} étaient diffusées à la radio, quel serait le nom de l'émission ?`,
-    ],
-    fun: [
-      `Quel serait le titre du film biographique de ${playerName} ?`,
-      `Si ${playerName} était un plat de restaurant, comment serait-il décrit sur le menu ?`,
-      `Quelle serait la chanson thème de ${playerName} ?`,
-      `Si ${playerName} était une attraction de parc d'attractions, comment s'appellerait-elle ?`,
-      `Si ${playerName} était invité dans une émission de télé-réalité, laquelle serait-ce et pourquoi ?`,
-      `Quel hashtag représente parfaitement ${playerName} ?`,
-    ],
-    dark: [
-      `Quelle est la peur la plus étrange que ${playerName} pourrait avoir ?`,
-      `Si ${playerName} était un personnage de film d'horreur, comment mourrait-il ?`,
-      `Quel serait le péché mignon embarrassant de ${playerName} ?`,
-      `Si ${playerName} était un dictateur, quelle serait sa règle la plus bizarre ?`,
-      `Quelle serait la pire combinaison de vêtements que ${playerName} pourrait porter ?`,
-      `Quel secret ${playerName} cache-t-il à tout le monde ?`,
-    ],
-    personal: [
-      `Qu'est-ce que ${playerName} fait probablement quand personne ne regarde ?`,
-      `Quel est le talent caché de ${playerName} ?`,
-      `Si vous deviez être coincé sur une île déserte avec ${playerName}, quelle serait la chose la plus ennuyeuse à son sujet ?`,
-      `Quel est le rêve le plus fou de ${playerName} ?`,
-      `Si vous pouviez échanger une qualité avec ${playerName}, laquelle choisiriez-vous ?`,
-      `Comment ${playerName} réagirait-il face à une célébrité qu'il admire ?`,
-    ],
-  }
-
-  // Sélectionner un thème par défaut si le thème fourni n'existe pas
-  const questions = questionsByTheme[theme] || questionsByTheme.standard
-
-  // Retourner une question aléatoire du thème
-  return questions[Math.floor(Math.random() * questions.length)]
-}
 
 // Sélectionner un joueur cible aléatoire parmi les joueurs (sauf celui qui est déjà ciblé)
 const selectRandomTargetPlayer = async (gameId: number, currentTargetPlayerId: number | null) => {
@@ -556,11 +504,23 @@ export default class GamesController {
         game.currentTargetPlayerId = targetPlayer.id
         await game.save()
 
-        // Générer une nouvelle question
-        const questionText = generateQuestion(
-          game.gameMode,
-          targetPlayer.displayName || targetPlayer.username
-        )
+        // Récupérer une question depuis la base de données
+        const questionFromDB = await questionService.getRandomQuestionByTheme(game.gameMode)
+
+        // En cas d'échec, générer une question de secours
+        let questionText = ''
+        if (questionFromDB) {
+          questionText = questionService.formatQuestion(
+            questionFromDB.text,
+            targetPlayer.displayName || targetPlayer.username
+          )
+        } else {
+          // Utiliser la méthode de secours si aucune question n'est disponible dans la DB
+          questionText = this.generateFallbackQuestion(
+            game.gameMode,
+            targetPlayer.displayName || targetPlayer.username
+          )
+        }
 
         // Créer la nouvelle question
         const question = await Question.create({
@@ -617,6 +577,46 @@ export default class GamesController {
         error: 'Une erreur est survenue lors du passage au tour suivant',
       })
     }
+  }
+
+  /**
+   * Méthode de secours pour générer une question si la base de données échoue
+   */
+  private generateFallbackQuestion(theme: string, playerName: string): string {
+    // Banque de questions par thème (version simplifiée)
+    const questionsByTheme = {
+      standard: [
+        `${playerName} participe à un jeu télévisé. Quelle serait sa phrase d'accroche ?`,
+        `Si ${playerName} était un super-héros, quel serait son pouvoir ?`,
+        `Quel emoji représente le mieux ${playerName} ?`,
+      ],
+      fun: [
+        `Si ${playerName} était un mème internet, lequel serait-il ?`,
+        `Quel talent caché pourrait avoir ${playerName} ?`,
+        `Quelle chanson définit le mieux ${playerName} ?`,
+      ],
+      dark: [
+        `Quel serait le plan machiavélique de ${playerName} pour dominer le monde ?`,
+        `Si ${playerName} était un méchant de film, quelle serait sa phrase culte ?`,
+        `Quel est le plus grand secret que ${playerName} pourrait cacher ?`,
+      ],
+      personal: [
+        `Quelle habitude agaçante ${playerName} a-t-il probablement ?`,
+        `Quel serait le pire cadeau à offrir à ${playerName} ?`,
+        `Si la vie de ${playerName} était une série TV, quel en serait le titre ?`,
+      ],
+      crazy: [
+        `Si ${playerName} pouvait fusionner avec un objet du quotidien, lequel choisirait-il ?`,
+        `Quelle capacité absurde ${playerName} aimerait développer ?`,
+        `Si ${playerName} était une créature mythologique, laquelle serait-il et pourquoi ?`,
+      ],
+    }
+
+    // Sélectionner un thème par défaut si le thème fourni n'existe pas
+    const questions = questionsByTheme[theme] || questionsByTheme.standard
+
+    // Retourner une question aléatoire du thème
+    return questions[Math.floor(Math.random() * questions.length)]
   }
 
   /**

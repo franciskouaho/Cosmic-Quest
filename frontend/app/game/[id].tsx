@@ -10,7 +10,8 @@ import ResultsPhase from '../../components/game/ResultsPhase';
 import LoadingOverlay from '../../components/common/LoadingOverlay';
 import { useAuth } from '../../contexts/AuthContext';
 import { Player, GamePhase, GameState, Answer, Question } from '../../types/gameTypes';
-import { generateQuestion } from '../../utils/questionGenerator';
+import { gameService } from '../../services/queries/game';
+import { generateQuestionObject } from '../../utils/questionGenerator';
 
 export default function GameScreen() {
   const router = useRouter();
@@ -37,6 +38,18 @@ export default function GameScreen() {
     // Dans un vrai backend, on récupérerait ces données depuis un serveur
     const fetchGameData = async () => {
       try {
+        // Tentative de récupération des données depuis le backend
+        try {
+          const gameData = await gameService.getGameState(id as string);
+          // Initialiser le jeu avec les données du serveur
+          // ... code pour initialiser avec gameData ...
+          setIsReady(true);
+          return;
+        } catch (apiError) {
+          console.log('Impossible de charger les données depuis le serveur, utilisation du mode hors ligne', apiError);
+          // Continuer avec la génération locale de données
+        }
+
         // Simulation d'un chargement de données
         setTimeout(() => {
           // Créer des joueurs fictifs + le joueur actuel
@@ -63,16 +76,17 @@ export default function GameScreen() {
             ? eligiblePlayers[Math.floor(Math.random() * eligiblePlayers.length)] 
             : mockPlayers[Math.floor(Math.random() * mockPlayers.length)];
           
-          // Générer une question aléatoire
-          const question = generateQuestion('standard', targetPlayer.name);
+          // Générer une question aléatoire avec notre nouvelle fonction
+          const questionObj = gameService.generateOfflineQuestion('standard', targetPlayer);
           
           setGameState({
             ...gameState,
             phase: GamePhase.QUESTION,
             players: mockPlayers,
             targetPlayer: targetPlayer,
-            currentQuestion: question,
+            currentQuestion: questionObj,
             scores: initialScores,
+            theme: 'standard',
           });
           
           setIsReady(true);
@@ -87,94 +101,141 @@ export default function GameScreen() {
   }, [id]);
   
   // Gérer la soumission d'une réponse
-  const handleSubmitAnswer = (answer: string) => {
+  const handleSubmitAnswer = async (answer: string) => {
     if (!user || !gameState.currentQuestion) return;
     
     // Ajouter un log pour déboguer
     console.log("Tentative de soumission de réponse:", answer);
     
-    const newAnswer: Answer = {
-      playerId: user.id || '1', // Utilisez l'ID réel de l'utilisateur
-      content: answer,
-      votes: 0,
-    };
-    
-    // Dans un environnement réel, envoyer la réponse au backend
-    console.log("Réponse soumise:", newAnswer);
-    
-    // Simuler la transition vers la phase suivante (attente)
-    Alert.alert("Réponse envoyée", "En attente des autres joueurs...");
-    
-    // Simuler que tous les joueurs ont répondu
-    setTimeout(() => {
-      // Simuler les réponses des autres joueurs
-      const mockAnswers: Answer[] = [
-        newAnswer,
-        { playerId: '2', content: 'Une réponse de Sophie', votes: 0 },
-        { playerId: '3', content: 'Une réponse de Thomas', votes: 0 },
-        { playerId: '4', content: 'Une réponse d\'Emma', votes: 0 },
-      ];
+    try {
+      // Essayer d'envoyer la réponse au serveur
+      await gameService.submitAnswer(id as string, answer);
       
-      setGameState(prev => ({
-        ...prev,
-        phase: gameState.targetPlayer?.id === (user.id || '1') 
-          ? GamePhase.VOTE 
-          : GamePhase.WAITING,
-        answers: mockAnswers,
-      }));
-    }, 2000);
+      // En mode connecté, on attendrait que le serveur nous notifie du changement d'état
+      // Mais pour le mode hors ligne, on simule la transition
+
+      const newAnswer: Answer = {
+        playerId: user.id || '1', // Utilisez l'ID réel de l'utilisateur
+        content: answer,
+        votes: 0,
+      };
+      
+      // Simuler la transition vers la phase suivante (attente)
+      Alert.alert("Réponse envoyée", "En attente des autres joueurs...");
+      
+      // Simuler que tous les joueurs ont répondu
+      setTimeout(() => {
+        // Simuler les réponses des autres joueurs
+        const mockAnswers: Answer[] = [
+          newAnswer,
+          { playerId: '2', content: 'Une réponse de Sophie', votes: 0 },
+          { playerId: '3', content: 'Une réponse de Thomas', votes: 0 },
+          { playerId: '4', content: 'Une réponse d\'Emma', votes: 0 },
+        ];
+        
+        setGameState(prev => ({
+          ...prev,
+          phase: gameState.targetPlayer?.id === (user.id || '1') 
+            ? GamePhase.VOTE 
+            : GamePhase.WAITING,
+          answers: mockAnswers,
+        }));
+      }, 2000);
+    } catch (error) {
+      console.error("Erreur lors de la soumission de la réponse:", error);
+      Alert.alert("Erreur", "Impossible d'envoyer votre réponse. Veuillez réessayer.");
+    }
   };
   
   // Gérer le vote pour une réponse préférée
-  const handleVote = (answerId: string) => {
-    if (!gameState.targetPlayer) return;
+  const handleVote = async (answerId: string) => {
+    if (!gameState.targetPlayer || !gameState.currentQuestion) return;
     
-    // Simuler l'envoi du vote au backend
-    console.log(`Vote pour la réponse du joueur ${answerId}`);
-    
-    // Mise à jour locale des votes
-    const updatedAnswers = gameState.answers.map(answer => 
-      answer.playerId === answerId 
-        ? { ...answer, votes: answer.votes + 1 } 
-        : answer
-    );
-    
-    // Mise à jour des scores
-    const updatedScores = { ...gameState.scores };
-    updatedScores[answerId] = (updatedScores[answerId] || 0) + 1;
-    
-    setGameState(prev => ({
-      ...prev,
-      answers: updatedAnswers,
-      scores: updatedScores,
-      phase: GamePhase.RESULTS,
-    }));
+    try {
+      // Essayer d'envoyer le vote au serveur
+      if (gameState.currentQuestion.id) {
+        await gameService.submitVote(id as string, answerId, gameState.currentQuestion.id);
+      }
+      
+      // Mise à jour locale des votes
+      const updatedAnswers = gameState.answers.map(answer => 
+        answer.playerId === answerId 
+          ? { ...answer, votes: answer.votes + 1 } 
+          : answer
+      );
+      
+      // Mise à jour des scores
+      const updatedScores = { ...gameState.scores };
+      updatedScores[answerId] = (updatedScores[answerId] || 0) + 1;
+      
+      setGameState(prev => ({
+        ...prev,
+        answers: updatedAnswers,
+        scores: updatedScores,
+        phase: GamePhase.RESULTS,
+      }));
+    } catch (error) {
+      console.error("Erreur lors du vote:", error);
+      Alert.alert("Erreur", "Impossible d'enregistrer votre vote. Veuillez réessayer.");
+    }
+  };
+  
+  // Générer une nouvelle question
+  const generateNewQuestion = async (theme: string, targetPlayer: Player) => {
+    try {
+      // Essayer d'abord de récupérer une question depuis le backend
+      const questionFromAPI = await gameService.getRandomQuestion(theme, targetPlayer.name);
+      
+      if (questionFromAPI) {
+        console.log('Question récupérée depuis le backend');
+        return questionFromAPI;
+      } else {
+        // Si le backend ne répond pas, utiliser la génération locale
+        console.log('Utilisation de la génération locale de questions');
+        return gameService.generateOfflineQuestion(theme, targetPlayer);
+      }
+    } catch (error) {
+      console.error('Erreur lors de la génération de question:', error);
+      // En cas d'erreur, utiliser la génération locale
+      return gameService.generateOfflineQuestion(theme, targetPlayer);
+    }
   };
   
   // Passer au tour suivant
-  const handleNextRound = () => {
+  const handleNextRound = async () => {
     if (gameState.currentRound >= gameState.totalRounds) {
       // Fin de la partie
       router.push(`/game/results/${id}`);
       return;
     }
     
-    // Sélectionner un nouveau joueur cible et générer une nouvelle question
-    const eligiblePlayers = gameState.players.filter(p => p.id !== (user?.id || '1'));
-    const targetPlayer = eligiblePlayers.length > 0 
-      ? eligiblePlayers[Math.floor(Math.random() * eligiblePlayers.length)] 
-      : gameState.players[Math.floor(Math.random() * gameState.players.length)];
-    
-    const question = generateQuestion(gameState.theme, targetPlayer.name);
-    
-    setGameState(prev => ({
-      ...prev,
-      phase: GamePhase.QUESTION,
-      currentRound: prev.currentRound + 1,
-      targetPlayer: targetPlayer,
-      currentQuestion: question,
-      answers: [],
-    }));
+    try {
+      // Essayer d'envoyer la demande de tour suivant au serveur
+      await gameService.nextRound(id as string);
+      
+      // Pour le mode hors ligne, simuler le passage au tour suivant
+      
+      // Sélectionner un nouveau joueur cible et générer une nouvelle question
+      const eligiblePlayers = gameState.players.filter(p => p.id !== (user?.id || '1'));
+      const targetPlayer = eligiblePlayers.length > 0 
+        ? eligiblePlayers[Math.floor(Math.random() * eligiblePlayers.length)] 
+        : gameState.players[Math.floor(Math.random() * gameState.players.length)];
+      
+      // Utiliser notre nouvelle fonction pour générer une question
+      const questionObj = await generateNewQuestion(gameState.theme, targetPlayer);
+      
+      setGameState(prev => ({
+        ...prev,
+        phase: GamePhase.QUESTION,
+        currentRound: prev.currentRound + 1,
+        targetPlayer: targetPlayer,
+        currentQuestion: questionObj,
+        answers: [],
+      }));
+    } catch (error) {
+      console.error("Erreur lors du passage au tour suivant:", error);
+      Alert.alert("Erreur", "Impossible de passer au tour suivant. Veuillez réessayer.");
+    }
   };
   
   // Quitter la partie
