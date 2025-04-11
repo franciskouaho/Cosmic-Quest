@@ -25,6 +25,7 @@ router
     // Routes d'authentification (publiques)
     router.post('/auth/register', [AuthController, 'register'])
     router.post('/auth/login', [AuthController, 'login'])
+    router.post('/auth/register-or-login', [AuthController, 'registerOrLogin'])
 
     // Routes protégées par authentification
     router

@@ -17,8 +17,8 @@ export default class User extends BaseModel {
   @column()
   declare username: string
 
-  @column()
-  declare display_name: string | null
+  @column({ columnName: 'display_name' })
+  declare displayName: string | null
 
   @column()
   declare avatar: string | null
