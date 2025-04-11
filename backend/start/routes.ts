@@ -74,32 +74,68 @@ router
 
         // Routes pour les événements SSE
         router.get('/events/room/:code', async ({ response, params }) => {
-          return transmit.stream(response, (emitter) => {
-            // Envoyer des événements à l'émetteur lorsque les joueurs rejoignent/quittent la salle
-            const roomChannel = `room:${params.code}`
+          // Configurer la réponse avec les en-têtes SSE appropriés
+          response.response.writeHead(200, {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+          })
 
-            transmit.on(roomChannel, (event) => {
-              emitter.emit('room-update', event)
-            })
+          // ID unique pour cette connexion
+          const connectionId = Math.random().toString(36).substring(2, 15)
+          const roomChannel = `room:${params.code}`
 
-            return () => {
-              transmit.off(roomChannel)
-            }
+          // Fonction pour envoyer des événements au client
+          const sendEvent = (event: any) => {
+            response.response.write(`event: room-update\n`)
+            response.response.write(`data: ${JSON.stringify(event)}\n\n`)
+          }
+
+          // S'abonner au canal
+          transmit.subscribe(roomChannel, sendEvent)
+
+          // Ping pour garder la connexion active
+          const pingInterval = setInterval(() => {
+            response.response.write(`: ping\n\n`)
+          }, 30000)
+
+          // Nettoyer lors de la fermeture de la connexion
+          response.response.on('close', () => {
+            clearInterval(pingInterval)
+            transmit.unsubscribe(roomChannel, sendEvent)
           })
         })
 
         router.get('/events/game/:id', async ({ response, params }) => {
-          return transmit.stream(response, (emitter) => {
-            // Envoyer des événements à l'émetteur pour les mises à jour du jeu
-            const gameChannel = `game:${params.id}`
+          // Configurer la réponse avec les en-têtes SSE appropriés
+          response.response.writeHead(200, {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+          })
 
-            transmit.on(gameChannel, (event) => {
-              emitter.emit('game-update', event)
-            })
+          // ID unique pour cette connexion
+          const connectionId = Math.random().toString(36).substring(2, 15)
+          const gameChannel = `game:${params.id}`
 
-            return () => {
-              transmit.off(gameChannel)
-            }
+          // Fonction pour envoyer des événements au client
+          const sendEvent = (event: any) => {
+            response.response.write(`event: game-update\n`)
+            response.response.write(`data: ${JSON.stringify(event)}\n\n`)
+          }
+
+          // S'abonner au canal
+          transmit.subscribe(gameChannel, sendEvent)
+
+          // Ping pour garder la connexion active
+          const pingInterval = setInterval(() => {
+            response.response.write(`: ping\n\n`)
+          }, 30000)
+
+          // Nettoyer lors de la fermeture de la connexion
+          response.response.on('close', () => {
+            clearInterval(pingInterval)
+            transmit.unsubscribe(gameChannel, sendEvent)
           })
         })
       })
