@@ -403,6 +403,17 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@adonisjs/transmit@npm:^2.0.2":
+  version: 2.0.2
+  resolution: "@adonisjs/transmit@npm:2.0.2"
+  dependencies:
+    "@boringnode/transmit": "npm:^0.2.1"
+  peerDependencies:
+    "@adonisjs/core": ^6.2.0
+  checksum: 10c0/5e84c6323d40a36bc1a9ea2771a6d19ad608a9a93c1ddeee2033371861e124ae4891a3cf61e41fcc6c8656bb480eefe11683227d9510a3bf45b69abd392b56e7
+  languageName: node
+  linkType: hard
+
 "@adonisjs/tsconfig@npm:^1.4.0":
   version: 1.4.0
   resolution: "@adonisjs/tsconfig@npm:1.4.0"
@@ -452,6 +463,34 @@ __metadata:
   version: 7.25.9
   resolution: "@babel/helper-validator-identifier@npm:7.25.9"
   checksum: 10c0/4fc6f830177b7b7e887ad3277ddb3b91d81e6c4a24151540d9d1023e8dc6b1c0505f0f0628ae653601eb4388a8db45c1c14b2c07a9173837aef7e4116456259d
+  languageName: node
+  linkType: hard
+
+"@boringnode/bus@npm:^0.7.0":
+  version: 0.7.1
+  resolution: "@boringnode/bus@npm:0.7.1"
+  dependencies:
+    "@paralleldrive/cuid2": "npm:^2.2.2"
+    "@poppinss/utils": "npm:^6.9.2"
+    object-hash: "npm:^3.0.0"
+  peerDependencies:
+    ioredis: ^5.0.0
+  peerDependenciesMeta:
+    ioredis:
+      optional: true
+  checksum: 10c0/0502bc0d3b00b8595a383237fbade0b37ecb293abe55f89f31f565f6e246e9aca723ca974ed20a7f7b4b0d41d00e993539078eb3c96be10fe527cdb84c971646
+  languageName: node
+  linkType: hard
+
+"@boringnode/transmit@npm:^0.2.1":
+  version: 0.2.2
+  resolution: "@boringnode/transmit@npm:0.2.2"
+  dependencies:
+    "@boringnode/bus": "npm:^0.7.0"
+    "@poppinss/utils": "npm:^6.8.3"
+    emittery: "npm:^1.0.3"
+    matchit: "npm:^1.1.0"
+  checksum: 10c0/b4b98286ecf1a2697a37013c5bbe3b7f9179583d23cade1c30a8bd3d7924b74a2cd9116da8fe58ad2a7c329425d33b1e5e7eb99cd2fb9bb1d220e168353a0374
   languageName: node
   linkType: hard
 
@@ -1691,6 +1730,7 @@ __metadata:
     "@adonisjs/eslint-config": "npm:^2.0.0"
     "@adonisjs/lucid": "npm:^21.6.0"
     "@adonisjs/prettier-config": "npm:^1.4.0"
+    "@adonisjs/transmit": "npm:^2.0.2"
     "@adonisjs/tsconfig": "npm:^1.4.0"
     "@japa/api-client": "npm:^3.0.3"
     "@japa/assert": "npm:^4.0.1"
@@ -3589,6 +3629,15 @@ __metadata:
   languageName: node
   linkType: hard
 
+"matchit@npm:^1.1.0":
+  version: 1.1.0
+  resolution: "matchit@npm:1.1.0"
+  dependencies:
+    "@arr/every": "npm:^1.0.0"
+  checksum: 10c0/f2cd8702ea37dd9859cf1df762581c822180eb72372b9240397a80320cb4ffb4828b3d8ed0beff2429daf500d1ec746c2963dbb3c6386f1b5b9eb969e0f1caaa
+  languageName: node
+  linkType: hard
+
 "math-intrinsics@npm:^1.1.0":
   version: 1.1.0
   resolution: "math-intrinsics@npm:1.1.0"
@@ -3797,6 +3846,13 @@ __metadata:
     path-key: "npm:^4.0.0"
     unicorn-magic: "npm:^0.3.0"
   checksum: 10c0/b223c8a0dcd608abf95363ea5c3c0ccc3cd877daf0102eaf1b0f2390d6858d8337fbb7c443af2403b067a7d2c116d10691ecd22ab3c5273c44da1ff8d07753bd
+  languageName: node
+  linkType: hard
+
+"object-hash@npm:^3.0.0":
+  version: 3.0.0
+  resolution: "object-hash@npm:3.0.0"
+  checksum: 10c0/a06844537107b960c1c8b96cd2ac8592a265186bfa0f6ccafe0d34eabdb526f6fa81da1f37c43df7ed13b12a4ae3457a16071603bcd39d8beddb5f08c37b0f47
   languageName: node
   linkType: hard
 
