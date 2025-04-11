@@ -14,9 +14,12 @@ export interface Question {
 }
 
 export interface Answer {
-  playerId: string;
+  id: number | string; // L'ID peut être un nombre ou une chaîne
   content: string;
-  votes: number;
+  playerId: number | string;
+  playerName: string;
+  votesCount?: number;
+  isOwnAnswer?: boolean; // Ajouter cette propriété pour identifier les propres réponses
 }
 
 export enum GamePhase {
@@ -37,7 +40,16 @@ export interface GameState {
   answers: Answer[];
   players: Player[];
   scores: Record<string, number>;
-  theme: GameTheme;
+  theme: string;
+  timer: {
+    duration: number;
+    startTime: number;
+  } | null;
+  currentUserState?: {
+    hasAnswered: boolean;
+    hasVoted: boolean;
+    isTargetPlayer: boolean;
+  };
 }
 
 export type GameTheme = 'standard' | 'fun' | 'dark' | 'personal' | 'crazy';

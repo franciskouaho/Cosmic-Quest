@@ -6,6 +6,7 @@ import { Platform } from 'react-native';
 class SocketService {
   private static instance: Socket | null = null;
   private static activeRooms = new Set<string>();
+  private static activeGames = new Set<string>();
   private static connectionAttempts = 0;
   private static maxConnectionAttempts = 3;
   
@@ -48,6 +49,13 @@ class SocketService {
     }
     
     return this.instance!;
+  }
+  
+  /**
+   * Vérifie si le socket est connecté
+   */
+  static isConnected(): boolean {
+    return !!this.instance && this.instance.connected;
   }
   
   /**
@@ -152,6 +160,7 @@ class SocketService {
     if (this.instance) {
       // Vider la liste des salles actives
       this.activeRooms.clear();
+      this.activeGames.clear();
       
       this.instance.disconnect();
       this.instance = null;
@@ -168,6 +177,12 @@ class SocketService {
     console.log(`🎮 Tentative de rejoindre le canal de jeu ${gameId}`);
     
     try {
+      // Vérifier si nous sommes déjà dans ce canal
+      if (this.activeGames.has(gameId)) {
+        console.log(`ℹ️ Déjà connecté au canal de jeu ${gameId}, ignorer`);
+        return;
+      }
+      
       const socket = this.getInstance();
       
       if (!socket || !socket.connected) {
@@ -176,7 +191,10 @@ class SocketService {
       }
       
       socket.emit('join-game', { gameId });
+      this.activeGames.add(gameId);
+      
       console.log(`✅ Demande envoyée pour rejoindre le canal de jeu ${gameId}`);
+      console.log(`📊 Jeux actifs: ${Array.from(this.activeGames).join(', ')}`);
     } catch (error) {
       console.error(`❌ Erreur lors de la tentative de rejoindre le canal de jeu ${gameId}:`, error);
     }
@@ -197,11 +215,16 @@ class SocketService {
       }
       
       socket.emit('leave-game', { gameId });
+      this.activeGames.delete(gameId);
+      
       console.log(`✅ Demande envoyée pour quitter le canal de jeu ${gameId}`);
+      console.log(`📊 Jeux actifs: ${Array.from(this.activeGames).join(', ')}`);
     } catch (error) {
       console.error(`❌ Erreur lors de la tentative de quitter le canal de jeu ${gameId}:`, error);
     }
   }
 }
 
+// Exporter à la fois la classe et une instance par défaut
+export { SocketService };
 export default SocketService;

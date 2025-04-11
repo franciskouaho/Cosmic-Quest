@@ -1,21 +1,46 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Answer, Question } from '../../types/gameTypes';
+import GameTimer from './GameTimer';
 
 interface VotePhaseProps {
   answers: Answer[];
   question: Question;
   onVote: (answerId: string) => void;
+  timer?: {
+    duration: number;
+    startTime: number;
+  } | null;
 }
 
-const VotePhase: React.FC<VotePhaseProps> = ({ answers, question, onVote }) => {
+const VotePhase: React.FC<VotePhaseProps> = ({ answers, question, onVote, timer }) => {
+  // Filtrer les réponses pour exclure les propres réponses de l'utilisateur
+  const filteredAnswers = answers.filter(answer => !answer.isOwnAnswer);
+  
+  const handleVote = (answer: Answer) => {
+    if (answer.isOwnAnswer) {
+      Alert.alert("Impossible", "Vous ne pouvez pas voter pour votre propre réponse.");
+      return;
+    }
+    onVote(answer.id.toString());
+  };
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Vote pour la meilleure réponse</Text>
       </View>
+
+      {timer && (
+        <View style={styles.timerContainer}>
+          <GameTimer 
+            duration={timer.duration}
+            startTime={timer.startTime}
+          />
+        </View>
+      )}
 
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.questionCard}>
@@ -29,11 +54,11 @@ const VotePhase: React.FC<VotePhaseProps> = ({ answers, question, onVote }) => {
 
         <Text style={styles.sectionTitle}>Sélectionne ta réponse préférée</Text>
 
-        {answers.map((answer) => (
+        {filteredAnswers.length > 0 ? filteredAnswers.map((answer) => (
           <TouchableOpacity 
-            key={answer.playerId}
+            key={answer.id.toString()}
             style={styles.answerCard}
-            onPress={() => onVote(answer.playerId)}
+            onPress={() => handleVote(answer)}
           >
             <LinearGradient
               colors={['rgba(255, 255, 255, 0.1)', 'rgba(255, 255, 255, 0.05)']}
@@ -46,7 +71,11 @@ const VotePhase: React.FC<VotePhaseProps> = ({ answers, question, onVote }) => {
               </View>
             </LinearGradient>
           </TouchableOpacity>
-        ))}
+        )) : (
+          <View style={styles.noAnswersContainer}>
+            <Text style={styles.noAnswersText}>Aucune réponse disponible pour le moment</Text>
+          </View>
+        )}
       </ScrollView>
     </View>
   );
@@ -64,6 +93,10 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: 'bold',
     color: '#ffffff',
+  },
+  timerContainer: {
+    paddingHorizontal: 16,
+    marginBottom: 16,
   },
   content: {
     flex: 1,
@@ -117,6 +150,18 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     marginLeft: 6,
   },
+  noAnswersContainer: {
+    padding: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderRadius: 12,
+  },
+  noAnswersText: {
+    color: '#b3a5d9',
+    textAlign: 'center',
+    fontSize: 16,
+  }
 });
 
 export default VotePhase;

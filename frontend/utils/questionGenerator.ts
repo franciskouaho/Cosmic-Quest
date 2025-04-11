@@ -1,6 +1,6 @@
 import { Question } from '../types/gameTypes';
 
-export type GameTheme = 'standard' | 'fun' | 'dark' | 'personal' | 'crazy';
+export type GameTheme = 'standard' | 'fun' | 'dark' | 'personal' | 'crazy' | 'on-ecoute-mais-on-ne-juge-pas';
 
 /**
  * Génère un objet Question complet basé sur un thème et un nom de joueur
@@ -45,6 +45,16 @@ function generateQuestion(theme: GameTheme, playerName: string): string {
       `Si ${playerName} pouvait fusionner avec un objet du quotidien, lequel choisirait-il ?`,
       `Quelle capacité absurde ${playerName} aimerait développer ?`,
       `Si ${playerName} était une créature mythologique, laquelle serait-il et pourquoi ?`,
+    ],
+    'on-ecoute-mais-on-ne-juge-pas': [
+      `Si ${playerName} devait confesser un péché mignon, lequel serait-ce ?`,
+      `Quelle est la pire habitude de ${playerName} qu'il/elle n'admettra jamais publiquement ?`,
+      `Comment ${playerName} réagirait face à un compliment sincère mais inattendu ?`,
+      `Quel secret ${playerName} serait-il/elle prêt(e) à partager uniquement dans cette pièce ?`,
+      `Quelle émotion ${playerName} a-t-il/elle le plus de mal à exprimer ?`,
+      `Dans quel domaine ${playerName} aimerait-il/elle être meilleur(e) mais a peur d'essayer ?`,
+      `Si ${playerName} devait écrire une lettre à son "moi" passé, quel conseil donnerait-il/elle ?`,
+      `Quelle situation fait le plus douter ${playerName} de ses capacités ?`,
     ],
   };
 

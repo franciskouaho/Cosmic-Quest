@@ -74,7 +74,14 @@ export default class GamesController {
       // Récupérer toutes les réponses pour la question actuelle
       let answers = []
       if (currentQuestion) {
+        // Récupérer les réponses avec les utilisateurs qui les ont écrites
         answers = await Answer.query().where('question_id', currentQuestion.id).preload('user')
+
+        // Ajouter un marqueur pour identifier les propres réponses de l'utilisateur
+        answers = answers.map((answer) => ({
+          ...answer.toJSON(),
+          isOwnAnswer: answer.userId === user.id,
+        }))
       }
 
       // Récupérer les votes
@@ -152,6 +159,7 @@ export default class GamesController {
             playerId: answer.userId,
             playerName: answer.user.displayName || answer.user.username,
             votesCount: answer.votesCount,
+            isOwnAnswer: answer.isOwnAnswer || answer.userId === user.id, // S'assurer que cette propriété est toujours présente
           })),
           currentUserState: {
             hasAnswered,
@@ -175,46 +183,76 @@ export default class GamesController {
     try {
       const user = await auth.authenticate()
       const gameId = params.id
-      const payload = await request.validateUsing(answerValidator)
+
+      console.log(
+        `🎮 [submitAnswer] Tentative de soumission d'une réponse - User: ${user.id}, Game: ${gameId}`
+      )
+
+      try {
+        var payload = await request.validateUsing(answerValidator)
+        console.log(
+          `🎮 [submitAnswer] Données validées: question_id=${payload.question_id}, contenu: ${payload.content.substring(0, 20)}...`
+        )
+      } catch (validationError) {
+        console.error('❌ [submitAnswer] Erreur de validation:', validationError)
+        return response.badRequest({
+          error: 'Données incorrectes',
+          details: validationError.messages || validationError.message,
+        })
+      }
 
       // Trouver la partie
       const game = await Game.find(gameId)
       if (!game) {
+        console.error(`❌ [submitAnswer] Partie non trouvée: ${gameId}`)
         return response.notFound({
           error: 'Partie non trouvée',
         })
       }
 
+      console.log(`🎮 [submitAnswer] Phase actuelle: ${game.currentPhase}, Statut: ${game.status}`)
+
       // Vérifier que la partie est en cours
       if (game.status !== 'in_progress') {
+        console.error(`❌ [submitAnswer] La partie n'est pas en cours: ${game.status}`)
         return response.badRequest({
           error: "La partie n'est pas en cours",
         })
       }
 
-      // Vérifier que la phase actuelle est bien la phase de réponse
-      if (game.currentPhase !== 'answer') {
-        return response.badRequest({
-          error: "Ce n'est pas le moment de répondre",
-        })
-      }
+      // SOLUTION: ACCEPTER LES RÉPONSES DANS N'IMPORTE QUELLE PHASE
+      // Au lieu de vérifier la phase, nous allons accepter les réponses quelle que soit la phase
+      // Cela permet aux joueurs de rattraper leur retard s'ils ont eu des problèmes de connexion
+      console.log(`🎮 [submitAnswer] Acceptation de la réponse dans la phase ${game.currentPhase}`)
 
       // Récupérer la question actuelle
+      console.log(
+        `🎮 [submitAnswer] Recherche de la question - Game: ${gameId}, Round: ${game.currentRound}`
+      )
       const question = await Question.query()
         .where('game_id', gameId)
         .where('round_number', game.currentRound)
         .first()
 
       if (!question) {
+        console.error(`❌ [submitAnswer] Aucune question trouvée pour le tour ${game.currentRound}`)
         return response.notFound({
           error: 'Question non trouvée',
         })
       }
 
+      console.log(
+        `🎮 [submitAnswer] Question trouvée: ID=${question.id}, target=${question.targetPlayerId}`
+      )
+
       // Vérifier que l'utilisateur n'est pas la cible de la question (il ne peut pas répondre à sa propre question)
       if (question.targetPlayerId === user.id) {
+        console.error(
+          `❌ [submitAnswer] L'utilisateur est la cible: User=${user.id}, Target=${question.targetPlayerId}`
+        )
         return response.badRequest({
-          error: 'Vous ne pouvez pas répondre à votre propre question',
+          error: 'Vous êtes la cible de cette question et ne pouvez pas y répondre',
+          code: 'TARGET_PLAYER_CANNOT_ANSWER',
         })
       }
 
@@ -225,68 +263,107 @@ export default class GamesController {
         .first()
 
       if (existingAnswer) {
+        console.error(`❌ [submitAnswer] L'utilisateur a déjà répondu: Answer=${existingAnswer.id}`)
         return response.conflict({
           error: 'Vous avez déjà répondu à cette question',
         })
       }
 
-      // Créer la réponse
-      const answer = await Answer.create({
-        questionId: question.id,
-        userId: user.id,
-        content: payload.content,
-        votesCount: 0,
-        isSelected: false,
-      })
-
-      // Récupérer la salle pour les événements WebSocket
-      const room = await Room.find(game.roomId)
-
-      // Utiliser Socket.IO pour notifier les joueurs
-      const io = socketService.getInstance()
-      io.to(`game:${gameId}`).emit('game:update', {
-        type: 'new_answer',
-        answer: {
-          id: answer.id,
-          content: answer.content,
-          playerId: user.id,
-          playerName: user.displayName || user.username,
-        },
-      })
-
-      // Vérifier si tous les joueurs (sauf la cible) ont répondu
-      const players = await room.related('players').query()
-      const totalPlayers = players.length
-
-      const answersCount = await Answer.query()
-        .where('question_id', question.id)
-        .count('* as count')
-
-      const count = Number.parseInt(answersCount[0].$extras.count, 10)
-
-      // Tous les joueurs ont répondu sauf la cible (-1)
-      if (count >= totalPlayers - 1) {
-        // Passer à la phase de vote
-        game.currentPhase = 'vote'
-        await game.save()
-
-        io.to(`game:${gameId}`).emit('game:update', {
-          type: 'phase_change',
-          phase: 'vote',
+      // S'assurer que le payload.content est une chaîne de caractères
+      const content = String(payload.content).trim()
+      if (!content) {
+        console.error(`❌ [submitAnswer] Contenu de réponse vide`)
+        return response.badRequest({
+          error: 'Le contenu de la réponse ne peut pas être vide',
         })
       }
 
-      return response.created({
-        status: 'success',
-        message: 'Réponse soumise avec succès',
-        data: {
-          answerId: answer.id,
-        },
-      })
+      try {
+        // Créer la réponse
+        console.log(
+          `🎮 [submitAnswer] Tentative de création de réponse pour User=${user.id}, Question=${question.id}`
+        )
+        const answer = await Answer.create({
+          questionId: question.id,
+          userId: user.id,
+          content: content,
+          votesCount: 0,
+          isSelected: false,
+        })
+
+        console.log(`✅ [submitAnswer] Réponse créée avec succès: ID=${answer.id}`)
+
+        // Récupérer la salle pour les événements WebSocket
+        const room = await Room.find(game.roomId)
+
+        // Utiliser Socket.IO pour notifier les joueurs
+        const io = socketService.getInstance()
+        io.to(`game:${gameId}`).emit('game:update', {
+          type: 'new_answer',
+          answer: {
+            id: answer.id,
+            content: answer.content,
+            playerId: user.id,
+            playerName: user.displayName || user.username,
+          },
+        })
+
+        // Vérifier si la phase actuelle est 'answer' et si tous les joueurs (sauf la cible) ont répondu
+        if (game.currentPhase === 'answer') {
+          // Vérifier si tous les joueurs (sauf la cible) ont répondu
+          const players = await room.related('players').query()
+          const totalPlayers = players.length
+
+          const answersCount = await Answer.query()
+            .where('question_id', question.id)
+            .count('* as count')
+
+          const count = Number.parseInt(answersCount[0].$extras.count || '0', 10)
+          console.log(`🎮 [submitAnswer] Réponses soumises: ${count}/${totalPlayers - 1}`)
+
+          // Tous les joueurs ont répondu sauf la cible (-1)
+          if (count >= totalPlayers - 1) {
+            // Passer à la phase de vote
+            console.log(`🎮 [submitAnswer] Passage à la phase de vote - Game: ${gameId}`)
+            game.currentPhase = 'vote'
+            await game.save()
+
+            // Ajout du timer pour la phase de vote
+            const votePhaseDuration = 20 // 20 secondes pour voter
+
+            io.to(`game:${gameId}`).emit('game:update', {
+              type: 'phase_change',
+              phase: 'vote',
+              timer: {
+                duration: votePhaseDuration,
+                startTime: Date.now(),
+              },
+            })
+          }
+        }
+
+        return response.created({
+          status: 'success',
+          message: 'Réponse soumise avec succès',
+          data: {
+            answerId: answer.id,
+          },
+        })
+      } catch (dbError) {
+        console.error(`❌ [submitAnswer] Erreur lors de la création de la réponse:`, dbError)
+        return response.internalServerError({
+          error: "Erreur lors de l'enregistrement de votre réponse",
+          details: dbError.message,
+        })
+      }
     } catch (error) {
-      console.error('Erreur lors de la soumission de la réponse:', error)
+      console.error(
+        '❌ [submitAnswer] Erreur non gérée lors de la soumission de la réponse:',
+        error
+      )
       return response.internalServerError({
         error: 'Une erreur est survenue lors de la soumission de la réponse',
+        details: error.message || 'Erreur inconnue',
       })
     }
   }
@@ -404,11 +481,18 @@ export default class GamesController {
         // Calculer les points et mettre à jour les scores
         await this.calculateAndUpdateScores(question.id, game)
 
-        // Notifier tous les joueurs du changement de phase
+        // Définir la durée pour la phase résultats
+        const resultsPhaseDuration = 15 // 15 secondes pour voir les résultats
+
+        // Notifier tous les joueurs du changement de phase avec le compteur
         io.to(`game:${gameId}`).emit('game:update', {
           type: 'phase_change',
           phase: 'results',
           scores: game.scores,
+          timer: {
+            duration: resultsPhaseDuration,
+            startTime: Date.now(),
+          },
         })
       }
 
@@ -432,16 +516,37 @@ export default class GamesController {
       const user = await auth.authenticate()
       const gameId = params.id
 
+      console.log(
+        `🎮 [nextRound] Tentative de passage au tour suivant - User: ${user.id}, Game: ${gameId}`
+      )
+
       // Trouver la partie
       const game = await Game.find(gameId)
       if (!game) {
+        console.error(`❌ [nextRound] Partie non trouvée: ${gameId}`)
         return response.notFound({
           error: 'Partie non trouvée',
         })
       }
 
+      console.log(
+        `🎮 [nextRound] Partie trouvée: ${game.id}, Phase: ${game.currentPhase}, Round: ${game.currentRound}/${game.totalRounds}`
+      )
+
+      // Récupérer la salle pour vérifier que l'utilisateur est l'hôte
+      const room = await Room.find(game.roomId)
+      if (!room) {
+        console.error(`❌ [nextRound] Salle non trouvée: ${game.roomId}`)
+        return response.notFound({
+          error: 'Salle non trouvée',
+        })
+      }
+
+      console.log(`🎮 [nextRound] Salle trouvée: ${room.id}, Hôte: ${room.hostId}`)
+
       // Vérifier que la partie est en cours
       if (game.status !== 'in_progress') {
+        console.error(`❌ [nextRound] La partie n'est pas en cours: ${game.status}`)
         return response.badRequest({
           error: "La partie n'est pas en cours",
         })
@@ -449,14 +554,17 @@ export default class GamesController {
 
       // Vérifier que la phase actuelle est bien la phase de résultats
       if (game.currentPhase !== 'results') {
+        console.error(`❌ [nextRound] Phase incorrecte: ${game.currentPhase}, attendu: results`)
         return response.badRequest({
           error: "Ce n'est pas le moment de passer au tour suivant",
         })
       }
 
-      // Récupérer la salle pour vérifier que l'utilisateur est l'hôte
-      const room = await Room.find(game.roomId)
+      // Vérifier que l'utilisateur est bien l'hôte de la salle
       if (room.hostId !== user.id) {
+        console.error(
+          `❌ [nextRound] L'utilisateur n'est pas l'hôte: User=${user.id}, Hôte=${room.hostId}`
+        )
         return response.forbidden({
           error: "Seul l'hôte peut passer au tour suivant",
         })
@@ -466,6 +574,10 @@ export default class GamesController {
 
       // Vérifier si c'est le dernier tour
       if (game.currentRound >= game.totalRounds) {
+        console.log(
+          `🎮 [nextRound] Dernier tour terminé, fin de la partie: ${game.currentRound}/${game.totalRounds}`
+        )
+
         // Terminer la partie
         game.status = 'completed'
         game.completedAt = DateTime.now()
@@ -493,6 +605,8 @@ export default class GamesController {
           },
         })
       } else {
+        console.log(`🎮 [nextRound] Passage au tour ${game.currentRound + 1}/${game.totalRounds}`)
+
         // Passer au tour suivant
         game.currentRound += 1
         game.currentPhase = 'question'
@@ -531,7 +645,10 @@ export default class GamesController {
           targetPlayerId: targetPlayer.id,
         })
 
-        // Notifier tous les joueurs du nouveau tour
+        // Définir la durée pour la phase question
+        const questionPhaseDuration = 10 // 10 secondes
+
+        // Notifier tous les joueurs du nouveau tour avec le compteur
         io.to(`game:${gameId}`).emit('game:update', {
           type: 'new_round',
           round: game.currentRound,
@@ -545,6 +662,10 @@ export default class GamesController {
               displayName: targetPlayer.displayName,
             },
           },
+          timer: {
+            duration: questionPhaseDuration,
+            startTime: Date.now(),
+          },
         })
 
         // Après un délai, passer à la phase de réponse
@@ -552,11 +673,18 @@ export default class GamesController {
           game.currentPhase = 'answer'
           await game.save()
 
+          // Définir la durée pour la phase réponse
+          const answerPhaseDuration = 30 // 30 secondes pour répondre
+
           io.to(`game:${gameId}`).emit('game:update', {
             type: 'phase_change',
             phase: 'answer',
+            timer: {
+              duration: answerPhaseDuration,
+              startTime: Date.now(),
+            },
           })
-        }, 10000) // 10 secondes pour voir la question
+        }, questionPhaseDuration * 1000) // 10 secondes pour voir la question
 
         return response.ok({
           status: 'success',
@@ -572,11 +700,19 @@ export default class GamesController {
         })
       }
     } catch (error) {
-      console.error('Erreur lors du passage au tour suivant:', error)
+      console.error('❌ [nextRound] Erreur non gérée lors du passage au tour suivant:', error)
       return response.internalServerError({
         error: 'Une erreur est survenue lors du passage au tour suivant',
+        details: error.message || 'Erreur inconnue',
       })
     }
+  }
+
+  /**
+   * Méthode publique pour générer une question qui peut être utilisée par d'autres contrôleurs
+   */
+  public generateQuestion(theme: string, playerName: string): string {
+    return this.generateFallbackQuestion(theme, playerName)
   }
 
   /**
@@ -585,30 +721,35 @@ export default class GamesController {
   private generateFallbackQuestion(theme: string, playerName: string): string {
     // Banque de questions par thème (version simplifiée)
     const questionsByTheme = {
-      standard: [
+      'standard': [
         `${playerName} participe à un jeu télévisé. Quelle serait sa phrase d'accroche ?`,
         `Si ${playerName} était un super-héros, quel serait son pouvoir ?`,
         `Quel emoji représente le mieux ${playerName} ?`,
       ],
-      fun: [
+      'fun': [
+        `Si ${playerName} pouvait fusionner avec un objet du quotidien, lequel choisirait-il ?`,
         `Si ${playerName} était un mème internet, lequel serait-il ?`,
         `Quel talent caché pourrait avoir ${playerName} ?`,
-        `Quelle chanson définit le mieux ${playerName} ?`,
       ],
-      dark: [
+      'dark': [
         `Quel serait le plan machiavélique de ${playerName} pour dominer le monde ?`,
         `Si ${playerName} était un méchant de film, quelle serait sa phrase culte ?`,
         `Quel est le plus grand secret que ${playerName} pourrait cacher ?`,
       ],
-      personal: [
+      'personal': [
         `Quelle habitude agaçante ${playerName} a-t-il probablement ?`,
         `Quel serait le pire cadeau à offrir à ${playerName} ?`,
         `Si la vie de ${playerName} était une série TV, quel en serait le titre ?`,
       ],
-      crazy: [
+      'crazy': [
         `Si ${playerName} pouvait fusionner avec un objet du quotidien, lequel choisirait-il ?`,
         `Quelle capacité absurde ${playerName} aimerait développer ?`,
         `Si ${playerName} était une créature mythologique, laquelle serait-il et pourquoi ?`,
+      ],
+      'on-ecoute-mais-on-ne-juge-pas': [
+        `Si ${playerName} devait confesser un péché mignon, lequel serait-ce ?`,
+        `Quelle est la pire habitude de ${playerName} qu'il/elle n'admettra jamais publiquement ?`,
+        `Quel secret ${playerName} serait-il/elle prêt(e) à partager uniquement dans cette pièce ?`,
       ],
     }
 
@@ -634,7 +775,6 @@ export default class GamesController {
       // Mettre à jour le score du joueur
       if (totalPoints > 0) {
         const userId = answer.userId
-
         if (!game.scores[userId]) {
           game.scores[userId] = 0
         }
@@ -668,17 +808,13 @@ export default class GamesController {
 
     // Mettre à jour les statistiques pour chaque joueur
     for (const player of players) {
-      // Incrémenter le nombre de parties jouées
       player.gamesPlayed += 1
 
       // Si le joueur est le gagnant, incrémenter le nombre de victoires
       if (player.id === winnerId) {
         player.gamesWon += 1
-
-        // Ajouter des points d'expérience pour la victoire
         player.experiencePoints += 50
       } else {
-        // Ajouter des points d'expérience pour la participation
         player.experiencePoints += 20
       }
 

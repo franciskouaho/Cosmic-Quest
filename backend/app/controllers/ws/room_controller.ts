@@ -466,6 +466,101 @@ export default class RoomsController {
       game.scores = scores
       await game.save()
 
+      // NOUVEAU CODE: Générer la première question
+      try {
+        // Sélectionner un joueur cible aléatoire
+        const randomIndex = Math.floor(Math.random() * players.length)
+        const targetPlayer = players[randomIndex]
+
+        // Mettre à jour le joueur cible dans le jeu
+        game.currentTargetPlayerId = targetPlayer.id
+        await game.save()
+
+        // Récupérer une question depuis la base de données
+        const questionService = (await import('#services/question_service')).default
+        const questionFromDB = await questionService.getRandomQuestionByTheme(game.gameMode)
+
+        // En cas d'échec, générer une question de secours
+        let questionText = ''
+        if (questionFromDB) {
+          questionText = questionService.formatQuestion(
+            questionFromDB.text,
+            targetPlayer.displayName || targetPlayer.username
+          )
+        } else {
+          // Fallback question
+          const GamesController = (await import('#controllers/ws/game_controller')).default
+          const gameController = new GamesController()
+
+          // Utiliser la méthode generateFallbackQuestion via une méthode publique temporaire
+          questionText = gameController.generateQuestion(
+            game.gameMode,
+            targetPlayer.displayName || targetPlayer.username
+          )
+        }
+
+        // Créer la question
+        const Question = (await import('#models/question')).default
+        const question = await Question.create({
+          text: questionText,
+          theme: game.gameMode,
+          gameId: game.id,
+          roundNumber: 1,
+          targetPlayerId: targetPlayer.id,
+        })
+
+        console.log(
+          `✅ Première question générée pour le jeu ${game.id} avec le joueur cible ${targetPlayer.id}`
+        )
+
+        // Définir les durées pour chaque phase
+        const questionPhaseDuration = 15 // 15 secondes pour la phase question (augmenté de 10 à 15)
+        const io = socketService.getInstance()
+
+        // Notifier les clients du début de la phase question avec le compteur
+        io.to(`game:${game.id}`).emit('game:update', {
+          type: 'new_round',
+          round: 1,
+          phase: 'question',
+          question: {
+            id: question.id,
+            text: question.text,
+            targetPlayer: {
+              id: targetPlayer.id,
+              username: targetPlayer.username,
+              displayName: targetPlayer.displayName,
+            },
+          },
+          timer: {
+            duration: questionPhaseDuration,
+            startTime: Date.now(),
+          },
+        })
+
+        // Passer à la phase de réponse après un délai
+        setTimeout(async () => {
+          game.currentPhase = 'answer'
+          await game.save()
+
+          // Définir la durée pour la phase réponse
+          const answerPhaseDuration = 45 // 45 secondes pour répondre (augmenté de 30 à 45)
+
+          // Notifier les joueurs du changement de phase avec le compteur
+          io.to(`game:${game.id}`).emit('game:update', {
+            type: 'phase_change',
+            phase: 'answer',
+            timer: {
+              duration: answerPhaseDuration,
+              startTime: Date.now(),
+            },
+          })
+
+          console.log(`✅ Passage à la phase 'answer' pour le jeu ${game.id}`)
+        }, questionPhaseDuration * 1000) // Convertir en millisecondes
+      } catch (questionError) {
+        console.error('❌ Erreur lors de la génération de la première question:', questionError)
+      }
+
       // Remplacer transmit.emit par socketService pour notifier du début de la partie
       const io = socketService.getInstance()
       io.to(`room:${room.code}`).emit('room:update', {

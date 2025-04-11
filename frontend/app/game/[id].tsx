@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, StyleSheet, Alert } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -10,9 +10,10 @@ import ResultsPhase from '../../components/game/ResultsPhase';
 import LoadingOverlay from '../../components/common/LoadingOverlay';
 import { useAuth } from '../../contexts/AuthContext';
 import { Player, GamePhase, GameState, Answer, Question } from '../../types/gameTypes';
-import { gameService } from '../../services/queries/game';
-import { SocketService } from '../../services/socketService';
+import gameService from '../../services/queries/game';
+import SocketService from '@/services/socketService';
 import axios from 'axios';
+import GameTimer from '../../components/game/GameTimer';
 
 export default function GameScreen() {
   const router = useRouter();
@@ -29,180 +30,210 @@ export default function GameScreen() {
     players: [],
     scores: {},
     theme: 'standard',
+    timer: null,
   });
   
   const [isHost, setIsHost] = useState(false);
   const [isReady, setIsReady] = useState(false);
   const [loadingError, setLoadingError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   
-  // Charger les données du jeu depuis le backend
-  useEffect(() => {
-    const fetchGameData = async () => {
-      try {
-        console.log(`🎮 Récupération des données du jeu ${id}...`);
-        
-        const gameData = await gameService.getGameState(id as string);
-        console.log('✅ Données du jeu récupérées:', gameData);
-        
-        // Rejoindre le canal de jeu via WebSocket
-        SocketService.joinGameChannel(id as string);
-        
-        // Transformer les données reçues en format compatible avec notre état
-        const currentUser = user?.id;
-        
-        // Extraire les données du joueur cible et de la question actuelle
-        const targetPlayer = gameData.currentQuestion?.targetPlayer 
-          ? {
-              id: gameData.currentQuestion.targetPlayer.id.toString(),
-              name: gameData.currentQuestion.targetPlayer.displayName || gameData.currentQuestion.targetPlayer.username,
-              avatar: gameData.currentQuestion.targetPlayer.avatar,
-            }
-          : null;
-        
-        // Formater la question actuelle
-        const currentQuestion = gameData.currentQuestion 
-          ? {
-              id: gameData.currentQuestion.id,
-              text: gameData.currentQuestion.text,
-              theme: gameData.game.gameMode,
-              roundNumber: gameData.currentQuestion.roundNumber,
-            }
-          : null;
-        
-        // Formater les réponses
-        const answers = gameData.answers 
-          ? gameData.answers.map(answer => ({
-              playerId: answer.playerId.toString(),
-              content: answer.content,
-              votes: answer.votesCount || 0,
-            }))
-          : [];
-        
-        // Formater les joueurs
-        const players = gameData.players
-          ? gameData.players.map(player => ({
-              id: player.id.toString(),
-              name: player.displayName || player.username,
-              avatar: player.avatar || '',
-              isHost: player.isHost,
-              score: gameData.game.scores[player.id] || 0,
-            }))
-          : [];
-        
-        // Déterminer si l'utilisateur est l'hôte
-        setIsHost(gameData.room.hostId === currentUser);
-        
-        // Déterminer la phase de jeu à partir des données du backend
-        let phase;
-        switch(gameData.game.currentPhase) {
-          case 'question':
-            phase = GamePhase.QUESTION;
-            break;
-          case 'answer':
-            phase = GamePhase.ANSWER;
-            break;
-          case 'vote':
-            phase = GamePhase.VOTE;
-            break;
-          case 'results':
-            phase = GamePhase.RESULTS;
-            break;
-          case 'waiting':
-            phase = GamePhase.WAITING;
-            break;
-          default:
-            phase = GamePhase.QUESTION;
-        }
-        
-        // Déterminer si l'utilisateur est le joueur cible
-        const isTargetPlayer = gameData.currentUserState?.isTargetPlayer;
-        
-        // Définir l'état du jeu avec les données du backend
-        setGameState({
-          phase: isTargetPlayer && phase === GamePhase.ANSWER ? GamePhase.WAITING : phase,
-          currentRound: gameData.game.currentRound,
-          totalRounds: gameData.game.totalRounds,
-          targetPlayer: targetPlayer,
-          currentQuestion: currentQuestion,
-          answers: answers,
-          players: players,
-          scores: gameData.game.scores,
-          theme: gameData.game.gameMode,
-        });
-        
-        setIsReady(true);
-      } catch (error) {
-        console.error('❌ Erreur lors de la récupération des données du jeu:', error);
-        
-        if (axios.isAxiosError(error) && error.response?.status === 404) {
-          setLoadingError('Partie introuvable. Elle est peut-être terminée ou n\'existe pas.');
-        } else if (axios.isAxiosError(error) && error.response?.status === 401) {
-          setLoadingError('Session expirée. Veuillez vous reconnecter.');
-          // Redirection vers la page de connexion après un délai
-          setTimeout(() => {
-            router.replace('/auth/login');
-          }, 2000);
-        } else {
-          setLoadingError('Impossible de se connecter au serveur. Vérifiez votre connexion internet.');
+  const fetchGameData = useCallback(async () => {
+    try {
+      console.log(`🎮 Récupération des données du jeu ${id}...`);
+      
+      const gameData = await gameService.getGameState(id as string);
+      console.log('✅ Données du jeu récupérées:', gameData);
+      
+      if (!isReady) {
+        try {
+          console.log(`🎮 Tentative de rejoindre le canal WebSocket pour le jeu ${id}`);
+          SocketService.joinGameChannel(id as string);
+          console.log(`✅ Demande WebSocket pour rejoindre le jeu ${id} envoyée`);
+        } catch (socketError) {
+          console.error('⚠️ Erreur lors de la connexion WebSocket au jeu:', socketError);
         }
       }
-    };
-    
+      
+      const currentUser = user?.id;
+      
+      const targetPlayer = gameData.currentQuestion?.targetPlayer 
+        ? {
+            id: gameData.currentQuestion.targetPlayer.id.toString(),
+            name: gameData.currentQuestion.targetPlayer.displayName || gameData.currentQuestion.targetPlayer.username || 'Joueur',
+            avatar: gameData.currentQuestion.targetPlayer.avatar || 'https://randomuser.me/api/portraits/lego/1.jpg',
+          }
+        : null;
+      
+      const currentQuestion = gameData.currentQuestion 
+        ? {
+            id: gameData.currentQuestion.id,
+            text: gameData.currentQuestion.text || 'Question en préparation...',
+            theme: gameData.game.gameMode,
+            roundNumber: gameData.currentQuestion.roundNumber,
+          }
+        : null;
+      
+      const isTargetPlayer = gameData.currentUserState?.isTargetPlayer;
+      
+      let effectivePhase = GamePhase.WAITING;
+      if (gameData.game.currentPhase === 'question') {
+        effectivePhase = GamePhase.QUESTION;
+      } else if (gameData.game.currentPhase === 'answer') {
+        if (isTargetPlayer || gameData.currentUserState?.hasAnswered) {
+          effectivePhase = GamePhase.WAITING;
+        } else {
+          effectivePhase = GamePhase.ANSWER;
+        }
+      } else if (gameData.game.currentPhase === 'vote') {
+        if (gameData.currentUserState?.hasVoted) {
+          effectivePhase = GamePhase.WAITING;
+        } else {
+          effectivePhase = GamePhase.VOTE;
+        }
+      } else if (gameData.game.currentPhase === 'results') {
+        effectivePhase = GamePhase.RESULTS;
+      } else {
+        effectivePhase = GamePhase.WAITING;
+      }
+      
+      setGameState({
+        phase: effectivePhase,
+        currentRound: gameData.game.currentRound || 1,
+        totalRounds: gameData.game.totalRounds || 5,
+        targetPlayer: targetPlayer,
+        currentQuestion: currentQuestion,
+        answers: gameData.answers || [],
+        players: gameData.players || [],
+        scores: gameData.game.scores || {},
+        theme: gameData.game.gameMode || 'standard',
+        timer: gameData.timer || null,
+        currentUserState: gameData.currentUserState || {},
+      });
+      
+      setIsReady(true);
+    } catch (error) {
+      console.error('❌ Erreur lors de la récupération des données du jeu:', error);
+      
+      if (axios.isAxiosError(error) && error.response?.status === 404) {
+        setLoadingError('Partie introuvable. Elle est peut-être terminée ou n\'existe pas.');
+      } else if (axios.isAxiosError(error) && error.response?.status === 401) {
+        setLoadingError('Session expirée. Veuillez vous reconnecter.');
+        setTimeout(() => {
+          router.replace('/auth/login');
+        }, 2000);
+      } else {
+        setLoadingError('Impossible de se connecter au serveur. Vérifiez votre connexion internet.');
+      }
+    }
+  }, [id, isReady, user]);
+  
+  useEffect(() => {
     fetchGameData();
     
-    // Mettre en place un intervalle pour rafraîchir régulièrement les données
-    const refreshInterval = setInterval(fetchGameData, 5000); // Toutes les 5 secondes
+    const socket = SocketService.getInstance();
+    socket.on('game:update', (data) => {
+      console.log('🎮 Mise à jour du jeu reçue:', data);
+      
+      if (data.type === 'phase_change') {
+        console.log(`🎮 Changement de phase: ${data.phase}`);
+        
+        if (data.timer) {
+          console.log(`⏱️ Timer reçu: ${data.timer.duration}s`);
+          setGameState(prev => ({
+            ...prev,
+            timer: data.timer
+          }));
+        }
+        
+        fetchGameData();
+      } else if (data.type === 'new_round') {
+        console.log(`🎮 Nouveau tour: ${data.round}`);
+        fetchGameData();
+      } else if (data.type === 'new_answer' || data.type === 'new_vote') {
+        fetchGameData();
+      }
+    });
     
-    // Nettoyage à la fermeture du composant
+    const refreshInterval = setInterval(fetchGameData, 15000);
+    
     return () => {
       clearInterval(refreshInterval);
-      // Quitter le canal de jeu WebSocket
       if (id) {
-        SocketService.leaveGameChannel(id as string);
+        try {
+          SocketService.leaveGameChannel(id as string);
+          console.log(`✅ Canal de jeu WebSocket ${id} quitté`);
+        } catch (error) {
+          console.error('⚠️ Erreur lors de la déconnexion WebSocket:', error);
+        }
       }
+      
+      socket.off('game:update');
     };
-  }, [id, user, router]);
+  }, [id, user, router, fetchGameData]);
   
-  // Gérer la soumission d'une réponse
   const handleSubmitAnswer = async (answer: string) => {
     if (!user || !gameState.currentQuestion) return;
+    
+    // BLOCAGE CRITIQUE: Empêcher la soumission si l'utilisateur est la cible
+    if (gameState.currentUserState?.isTargetPlayer) {
+      console.log("❌ Soumission bloquée: l'utilisateur est la cible de la question");
+      Alert.alert(
+        "Action impossible", 
+        "Vous êtes la cible de cette question et ne pouvez pas y répondre."
+      );
+      return;
+    }
     
     try {
       console.log("🎮 Tentative de soumission de réponse...");
       
-      // Envoyer la réponse au serveur
-      await gameService.submitAnswer(id as string, answer);
+      // Désactiver les interactions pendant la soumission
+      setIsSubmitting(true);
       
-      // Afficher un message de confirmation
+      await gameService.submitAnswer(id as string, gameState.currentQuestion.id, answer);
+      
       Alert.alert("Réponse envoyée", "En attente des autres joueurs...");
       
-      // Passer en phase d'attente
       setGameState(prev => ({
         ...prev,
         phase: GamePhase.WAITING,
       }));
+      
+      // Recharger les données après la soumission
+      setTimeout(() => {
+        fetchGameData();
+      }, 1000);
     } catch (error) {
       console.error("❌ Erreur lors de la soumission de la réponse:", error);
-      Alert.alert("Erreur", "Impossible d'envoyer votre réponse. Veuillez réessayer.");
+      
+      let errorMessage = "Impossible d'envoyer votre réponse. Veuillez réessayer.";
+      if (error.message && typeof error.message === 'string' && error.message.includes("Ce n'est pas le moment")) {
+        errorMessage = "Le délai de réponse est écoulé. Veuillez attendre la prochaine question.";
+        
+        // Forcer une mise à jour des données du jeu
+        fetchGameData();
+      }
+      
+      Alert.alert("Erreur", errorMessage);
+    } finally {
+      setIsSubmitting(false); // Toujours réactiver les interactions
     }
   };
   
-  // Gérer le vote pour une réponse préférée
   const handleVote = async (answerId: string) => {
-    if (!gameState.targetPlayer || !gameState.currentQuestion) return;
+    if (!gameState.currentQuestion) {
+      Alert.alert("Erreur", "Question non disponible");
+      return;
+    }
     
     try {
-      console.log("🎮 Tentative de vote...");
+      console.log("🎮 Tentative de vote pour la réponse ID:", answerId);
       
-      // Envoyer le vote au serveur
-      if (gameState.currentQuestion.id) {
-        await gameService.submitVote(id as string, answerId, gameState.currentQuestion.id);
-      }
+      await gameService.submitVote(id as string, answerId, gameState.currentQuestion.id.toString());
       
-      // Afficher un message de confirmation
       Alert.alert("Vote enregistré", "En attente des résultats...");
       
-      // Passer en phase d'attente des résultats
       setGameState(prev => ({
         ...prev,
         phase: GamePhase.WAITING,
@@ -213,10 +244,8 @@ export default function GameScreen() {
     }
   };
   
-  // Passer au tour suivant
   const handleNextRound = async () => {
     if (gameState.currentRound >= gameState.totalRounds) {
-      // Fin de la partie
       router.push(`/game/results/${id}`);
       return;
     }
@@ -224,21 +253,45 @@ export default function GameScreen() {
     try {
       console.log("🎮 Tentative de passage au tour suivant...");
       
-      // Envoyer la demande de tour suivant au serveur
+      // Désactiver les interactions pendant le traitement
+      setIsSubmitting(true);
+      
       await gameService.nextRound(id as string);
       
-      // Afficher un message de chargement
       setGameState(prev => ({
         ...prev,
         phase: GamePhase.LOADING,
       }));
+      
+      // Recharger les données après un délai pour donner au backend le temps de traiter
+      setTimeout(() => {
+        if (typeof fetchGameData === 'function') {
+          fetchGameData();
+        }
+      }, 1500);
+      
     } catch (error) {
       console.error("❌ Erreur lors du passage au tour suivant:", error);
-      Alert.alert("Erreur", "Impossible de passer au tour suivant. Veuillez réessayer.");
+      Alert.alert(
+        "Erreur", 
+        "Impossible de passer au tour suivant. Veuillez réessayer.",
+        [
+          {
+            text: 'OK',
+            onPress: () => {
+              // Recharger les données pour synchroniser l'état
+              if (typeof fetchGameData === 'function') {
+                fetchGameData();
+              }
+            }
+          }
+        ]
+      );
+    } finally {
+      setIsSubmitting(false);
     }
   };
   
-  // Quitter la partie
   const handleQuitGame = () => {
     Alert.alert(
       'Quitter la partie',
@@ -257,20 +310,82 @@ export default function GameScreen() {
     );
   };
   
-  // Rendu conditionnel en fonction de la phase de jeu
   const renderGamePhase = () => {
     switch (gameState.phase) {
       case GamePhase.LOADING:
         return <LoadingOverlay message="Préparation de la partie" />;
         
       case GamePhase.QUESTION:
+        if (!gameState.targetPlayer || !gameState.currentQuestion) {
+          return <LoadingOverlay message="Chargement des données de jeu..." />;
+        }
         return (
           <QuestionPhase 
-            question={gameState.currentQuestion!}
-            targetPlayer={gameState.targetPlayer!}
+            question={gameState.currentQuestion}
+            targetPlayer={gameState.targetPlayer}
             onSubmit={handleSubmitAnswer}
             round={gameState.currentRound}
             totalRounds={gameState.totalRounds}
+            timer={gameState.timer}
+          />
+        );
+      
+      case GamePhase.ANSWER:
+        if (!gameState.currentQuestion) {
+          return <LoadingOverlay message="Chargement de la question..." />;
+        }
+        
+        // Vérification plus stricte pour la cible de la question
+        const isTarget = Boolean(gameState.currentUserState?.isTargetPlayer);
+        
+        if (isTarget) {
+          console.log("🎯 Utilisateur identifié comme cible de la question - affichage message spécial");
+          return (
+            <View style={styles.messageContainer}>
+              <Text style={styles.messageTitle}>Cette question est à propos de vous</Text>
+              <Text style={styles.messageText}>
+                Vous ne pouvez pas répondre à une question qui vous concerne.
+                Regardez les réponses des autres joueurs.
+              </Text>
+              {gameState.timer && (
+                <View style={styles.timerContainer}>
+                  <GameTimer 
+                    duration={gameState.timer.duration}
+                    startTime={gameState.timer.startTime}
+                  />
+                </View>
+              )}
+            </View>
+          );
+        }
+
+        // Utilisateur a déjà répondu, montrer un message d'attente
+        if (gameState.currentUserState && gameState.currentUserState.hasAnswered) {
+          return (
+            <View style={styles.messageContainer}>
+              <Text style={styles.messageTitle}>Réponse envoyée</Text>
+              <Text style={styles.messageText}>
+                Votre réponse a été enregistrée avec succès. Attendez que les autres joueurs terminent.
+              </Text>
+              {gameState.timer && (
+                <View style={styles.timerContainer}>
+                  <GameTimer 
+                    duration={gameState.timer.duration}
+                    startTime={gameState.timer.startTime}
+                  />
+                </View>
+              )}
+            </View>
+          );
+        }
+        
+        // Cas normal: l'utilisateur peut répondre
+        return (
+          <AnswerPhase
+            question={gameState.currentQuestion}
+            onSubmit={handleSubmitAnswer}
+            timer={gameState.timer}
+            isSubmitting={isSubmitting}
           />
         );
         
@@ -282,24 +397,32 @@ export default function GameScreen() {
         );
         
       case GamePhase.VOTE:
+        if (!gameState.currentQuestion) {
+          return <LoadingOverlay message="Chargement des données de vote..." />;
+        }
         return (
           <VotePhase 
             answers={gameState.answers}
-            question={gameState.currentQuestion!}
+            question={gameState.currentQuestion}
             onVote={handleVote}
+            timer={gameState.timer}
           />
         );
         
       case GamePhase.RESULTS:
+        if (!gameState.targetPlayer || !gameState.currentQuestion) {
+          return <LoadingOverlay message="Chargement des résultats..." />;
+        }
         return (
           <ResultsPhase 
             answers={gameState.answers}
             scores={gameState.scores}
             players={gameState.players}
-            question={gameState.currentQuestion!}
-            targetPlayer={gameState.targetPlayer!}
+            question={gameState.currentQuestion}
+            targetPlayer={gameState.targetPlayer}
             onNextRound={handleNextRound}
             isLastRound={gameState.currentRound >= gameState.totalRounds}
+            timer={gameState.timer}
           />
         );
         
@@ -342,7 +465,7 @@ const styles = StyleSheet.create({
   },
   background: {
     position: 'absolute',
-    left: 0,
+    left:0,
     right: 0,
     top: 0,
     bottom: 0,
@@ -352,5 +475,29 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: 20,
     paddingTop: 40,
+  },
+  messageContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  messageTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#ffffff',
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  messageText: {
+    fontSize: 16,
+    color: '#e0e0e0',
+    textAlign: 'center',
+    lineHeight: 24,
+    marginBottom: 30,
+  },
+  timerContainer: {
+    width: '100%',
+    padding: 10,
   },
 });

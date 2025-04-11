@@ -1,178 +1,186 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, KeyboardAvoidingView, Platform, Alert } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, Image } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Player, Question } from '../../types/gameTypes';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { Question } from '@/types/gameTypes';
+import GameTimer from './GameTimer';
 
-interface QuestionPhaseProps {
+type QuestionPhaseProps = {
   question: Question;
-  targetPlayer: Player;
+  targetPlayer: {
+    id: string;
+    name?: string;
+    avatar?: string;
+  };
   onSubmit: (answer: string) => void;
   round: number;
   totalRounds: number;
-}
+  timer?: {
+    duration: number;
+    startTime: number;
+  } | null;
+};
 
-const QuestionPhase: React.FC<QuestionPhaseProps> = ({ 
-  question, 
-  targetPlayer, 
-  onSubmit, 
-  round, 
-  totalRounds 
-}) => {
+const QuestionPhase = ({ question, targetPlayer, onSubmit, round, totalRounds, timer }: QuestionPhaseProps) => {
   const [answer, setAnswer] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Vérifier que les props nécessaires existent
+  if (!question || !question.text || !targetPlayer) {
+    console.error("⚠️ QuestionPhase: Des propriétés requises sont manquantes:", { question, targetPlayer });
+    return (
+      <View style={styles.container}>
+        <Text style={styles.errorText}>Erreur: Données de jeu incomplètes</Text>
+      </View>
+    );
+  }
+
+  // Utiliser des valeurs par défaut si certaines propriétés sont manquantes
+  const playerName = targetPlayer.name || "Joueur";
+  const avatarUrl = targetPlayer.avatar || "https://randomuser.me/api/portraits/lego/1.jpg";
   
   const handleSubmit = () => {
-    const trimmedAnswer = answer.trim();
-    if (trimmedAnswer.length > 0) {
-      console.log("Soumission de la réponse:", trimmedAnswer);
-      onSubmit(trimmedAnswer);
-    } else {
-      Alert.alert("Réponse requise", "Veuillez entrer une réponse avant de soumettre.");
-    }
+    if (!answer.trim()) return;
+    
+    setIsSubmitting(true);
+    onSubmit(answer.trim());
   };
   
-  const isSubmitEnabled = answer.trim().length > 0;
-  
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={styles.container}
-      keyboardVerticalOffset={100}
-    >
-      <View style={styles.header}>
+    <View style={styles.container}>
+      <LinearGradient
+        colors={['rgba(93, 109, 255, 0.2)', 'rgba(93, 109, 255, 0.05)']}
+        style={styles.roundBadge}
+      >
         <Text style={styles.roundText}>Tour {round}/{totalRounds}</Text>
+      </LinearGradient>
+      
+      {timer && (
+        <GameTimer 
+          duration={timer.duration}
+          startTime={timer.startTime}
+        />
+      )}
+      
+      <View style={styles.targetPlayerContainer}>
+        <Image 
+          source={{ uri: avatarUrl }}
+          style={styles.playerAvatar}
+          defaultSource={{ uri: "https://randomuser.me/api/portraits/lego/1.jpg" }}
+        />
+        <Text style={styles.targetPlayerName}>{playerName}</Text>
       </View>
       
-      <View style={styles.questionCard}>
-        <LinearGradient
-          colors={['rgba(105, 78, 214, 0.3)', 'rgba(105, 78, 214, 0.1)']}
-          style={styles.cardGradient}
-        >
-          <View style={styles.targetPlayerInfo}>
-            <View style={styles.avatarContainer}>
-              <Text style={styles.avatarText}>{targetPlayer.name.charAt(0)}</Text>
-            </View>
-            <Text style={styles.targetPlayerName}>{targetPlayer.name}</Text>
-          </View>
-          
-          <Text style={styles.questionText}>{question.text}</Text>
-        </LinearGradient>
+      <View style={styles.questionContainer}>
+        <Text style={styles.questionText}>{question.text}</Text>
       </View>
       
       <View style={styles.answerContainer}>
-        <Text style={styles.answerLabel}>Votre réponse</Text>
         <TextInput
           style={styles.answerInput}
-          onChangeText={(text) => {
-            console.log("Texte saisi:", text);
-            setAnswer(text);
-          }}
-          value={answer}
-          placeholder="Tapez votre réponse ici..."
+          placeholder="Votre réponse..."
           placeholderTextColor="rgba(255,255,255,0.5)"
+          value={answer}
+          onChangeText={setAnswer}
           multiline
-          maxLength={200}
+          maxLength={150}
+          disabled={isSubmitting}
         />
         
-        <TouchableOpacity
-          style={[
-            styles.submitButton,
-            !isSubmitEnabled && styles.submitButtonDisabled
-          ]}
+        <TouchableOpacity 
+          style={[styles.submitButton, !answer.trim() && styles.disabledButton]}
           onPress={handleSubmit}
-          disabled={!isSubmitEnabled}
+          disabled={!answer.trim() || isSubmitting}
         >
-          <Text style={styles.submitButtonText}>Soumettre ma réponse</Text>
+          <MaterialCommunityIcons name="send" size={22} color="white" />
+          <Text style={styles.submitButtonText}>Envoyer</Text>
         </TouchableOpacity>
       </View>
-    </KeyboardAvoidingView>
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    justifyContent: 'space-between',
-  },
-  header: {
     alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  roundBadge: {
+    paddingHorizontal: 15,
+    paddingVertical: 8,
+    borderRadius: 20,
     marginBottom: 20,
   },
   roundText: {
-    color: '#b3a5d9',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  questionCard: {
-    borderRadius: 16,
-    overflow: 'hidden',
-    marginBottom: 20,
-  },
-  cardGradient: {
-    padding: 20,
-    borderRadius: 16,
-  },
-  targetPlayerInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  avatarContainer: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#694ED6',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  avatarText: {
-    fontSize: 18,
+    color: 'white',
     fontWeight: 'bold',
-    color: '#ffffff',
+  },
+  targetPlayerContainer: {
+    alignItems: 'center',
+    marginBottom: 30,
+  },
+  playerAvatar: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    borderWidth: 3,
+    borderColor: 'rgba(93, 109, 255, 0.8)',
+    marginBottom: 10,
   },
   targetPlayerName: {
+    color: 'white',
     fontSize: 18,
-    fontWeight: '600',
-    color: '#ffffff',
+    fontWeight: 'bold',
+  },
+  questionContainer: {
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderRadius: 15,
+    padding: 20,
+    marginBottom: 30,
+    width: '100%',
   },
   questionText: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: '#ffffff',
-    lineHeight: 32,
+    color: 'white',
+    fontSize: 20,
+    textAlign: 'center',
+    lineHeight: 28,
   },
   answerContainer: {
-    marginBottom: 20,
-  },
-  answerLabel: {
-    color: '#b3a5d9',
-    fontSize: 16,
-    marginBottom: 8,
-    fontWeight: '600',
+    width: '100%',
   },
   answerInput: {
     backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    borderRadius: 12,
-    padding: 16,
-    color: '#ffffff',
+    borderRadius: 10,
+    padding: 15,
+    color: 'white',
     fontSize: 16,
-    minHeight: 120,
+    minHeight: 100,
     textAlignVertical: 'top',
-    marginBottom: 20,
+    marginBottom: 15,
   },
   submitButton: {
-    backgroundColor: '#694ED6',
-    borderRadius: 12,
-    padding: 16,
+    backgroundColor: 'rgba(93, 109, 255, 0.8)',
+    borderRadius: 10,
+    padding: 15,
+    flexDirection: 'row',
     alignItems: 'center',
-  },
-  submitButtonDisabled: {
-    backgroundColor: 'rgba(105, 78, 214, 0.5)',
+    justifyContent: 'center',
   },
   submitButtonText: {
-    color: '#ffffff',
+    color: 'white',
+    fontWeight: 'bold',
+    marginLeft: 10,
     fontSize: 16,
-    fontWeight: '600',
+  },
+  disabledButton: {
+    backgroundColor: 'rgba(93, 109, 255, 0.3)',
+  },
+  errorText: {
+    color: '#ff6b6b',
+    fontSize: 18,
+    textAlign: 'center',
   },
 });
 

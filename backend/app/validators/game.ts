@@ -6,7 +6,6 @@ import vine from '@vinejs/vine'
 export const answerValidator = vine.compile(
   vine.object({
     content: vine.string().trim().minLength(1).maxLength(500),
-
     question_id: vine.number().positive(),
   })
 )
@@ -17,7 +16,6 @@ export const answerValidator = vine.compile(
 export const voteValidator = vine.compile(
   vine.object({
     answer_id: vine.number().positive(),
-
     question_id: vine.number().positive(),
   })
 )

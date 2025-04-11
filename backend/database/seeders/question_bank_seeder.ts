@@ -5,7 +5,7 @@ export default class QuestionBankSeeder extends BaseSeeder {
   async run() {
     // Banque de questions par thème (reprendre les questions du frontend)
     const questionsByTheme = {
-      standard: [
+      'standard': [
         "{playerName} participe à un jeu télévisé. Quelle serait sa phrase d'accroche ?",
         'Si {playerName} était un super-héros, quel serait son pouvoir ?',
         'Quelle émission de télé-réalité conviendrait parfaitement à {playerName} ?',
@@ -15,7 +15,7 @@ export default class QuestionBankSeeder extends BaseSeeder {
         "Dans quelle époque historique {playerName} s'intégrerait le mieux ?",
         'Si {playerName} était un plat, lequel serait-il ?',
       ],
-      fun: [
+      'fun': [
         'Si {playerName} était un mème internet, lequel serait-il ?',
         'Quel talent caché pourrait avoir {playerName} ?',
         'Quelle chanson définit le mieux {playerName} ?',
@@ -25,7 +25,7 @@ export default class QuestionBankSeeder extends BaseSeeder {
         'Quelle serait la pire coupe de cheveux pour {playerName} ?',
         'Dans quel film ridicule {playerName} pourrait jouer le rôle principal ?',
       ],
-      dark: [
+      'dark': [
         'Quel serait le plan machiavélique de {playerName} pour dominer le monde ?',
         'Si {playerName} était un méchant de film, quelle serait sa phrase culte ?',
         'Quel est le plus grand secret que {playerName} pourrait cacher ?',
@@ -35,7 +35,7 @@ export default class QuestionBankSeeder extends BaseSeeder {
         "Quel objet {playerName} utiliserait-il comme arme en cas d'invasion extraterrestre ?",
         'Si {playerName} était possédé, quel comportement étrange adopterait-il ?',
       ],
-      personal: [
+      'personal': [
         'Quelle habitude agaçante {playerName} a-t-il probablement ?',
         "Comment {playerName} réagirait-il à une panne d'électricité de 24 heures ?",
         'Quel serait le pire cadeau à offrir à {playerName} ?',
@@ -45,7 +45,7 @@ export default class QuestionBankSeeder extends BaseSeeder {
         'Quelle excuse {playerName} utiliserait-il pour éviter une réunion ennuyeuse ?',
         "Quelle serait la première règle de {playerName} s'il devenait roi/reine d'un pays ?",
       ],
-      crazy: [
+      'crazy': [
         'Si {playerName} pouvait fusionner avec un objet du quotidien, lequel choisirait-il ?',
         'Quelle capacité absurde {playerName} aimerait développer ?',
         'Si {playerName} était un sandwich, quels ingrédients le composeraient ?',
@@ -54,6 +54,16 @@ export default class QuestionBankSeeder extends BaseSeeder {
         'Dans une autre dimension, comment {playerName} gagnerait-il sa vie ?',
         "Si {playerName} inventait une nouvelle danse, comment s'appellerait-elle ?",
         "Quelle serait la phrase de {playerName} s'il rencontrait un extraterrestre ?",
+      ],
+      'on-ecoute-mais-on-ne-juge-pas': [
+        'Si {playerName} devait confesser un péché mignon, lequel serait-ce ?',
+        "Quelle est la pire habitude de {playerName} qu'il/elle n'admettra jamais publiquement ?",
+        'Comment {playerName} réagirait face à un compliment sincère mais inattendu ?',
+        'Quel secret {playerName} serait-il/elle prêt(e) à partager uniquement dans cette pièce ?',
+        'Quelle émotion {playerName} a-t-il/elle le plus de mal à exprimer ?',
+        "Dans quel domaine {playerName} aimerait-il/elle être meilleur(e) mais a peur d'essayer ?",
+        'Si {playerName} devait écrire une lettre à son "moi" passé, quel conseil donnerait-il/elle ?',
+        'Quelle situation fait le plus douter {playerName} de ses capacités ?',
       ],
     }
 

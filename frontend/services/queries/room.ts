@@ -1,4 +1,5 @@
 import api from '@/services/api';
+// Assurez-vous d'utiliser l'import correct
 import SocketService from '@/services/socketService';
 
 export interface Room {

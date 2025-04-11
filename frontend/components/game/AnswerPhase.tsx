@@ -1,122 +1,163 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, KeyboardAvoidingView, Platform, Alert } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { Question } from '../../types/gameTypes';
+import React, { useState, useEffect } from 'react';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert } from 'react-native';
+import { useAuth } from '../../contexts/AuthContext';
+import GameTimer from './GameTimer';
 
 interface AnswerPhaseProps {
-  question: Question;
+  question: {
+    id: number;
+    text: string;
+    theme?: string;
+    roundNumber?: number;
+    targetPlayer?: {
+      id: string | number;
+      displayName?: string;
+      username?: string;
+    };
+  };
   onSubmit: (answer: string) => void;
+  timer?: {
+    duration: number;
+    startTime: number;
+  } | null;
+  isSubmitting?: boolean;
 }
 
-const AnswerPhase: React.FC<AnswerPhaseProps> = ({ question, onSubmit }) => {
+const AnswerPhase: React.FC<AnswerPhaseProps> = ({ 
+  question, 
+  onSubmit, 
+  timer,
+  isSubmitting = false 
+}) => {
   const [answer, setAnswer] = useState('');
+  const [localSubmitting, setLocalSubmitting] = useState(isSubmitting);
+  const { user } = useAuth();
   
-  const handleSubmit = () => {
-    const trimmedAnswer = answer.trim();
-    if (trimmedAnswer.length > 0) {
-      onSubmit(trimmedAnswer);
-    } else {
-      Alert.alert("Réponse requise", "Veuillez entrer une réponse avant de soumettre.");
+  // Effet pour synchroniser l'état isSubmitting externe avec l'état local
+  useEffect(() => {
+    setLocalSubmitting(isSubmitting);
+  }, [isSubmitting]);
+  
+  const handleSubmit = async () => {
+    if (answer.trim() === '') {
+      Alert.alert('Erreur', 'Votre réponse ne peut pas être vide');
+      return;
+    }
+    
+    if (question.targetPlayer && user && 
+        question.targetPlayer.id.toString() === user.id.toString()) {
+      Alert.alert('Impossible', 'Vous ne pouvez pas répondre à une question qui vous concerne');
+      return;
+    }
+    
+    try {
+      setLocalSubmitting(true);
+      
+      // Log pour déboguer
+      console.log('📝 Soumission de réponse:', {
+        content: answer,
+        question_id: question.id
+      });
+      
+      await onSubmit(answer);
+      
+    } catch (error) {
+      console.error('❌ Erreur lors de la soumission de la réponse:', error);
+      Alert.alert('Erreur', 'Impossible d\'envoyer votre réponse. Veuillez réessayer.');
+      setLocalSubmitting(false);
     }
   };
   
-  const isSubmitEnabled = answer.trim().length > 0;
-  
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={styles.container}
-      keyboardVerticalOffset={100}
-    >
-      <View style={styles.questionCard}>
-        <LinearGradient
-          colors={['rgba(105, 78, 214, 0.3)', 'rgba(105, 78, 214, 0.1)']}
-          style={styles.cardGradient}
-        >
-          <Text style={styles.questionText}>{question.text}</Text>
-        </LinearGradient>
+    <View style={styles.container}>
+      {timer && (
+        <View style={styles.timerContainer}>
+          <GameTimer 
+            duration={timer.duration}
+            startTime={timer.startTime}
+            onComplete={() => {
+              if (answer.trim() !== '' && !localSubmitting) {
+                handleSubmit();
+              }
+            }}
+          />
+        </View>
+      )}
+      
+      <View style={styles.questionContainer}>
+        <Text style={styles.questionLabel}>Question :</Text>
+        <Text style={styles.questionText}>{question.text}</Text>
       </View>
       
-      <View style={styles.answerContainer}>
-        <Text style={styles.answerLabel}>Votre réponse</Text>
-        <TextInput
-          style={styles.answerInput}
-          onChangeText={setAnswer}
-          value={answer}
-          placeholder="Tapez votre réponse ici..."
-          placeholderTextColor="rgba(255,255,255,0.5)"
-          multiline
-          maxLength={200}
-        />
-        
-        <TouchableOpacity
-          style={[
-            styles.submitButton,
-            !isSubmitEnabled && styles.submitButtonDisabled
-          ]}
-          onPress={handleSubmit}
-          disabled={!isSubmitEnabled}
-        >
-          <Text style={styles.submitButtonText}>Soumettre ma réponse</Text>
-        </TouchableOpacity>
-      </View>
-    </KeyboardAvoidingView>
+      <TextInput
+        style={styles.answerInput}
+        placeholder="Votre réponse..."
+        placeholderTextColor="#999"
+        multiline
+        value={answer}
+        onChangeText={setAnswer}
+        editable={!localSubmitting}
+      />
+      
+      <TouchableOpacity 
+        style={[styles.submitButton, (answer.trim() === '' || localSubmitting) && styles.disabledButton]}
+        onPress={handleSubmit}
+        disabled={answer.trim() === '' || localSubmitting}
+      >
+        <Text style={styles.submitButtonText}>
+          {localSubmitting ? 'Envoi en cours...' : 'Envoyer ma réponse'}
+        </Text>
+      </TouchableOpacity>
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
+    padding: 16,
     flex: 1,
-    justifyContent: 'space-between',
   },
-  questionCard: {
-    borderRadius: 16,
-    overflow: 'hidden',
-    marginBottom: 20,
+  timerContainer: {
+    marginBottom: 16,
   },
-  cardGradient: {
-    padding: 20,
-    borderRadius: 16,
+  questionContainer: {
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderRadius: 8,
+    padding: 16,
+    marginBottom: 16,
+  },
+  questionLabel: {
+    fontSize: 14,
+    color: '#b3a5d9',
+    marginBottom: 8,
   },
   questionText: {
-    fontSize: 22,
-    fontWeight: 'bold',
+    fontSize: 18,
     color: '#ffffff',
-    lineHeight: 32,
-    textAlign: 'center',
-  },
-  answerContainer: {
-    marginBottom: 20,
-  },
-  answerLabel: {
-    color: '#b3a5d9',
-    fontSize: 16,
-    marginBottom: 8,
-    fontWeight: '600',
+    fontWeight: 'bold',
   },
   answerInput: {
     backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    borderRadius: 12,
+    borderRadius: 8,
     padding: 16,
     color: '#ffffff',
-    fontSize: 16,
-    minHeight: 120,
+    minHeight: 150,
+    marginBottom: 16,
     textAlignVertical: 'top',
-    marginBottom: 20,
   },
   submitButton: {
-    backgroundColor: '#694ED6',
-    borderRadius: 12,
+    backgroundColor: '#8658fe',
+    borderRadius: 8,
     padding: 16,
     alignItems: 'center',
   },
-  submitButtonDisabled: {
-    backgroundColor: 'rgba(105, 78, 214, 0.5)',
+  disabledButton: {
+    backgroundColor: 'rgba(134, 88, 254, 0.5)',
   },
   submitButtonText: {
     color: '#ffffff',
+    fontWeight: 'bold',
     fontSize: 16,
-    fontWeight: '600',
   },
 });
 

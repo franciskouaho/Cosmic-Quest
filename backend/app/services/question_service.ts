@@ -17,6 +17,9 @@ class QuestionService {
 
       // Si aucune question n'est trouvée pour ce thème, essayez le thème standard
       if (!question && theme !== 'standard') {
+        console.log(
+          `Aucune question trouvée pour le thème: ${theme}, utilisation du thème standard`
+        )
         return this.getRandomQuestionByTheme('standard')
       }
 
@@ -38,6 +41,45 @@ class QuestionService {
    */
   formatQuestion(questionText: string, playerName: string): string {
     return questionText.replace('{playerName}', playerName)
+  }
+
+  // Pour l'API admin
+  getQuestionsQuery() {
+    return QuestionBank.query()
+  }
+
+  async getQuestionById(id: number) {
+    return QuestionBank.find(id)
+  }
+
+  async createQuestion(data: { text: string; theme: string; createdByUserId?: number }) {
+    return QuestionBank.create({
+      text: data.text,
+      theme: data.theme,
+      isActive: true,
+      usageCount: 0,
+      createdByUserId: data.createdByUserId,
+    })
+  }
+
+  async updateQuestion(id: number, data: { text?: string; theme?: string; isActive?: boolean }) {
+    const question = await QuestionBank.find(id)
+    if (!question) return null
+
+    if (data.text !== undefined) question.text = data.text
+    if (data.theme !== undefined) question.theme = data.theme
+    if (data.isActive !== undefined) question.isActive = data.isActive
+
+    await question.save()
+    return question
+  }
+
+  async deleteQuestion(id: number) {
+    const question = await QuestionBank.find(id)
+    if (!question) return false
+
+    await question.delete()
+    return true
   }
 }
 
