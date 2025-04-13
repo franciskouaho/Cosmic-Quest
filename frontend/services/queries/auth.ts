@@ -145,6 +145,7 @@ class AuthService {
     try {
       // Essayer d'obtenir les données depuis l'API en premier
       try {
+        // Changer /users/profile à la place de /me qui n'existe pas
         const response = await axios.get(`/users/profile`);
         if (response.data?.status === 'success' && response.data?.data) {
           const userData = {
@@ -158,11 +159,16 @@ class AuthService {
           
           // Mettre à jour le stockage local avec les données fraîches
           await AsyncStorage.setItem('@user_data', JSON.stringify(userData));
+          
+          // Définir l'ID utilisateur dans UserIdManager
+          await UserIdManager.setUserId(userData.id);
+          
           console.log('✅ Données utilisateur récupérées depuis l\'API et mises en cache');
           return userData;
         }
       } catch (apiError) {
         console.log('⚠️ Impossible d\'obtenir les données utilisateur depuis l\'API, tentative de récupération locale');
+        console.error('Détails de l\'erreur API:', apiError.response?.data || apiError.message);
       }
       
       // Fallback au stockage local si l'API échoue
@@ -174,6 +180,10 @@ class AuthService {
       
       const user = JSON.parse(userData);
       console.log('✅ Données utilisateur récupérées du cache local:', user.username);
+      
+      // S'assurer que l'ID est défini dans UserIdManager
+      await UserIdManager.setUserId(user.id);
+      
       return user;
     } catch (error) {
       console.error('❌ Erreur lors de la récupération des données utilisateur:', error);
@@ -182,4 +192,4 @@ class AuthService {
   }
 }
 
-export const authService = new AuthService();
+export default new AuthService();

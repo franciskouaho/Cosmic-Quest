@@ -3,19 +3,21 @@ import { View, Text, StyleSheet, Alert, TouchableOpacity } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
-import QuestionPhase from '../../components/game/QuestionPhase';
-import AnswerPhase from '../../components/game/AnswerPhase';
-import VotePhase from '../../components/game/VotePhase';
-import ResultsPhase from '../../components/game/ResultsPhase';
-import LoadingOverlay from '../../components/common/LoadingOverlay';
-import { useAuth } from '../../contexts/AuthContext';
-import { Player, GamePhase, GameState, Answer, Question } from '../../types/gameTypes';
-import gameService from '../../services/queries/game';
+import QuestionPhase from '@/components/game/QuestionPhase';
+import AnswerPhase from '@/components/game/AnswerPhase';
+import VotePhase from '@/components/game/VotePhase';
+import ResultsPhase from '@/components/game/ResultsPhase';
+import LoadingOverlay from '@/components/common/LoadingOverlay';
+import { useAuth } from '@/contexts/AuthContext';
+import { Player, GamePhase, GameState, Answer, Question } from '@/types/gameTypes';
+import gameService from '@/services/queries/game';
 import SocketService from '@/services/socketService';
-import axios from 'axios';
-import GameTimer from '../../components/game/GameTimer';
-import gameDebugger from '../../utils/gameDebugger';
+import api from '@/config/axios'; // Ajout de l'import manquant
+import NetInfo from '@react-native-community/netinfo'; // Ajout de l'import manquant
+import GameTimer from '@/components/game/GameTimer';
+import gameDebugger from '@/utils/gameDebugger';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import UserIdManager from '@/utils/userIdManager';
 
 export default function GameScreen() {
   const router = useRouter();
@@ -47,16 +49,15 @@ export default function GameScreen() {
       // Assurer que l'ID utilisateur est disponible dans les en-têtes API 
       try {
         if (user && user.id) {
-          api.defaults.headers.userId = user.id;
+          await UserIdManager.setUserId(user.id);
           console.log(`👤 ID utilisateur ${user.id} défini dans les headers API`);
         } else {
-          // Essayer de récupérer l'ID utilisateur depuis AsyncStorage
-          const storedUserId = await AsyncStorage.getItem('@current_user_id');
+          // Essayer de récupérer l'ID utilisateur depuis UserIdManager
+          const storedUserId = await UserIdManager.getUserId();
           if (storedUserId) {
-            api.defaults.headers.userId = storedUserId;
-            console.log(`👤 ID utilisateur ${storedUserId} récupéré depuis AsyncStorage`);
+            console.log(`👤 ID utilisateur ${storedUserId} récupéré depuis UserIdManager`);
           } else {
-            console.warn('⚠️ ID utilisateur non disponible dans les en-têtes ni dans AsyncStorage');
+            console.warn('⚠️ ID utilisateur non disponible dans les en-têtes ni dans UserIdManager');
           }
         }
       } catch (err) {
@@ -131,8 +132,14 @@ export default function GameScreen() {
       } else if (gameData.game.currentPhase === 'vote') {
         // En phase de vote, seul le joueur cible peut voter
         if (isTargetPlayer) {
-          effectivePhase = GamePhase.VOTE;
-          console.log("🎯 Joueur ciblé entre en phase de vote");
+          // Si le joueur est la cible, vérifier s'il a déjà voté
+          if (gameData.currentUserState?.hasVoted) {
+            effectivePhase = GamePhase.WAITING;
+            console.log("✓ Joueur cible a déjà voté, en attente");
+          } else {
+            effectivePhase = GamePhase.VOTE;
+            console.log("🎯 Joueur ciblé entre en phase de vote");
+          }
         } else {
           effectivePhase = GamePhase.WAITING;
           console.log("⏱️ Joueur non-cible en attente pendant que le joueur ciblé vote");
@@ -210,6 +217,18 @@ export default function GameScreen() {
     // Initialisation asynchrone du socket
     const initSocket = async () => {
       try {
+        // S'assurer que l'ID utilisateur est défini dans api avant tout
+        if (user && user.id) {
+          await UserIdManager.setUserId(user.id);
+          console.log(`👤 [Socket Init] ID utilisateur ${user.id} défini`);
+        } else {
+          // Essayer de récupérer l'ID depuis le gestionnaire
+          const storedId = await UserIdManager.getUserId();
+          if (storedId) {
+            console.log(`👤 [Socket Init] ID utilisateur ${storedId} récupéré du stockage`);
+          }
+        }
+        
         const socket = await SocketService.getInstanceAsync();
         
         // Gestionnaire d'événements optimisé pour les mises à jour du jeu
@@ -333,6 +352,15 @@ export default function GameScreen() {
   }, [id, user, router, fetchGameData]);
   
   const handleSubmitAnswer = async (answer: string) => {
+    // Vérifier l'ID utilisateur avant de soumettre
+    const userId = await UserIdManager.getUserId();
+    if (!userId) {
+      console.warn('⚠️ ID utilisateur non disponible, tentative de récupération');
+      if (user && user.id) {
+        await UserIdManager.setUserId(user.id);
+      }
+    }
+    
     if (!user || !gameState.currentQuestion) return;
     
     if (gameState.currentUserState?.isTargetPlayer) {

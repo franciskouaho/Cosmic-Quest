@@ -4,14 +4,14 @@ import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons, FontAwesome5, Ionicons } from '@expo/vector-icons';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import InviteModal from '../../components/room/InviteModal';
-import RulesDrawer from '../../components/room/RulesDrawer';
-import LoadingOverlay from '../../components/common/LoadingOverlay';
-import SocketService from '@/services/socketService';
+import InviteModal from '@/components/room/InviteModal';
+import RulesDrawer from '@/components/room/RulesDrawer';
+import LoadingOverlay from '@/components/common/LoadingOverlay';
 import { useRoom, useToggleReadyStatus, useLeaveRoom, useStartGame } from '@/hooks/useRooms';
 import { useUser } from '@/hooks/useAuth';
 import api from '@/config/axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import SocketService from '@/services/socketService';
 
 // Type pour les joueurs
 type Player = {
@@ -56,30 +56,31 @@ export default function Room() {
       if (roomData.players && Array.isArray(roomData.players)) {
         // Convertir les joueurs au format requis
         const formattedPlayers = roomData.players.map(player => ({
-          id: player.id.toString(),
+          id: String(player.id), // S'assurer que l'ID est une chaîne
           name: player.displayName || player.username,
-          isHost: player.isHost,
-          isReady: player.isReady,
+          isHost: player.id === roomData.host.id, // Correction ici pour identifier l'hôte correctement
+          isReady: player.isHost || player.isReady, // L'hôte est toujours prêt
           avatar: player.avatar || 'https://randomuser.me/api/portraits/men/32.jpg',
           level: player.level || 1
         }));
         
         setPlayers(formattedPlayers);
       } else {
-        // Initialiser avec un tableau vide si players n'existe pas
         console.log('⚠️ Aucun joueur trouvé dans roomData');
         setPlayers([]);
       }
       
       // Vérifier si l'utilisateur actuel est l'hôte
       if (user) {
+        // Utiliser l'ID de l'hôte depuis roomData.host
         setIsHost(roomData.host.id === user.id);
         
         // Trouver le statut "prêt" de l'utilisateur actuel si players existe
         if (roomData.players && Array.isArray(roomData.players)) {
           const currentPlayer = roomData.players.find(player => player.id === user.id);
           if (currentPlayer) {
-            setIsReady(currentPlayer.isReady);
+            // Si l'utilisateur est l'hôte, il est toujours prêt
+            setIsReady(currentPlayer.isHost || currentPlayer.isReady);
           }
         }
       }

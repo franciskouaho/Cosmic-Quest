@@ -1,47 +1,18 @@
 import { io, Socket } from 'socket.io-client';
-import { SOCKET_URL } from '@/config/axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from '@react-native-community/netinfo';
+import { SOCKET_URL } from '@/config/axios';
+import UserIdManager from '@/utils/userIdManager';
 
-class SocketService {
+export default class SocketService {
   private static instance: Socket | null = null;
   private static isInitializing: boolean = false;
   private static initializationPromise: Promise<Socket> | null = null;
-  private static connectionAttempts: number = 0;
+  private static activeRooms: Set<string> = new Set();
+  private static activeGames: Set<string> = new Set();
+  private static reconnectAttempts: number = 0;
   private static maxReconnectAttempts: number = 5;
-  private static lastPingTime: number = 0;
-  private static heartbeatInterval: NodeJS.Timeout | null = null;
-  private static currentRoom: string | null = null;
-  private static currentGame: string | null = null;
-  private static activeChannels: Set<string> = new Set(); // Garder une trace des canaux actifs
-
-  // Tentative de reconnexion si déconnecté
-  private static async handleReconnect() {
-    if (SocketService.connectionAttempts >= SocketService.maxReconnectAttempts) {
-      console.error('🔌 Nombre maximal de tentatives de reconnexion atteint.');
-      return;
-    }
-
-    SocketService.connectionAttempts++;
-    console.log(`🔌 Tentative de reconnexion (${SocketService.connectionAttempts}/${SocketService.maxReconnectAttempts})...`);
-
-    try {
-      // Vérifier la connectivité internet
-      const netInfo = await NetInfo.fetch();
-      if (!netInfo.isConnected) {
-        console.log('🌐 Pas de connexion Internet. Abandon de la reconnexion.');
-        return;
-      }
-
-      // Recréer l'instance
-      const newSocket = await SocketService.initialize();
-      
-      // Rejoindre à nouveau les canaux actifs
-      SocketService.rejoinActiveChannels();
-    } catch (error) {
-      console.error('🔌 Erreur lors de la tentative de reconnexion:', error);
-    }
-  }
+  private static reconnectTimeout: NodeJS.Timeout | null = null;
 
   // Initialisation du service de socket avec gestion de promesse pour éviter les courses de condition
   public static initialize(): Promise<Socket> {
@@ -66,10 +37,22 @@ class SocketService {
 
         // Récupérer le token pour l'authentification
         let token;
+        let userId;
         try {
+          // Récupérer le token
           token = await AsyncStorage.getItem('@auth_token');
+          
+          // Récupérer et synchroniser l'ID utilisateur
+          userId = await UserIdManager.getUserId();
+          if (userId) {
+            console.log(`🔌 Socket utilisant l'ID utilisateur: ${userId}`);
+          } else {
+            console.warn('⚠️ Aucun ID utilisateur disponible pour le socket');
+            // Afficher le diagnostic pour aider au débogage
+            await UserIdManager.debugUserIds();
+          }
         } catch (error) {
-          console.error('❌ Erreur lors de la récupération du token:', error);
+          console.error('❌ Erreur lors de la récupération des identifiants:', error);
         }
 
         // Configuration sécurisée avec valeurs par défaut
@@ -81,464 +64,460 @@ class SocketService {
           timeout: 20000,
           autoConnect: true,
           auth: {
-            token: token || undefined
+            token: token || undefined,
+            userId: userId || undefined
           },
           query: {
-            token: token || undefined
+            token: token || undefined,
+            userId: userId || undefined
           },
           transports: ['websocket', 'polling']
         };
 
-        // Créer une nouvelle instance avec un try-catch
-        try {
-          const socketInstance = io(SOCKET_URL, options);
-          
-          // Configuration des gestionnaires d'événements standard
-          socketInstance.on('connect', () => {
-            console.log('✅ WebSocket connecté avec succès. Socket ID:', socketInstance.id);
-            SocketService.connectionAttempts = 0;
-            SocketService.startHeartbeat();
-            SocketService.rejoinActiveChannels();
-          });
+        console.log(`🔌 Tentative de connexion à ${SOCKET_URL} avec options:`, options);
 
-          socketInstance.on('connect_error', (error) => {
-            console.error('🔌 Erreur de connexion WebSocket:', error.message);
-          });
+        // Créer l'instance de Socket.IO
+        SocketService.instance = io(SOCKET_URL, options);
 
-          socketInstance.on('disconnect', (reason) => {
-            console.log('🔌 WebSocket déconnecté:', reason);
-            if (SocketService.heartbeatInterval) {
-              clearInterval(SocketService.heartbeatInterval);
-              SocketService.heartbeatInterval = null;
-            }
-            
-            if (reason === 'io server disconnect' || reason === 'io client disconnect') {
-              console.log('🔌 Déconnexion manuelle, pas de reconnexion automatique.');
-            } else {
-              setTimeout(() => SocketService.handleReconnect(), 2000);
-            }
-          });
+        // Configurer les écouteurs d'événements de base
+        SocketService.instance.on('connect', () => {
+          console.log(`🟢 Socket.IO connecté, ID: ${SocketService.instance?.id}`);
+          SocketService.reconnectAttempts = 0;
           
-          // Gestionnaire d'événement générique pour le débogage
-          socketInstance.onAny((event, ...args) => {
-            const argStr = args.length > 0 ? JSON.stringify(args[0]).substring(0, 100) + '...' : '';
-            console.log(`🔌 [SOCKET EVENT] ${event}`, argStr);
-          });
-          
-          // Attendre que la connexion soit établie avant de résoudre
-          if (!socketInstance.connected) {
-            socketInstance.once('connect', () => {
-              SocketService.instance = socketInstance;
-              SocketService.isInitializing = false;
-              console.log('✅ Service WebSocket initialisé avec succès');
-              resolve(socketInstance);
-            });
-            
-            // Configuration d'un timeout pour la connexion
-            const timeout = setTimeout(() => {
-              if (!socketInstance.connected) {
-                console.error('🔌 Timeout lors de la connexion WebSocket');
-                socketInstance.close();
-                SocketService.isInitializing = false;
-                reject(new Error('Timeout lors de la connexion WebSocket'));
-              }
-              clearTimeout(timeout);
-            }, 10000); // 10 secondes de timeout
-          } else {
-            // Déjà connecté
-            SocketService.instance = socketInstance;
-            SocketService.isInitializing = false;
-            console.log('✅ Service WebSocket initialisé avec succès (déjà connecté)');
-            resolve(socketInstance);
+          // Rejoindre à nouveau les salles et jeux actifs après reconnexion
+          SocketService.rejoinActiveChannels();
+
+          resolve(SocketService.instance!);
+        });
+
+        SocketService.instance.on('connect_error', (error) => {
+          console.error('🔌 Erreur de connexion Socket.IO:', error.message);
+          if (SocketService.reconnectAttempts >= SocketService.maxReconnectAttempts) {
+            reject(new Error(`Échec de la connexion après ${SocketService.maxReconnectAttempts} tentatives: ${error.message}`));
           }
-        } catch (socketError) {
-          console.error('🔌 Erreur lors de la création du socket:', socketError);
-          SocketService.isInitializing = false;
-          reject(socketError);
+          SocketService.reconnectAttempts++;
+        });
+
+        SocketService.instance.on('disconnect', (reason) => {
+          console.log(`🔴 Socket.IO déconnecté. Raison: ${reason}`);
+          if (reason === 'io server disconnect' || reason === 'io client disconnect') {
+            // La déconnexion est intentionnelle, ne pas reconnecter automatiquement
+            console.log('⚠️ Déconnexion manuelle, pas de tentative de reconnexion automatique');
+          } else {
+            // Tenter de se reconnecter après un délai
+            if (SocketService.reconnectTimeout) {
+              clearTimeout(SocketService.reconnectTimeout);
+            }
+            SocketService.reconnectTimeout = setTimeout(() => {
+              SocketService.handleReconnect();
+            }, 3000);
+          }
+        });
+
+        SocketService.instance.on('error', (error) => {
+          console.error('🔌 Erreur Socket.IO:', error);
+          reject(error);
+        });
+
+        // Gestionnaire spécifique pour les confirmations de jointure aux salles
+        SocketService.instance.on('room:joined', (data) => {
+          console.log(`🚪 Socket confirmé: salle ${data.roomCode} rejointe avec succès`);
+        });
+
+        SocketService.instance.on('room:left', (data) => {
+          console.log(`🚪 Socket confirmé: salle ${data.roomCode} quittée avec succès`);
+        });
+
+        // Gestionnaire pour les confirmations de jointure aux jeux
+        SocketService.instance.on('game:joined', (data) => {
+          console.log(`🎮 Socket confirmé: jeu ${data.gameId} rejoint avec succès`);
+        });
+
+        SocketService.instance.on('game:left', (data) => {
+          console.log(`🎮 Socket confirmé: jeu ${data.gameId} quitté avec succès`);
+        });
+
+        // Gestionnaire de confirmation de connexion Socket.IO
+        SocketService.instance.on('connection:success', (data) => {
+          console.log(`🔌 Confirmation serveur Socket.IO:`, data.message);
+        });
+
+        // Gestion des pings/pongs pour maintenir la connexion active
+        SocketService.instance.on('pong', (data) => {
+          console.log('🏓 Pong reçu du serveur:', data);
+        });
+
+        // Si le socket n'est pas connecté après 5 secondes, rejeter la promesse
+        const connectionTimeout = setTimeout(() => {
+          if (!SocketService.instance?.connected) {
+            console.error('⏱️ Délai de connexion Socket.IO expiré');
+            reject(new Error('Délai de connexion expiré'));
+          }
+        }, 5000);
+
+        // Annuler le timeout si connecté avec succès
+        if (SocketService.instance.connected) {
+          clearTimeout(connectionTimeout);
+          resolve(SocketService.instance);
         }
+
       } catch (error) {
-        console.error('🔌 Erreur lors de l\'initialisation du WebSocket:', error);
+        console.error('❌ Erreur lors de l\'initialisation de Socket.IO:', error);
         SocketService.isInitializing = false;
         reject(error);
+      } finally {
+        // Réinitialiser le flag après l'initialisation
+        setTimeout(() => {
+          SocketService.isInitializing = false;
+        }, 1000);
       }
     });
     
     return SocketService.initializationPromise;
   }
 
-  // Rejoindre tous les canaux actifs (utilisé après reconnexion)
-  private static async rejoinActiveChannels() {
-    if (!SocketService.instance || !SocketService.instance.connected) return;
-
-    console.log(`🔄 Tentative de rejoindre ${SocketService.activeChannels.size} canaux après reconnexion...`);
-    
-    const rejoinPromises: Promise<void>[] = [];
-    
-    // Rejoindre la salle actuelle si elle existe
-    if (SocketService.currentRoom) {
-      console.log(`🚪 Rejoindre la salle ${SocketService.currentRoom} après reconnexion`);
-      rejoinPromises.push(
-        SocketService.joinRoom(SocketService.currentRoom).catch(err => {
-          console.error(`❌ Erreur lors de la reconnexion à la salle ${SocketService.currentRoom}:`, err);
-          // Ne pas faire échouer l'ensemble du processus pour une seule salle
-          return Promise.resolve();
-        })
-      );
-    }
-    
-    // Rejoindre le jeu actuel si il existe
-    if (SocketService.currentGame) {
-      console.log(`🎮 Rejoindre le jeu ${SocketService.currentGame} après reconnexion`);
-      rejoinPromises.push(
-        SocketService.joinGameChannel(SocketService.currentGame).catch(err => {
-          console.error(`❌ Erreur lors de la reconnexion au jeu ${SocketService.currentGame}:`, err);
-          // Ne pas faire échouer l'ensemble du processus pour un seul jeu
-          return Promise.resolve();
-        })
-      );
-    }
-    
-    // Rejoindre tous les autres canaux qui ne sont pas des salles ou des jeux déjà gérés
-    SocketService.activeChannels.forEach(channel => {
-      if (
-        (SocketService.currentRoom && channel !== `room:${SocketService.currentRoom}`) && 
-        (SocketService.currentGame && channel !== `game:${SocketService.currentGame}`)
-      ) {
-        console.log(`📢 Rejoindre le canal ${channel} après reconnexion`);
-        SocketService.instance!.emit('join', { channel });
-      }
-    });
-    
-    // Attendre que toutes les opérations de rejointure soient terminées
-    try {
-      await Promise.all(rejoinPromises);
-      console.log('🔄 Reconnexion aux canaux terminée avec succès');
-    } catch (error) {
-      console.error('❌ Erreur lors de la reconnexion aux canaux:', error);
-    }
-  }
-
-  // Heartbeat pour maintenir la connexion active
-  private static startHeartbeat() {
-    if (SocketService.heartbeatInterval) {
-      clearInterval(SocketService.heartbeatInterval);
-    }
-
-    SocketService.heartbeatInterval = setInterval(() => {
-      if (SocketService.instance && SocketService.instance.connected) {
-        const now = Date.now();
-        SocketService.instance.emit('ping', (response: any) => {
-          if (response && response.time) {
-            const latency = Date.now() - now;
-            SocketService.lastPingTime = latency;
-          }
-        });
-      }
-    }, 25000); // Toutes les 25 secondes
-  }
-
-  // Obtenir l'instance (créer si nécessaire) de manière asynchrone et sûre
+  // Obtenir l'instance existante ou en initialiser une nouvelle de manière asynchrone
   public static async getInstanceAsync(): Promise<Socket> {
-    if (!SocketService.instance || !SocketService.instance.connected) {
-      try {
-        return await SocketService.initialize();
-      } catch (error) {
-        console.error('❌ Erreur lors de la récupération de l\'instance Socket:', error);
-        throw error;
-      }
+    try {
+      return await SocketService.initialize();
+    } catch (error) {
+      console.error('❌ Erreur lors de l\'obtention de l\'instance Socket.IO:', error);
+      throw error;
+    }
+  }
+
+  // Obtenir l'instance existante de manière synchrone (peut retourner null)
+  public static getInstance(): Socket {
+    if (!SocketService.instance) {
+      console.warn('⚠️ getInstance appelé mais l\'instance Socket.IO n\'existe pas encore');
+      SocketService.initialize().catch(err => {
+        console.error('❌ Erreur lors de l\'initialisation de Socket.IO dans getInstance:', err);
+      });
+      throw new Error('Socket.IO non initialisé');
     }
     return SocketService.instance;
   }
 
   // Vérifier si le socket est connecté
   public static isConnected(): boolean {
-    return !!SocketService.instance?.connected;
-  }
-  
-  // Version asynchrone pour vérifier la connexion
-  public static async isConnectedAsync(): Promise<boolean> {
-    try {
-      // Si déjà connecté, retourner vrai immédiatement
-      if (SocketService.instance?.connected) {
-        return true;
-      }
-      
-      // Si pas connecté, tenter d'initialiser
-      const socket = await SocketService.getInstanceAsync();
-      return !!socket.connected;
-    } catch (error) {
-      console.error('❌ Erreur lors de la vérification de la connexion Socket:', error);
-      return false;
-    }
+    return !!SocketService.instance && SocketService.instance.connected;
   }
 
-  // Rejoindre une salle de manière fiable
+  // Rejoindre une salle avec confirmation et timeout
   public static async joinRoom(roomCode: string): Promise<void> {
+    if (!roomCode) {
+      console.error('❌ Code de salle non fourni');
+      return;
+    }
+
     try {
-      // Attendre d'avoir une instance Socket.IO valide
-      const socket = await SocketService.getInstanceAsync();
-      
       console.log(`🚪 Tentative de rejoindre la salle ${roomCode}`);
+      const socket = await SocketService.getInstanceAsync();
       
-      // Créer une promesse pour attendre la confirmation de jointure à la salle
-      const joinPromise = new Promise<void>((resolve, reject) => {
-        // Configurer un écouteur d'événement de confirmation
-        const onRoomJoined = (data: any) => {
-          if (data && data.code === roomCode) {
-            console.log(`✅ Confirmation de jointure à la salle ${roomCode} reçue`);
-            socket.off('room:joined', onRoomJoined);
-            clearTimeout(timeoutId);
+      return new Promise((resolve, reject) => {
+        try {
+          // Ajouter un écouteur temporaire pour la confirmation de jointure
+          const onJoinConfirmation = (data: any) => {
+            if (data && data.roomCode === roomCode) {
+              console.log(`✅ Confirmation de jointure à la salle ${roomCode} reçue`);
+              SocketService.activeRooms.add(roomCode);
+              socket.off('room:joined', onJoinConfirmation);
+              clearTimeout(timeout);
+              resolve();
+            }
+          };
+
+          // Définir un timeout pour la jointure
+          const timeout = setTimeout(() => {
+            socket.off('room:joined', onJoinConfirmation);
+            console.warn(`⚠️ Pas de confirmation de jointure à la salle ${roomCode} après 5 secondes, mais on continue`);
+            SocketService.activeRooms.add(roomCode); // On considère qu'on a rejoint la salle quand même
             resolve();
-          }
-        };
-        
-        // Configurer un écouteur d'événement d'erreur
-        const onJoinError = (error: any) => {
-          console.error(`❌ Erreur lors de la jointure à la salle ${roomCode}:`, error);
-          socket.off('room:error', onJoinError);
-          clearTimeout(timeoutId);
-          reject(new Error(error?.message || 'Échec de la jointure à la salle'));
-        };
-        
-        // Configurer un timeout pour éviter de bloquer indéfiniment
-        const timeoutId = setTimeout(() => {
-          socket.off('room:joined', onRoomJoined);
-          socket.off('room:error', onJoinError);
-          console.log(`⚠️ Pas de confirmation de jointure à la salle ${roomCode} après 5 secondes, mais on continue`);
-          resolve(); // On résout quand même pour ne pas bloquer l'utilisateur
-        }, 5000);
-        
-        // Mettre en place les écouteurs
-        socket.on('room:joined', onRoomJoined);
-        socket.on('room:error', onJoinError);
-        
-        // Envoyer l'événement de jointure (un seul format pour éviter la confusion)
-        socket.emit('join-room', { roomCode });
-        console.log(`📤 Demande d'inscription envoyée pour la salle: ${roomCode}`);
+          }, 5000);
+
+          // Écouter l'événement de confirmation
+          socket.on('room:joined', onJoinConfirmation);
+          
+          // Envoyer la demande de jointure
+          socket.emit('join-room', { roomCode });
+          console.log(`📤 Demande d'inscription envoyée pour la salle: ${roomCode}`);
+          
+        } catch (innerError) {
+          console.error(`❌ Erreur lors de la tentative de jointure à la salle ${roomCode}:`, innerError);
+          reject(innerError);
+        }
       });
       
-      // Enregistrer la salle actuelle immédiatement pour la reconnexion automatique
-      SocketService.currentRoom = roomCode;
-      SocketService.activeChannels.add(`room:${roomCode}`);
-      
-      // Attendre la confirmation ou le timeout
-      await joinPromise;
-      
-      return;
     } catch (error) {
-      console.error('🔌 Erreur lors de la tentative de rejoindre une salle:', error);
-      throw error; // Propager l'erreur pour permettre la gestion en amont
+      console.error(`❌ Erreur lors de la jointure à la salle ${roomCode}:`, error);
+      throw error;
     }
   }
 
-  // Quitter une salle de manière fiable
+  // Quitter une salle
   public static async leaveRoom(roomCode: string): Promise<void> {
+    if (!roomCode) {
+      console.error('❌ Code de salle non fourni');
+      return;
+    }
+
     try {
-      // Obtenir une instance Socket.IO
+      console.log(`🚪 Tentative de quitter la salle ${roomCode}`);
       const socket = await SocketService.getInstanceAsync();
       
-      console.log(`🚪 Tentative de quitter la salle ${roomCode}`);
-      
-      // Créer une promesse pour attendre la confirmation de sortie de la salle
-      const leavePromise = new Promise<void>((resolve) => {
-        // Configurer un écouteur d'événement de confirmation
-        const onRoomLeft = (data: any) => {
-          if (data && data.code === roomCode) {
-            console.log(`✅ Confirmation de sortie de la salle ${roomCode} reçue`);
-            socket.off('room:left', onRoomLeft);
-            clearTimeout(timeoutId);
+      return new Promise((resolve, reject) => {
+        try {
+          // Ajouter un écouteur temporaire pour la confirmation
+          const onLeaveConfirmation = (data: any) => {
+            if (data && data.roomCode === roomCode) {
+              console.log(`✅ Confirmation de départ de la salle ${roomCode} reçue`);
+              SocketService.activeRooms.delete(roomCode);
+              socket.off('room:left', onLeaveConfirmation);
+              clearTimeout(timeout);
+              resolve();
+            }
+          };
+
+          // Définir un timeout pour la réception de confirmation
+          const timeout = setTimeout(() => {
+            socket.off('room:left', onLeaveConfirmation);
+            console.warn(`⚠️ Pas de confirmation de sortie de la salle ${roomCode} après 3 secondes, mais on continue`);
+            SocketService.activeRooms.delete(roomCode); // On considère qu'on a quitté la salle quand même
             resolve();
-          }
-        };
-        
-        // Configurer un timeout pour éviter de bloquer indéfiniment
-        const timeoutId = setTimeout(() => {
-          socket.off('room:left', onRoomLeft);
-          console.log(`⚠️ Pas de confirmation de sortie de la salle ${roomCode} après 3 secondes, mais on continue`);
-          resolve(); // On résout quand même pour ne pas bloquer l'utilisateur
-        }, 3000);
-        
-        // Mettre en place l'écouteur
-        socket.on('room:left', onRoomLeft);
-        
-        // Envoyer l'événement de sortie (un seul format pour éviter la confusion)
-        socket.emit('leave-room', { roomCode });
-        console.log(`📤 Demande de désinscription envoyée pour la salle: ${roomCode}`);
+          }, 3000);
+
+          // Écouter l'événement de confirmation
+          socket.on('room:left', onLeaveConfirmation);
+          
+          // Envoyer la demande de départ
+          socket.emit('leave-room', { roomCode });
+          console.log(`📤 Demande de désinscription envoyée pour la salle: ${roomCode}`);
+          
+        } catch (innerError) {
+          console.error(`❌ Erreur lors de la tentative de quitter la salle ${roomCode}:`, innerError);
+          reject(innerError);
+        }
       });
       
-      // Mettre à jour notre état local immédiatement
-      if (SocketService.currentRoom === roomCode) {
-        SocketService.currentRoom = null;
-      }
-      SocketService.activeChannels.delete(`room:${roomCode}`);
-      
-      // Attendre la confirmation ou le timeout
-      await leavePromise;
-      
-      return;
     } catch (error) {
-      console.error('🔌 Erreur lors de la tentative de quitter une salle:', error);
-      throw error; // Propager l'erreur pour permettre la gestion en amont
+      console.error(`❌ Erreur lors du départ de la salle ${roomCode}:`, error);
+      throw error;
     }
   }
 
-  // Rejoindre un canal de jeu de manière fiable
+  // Rejoindre un canal de jeu
   public static async joinGameChannel(gameId: string): Promise<void> {
+    if (!gameId) {
+      console.error('❌ ID de jeu non fourni');
+      return;
+    }
+
     try {
+      console.log(`🎮 Tentative de rejoindre le jeu ${gameId}`);
       const socket = await SocketService.getInstanceAsync();
       
-      console.log(`🎮 Tentative de rejoindre le jeu ${gameId}`);
+      return new Promise((resolve, reject) => {
+        try {
+          // Ajouter un écouteur temporaire pour la confirmation
+          const onJoinConfirmation = (data: any) => {
+            if (data && data.gameId.toString() === gameId.toString()) {
+              console.log(`✅ Confirmation de jointure au jeu ${gameId} reçue`);
+              SocketService.activeGames.add(gameId);
+              socket.off('game:joined', onJoinConfirmation);
+              clearTimeout(timeout);
+              resolve();
+            }
+          };
+
+          // Définir un timeout pour la réception de confirmation
+          const timeout = setTimeout(() => {
+            socket.off('game:joined', onJoinConfirmation);
+            console.warn(`⚠️ Pas de confirmation de jointure au jeu ${gameId} après 5 secondes, mais on continue`);
+            SocketService.activeGames.add(gameId); // On considère qu'on a rejoint le jeu quand même
+            resolve();
+          }, 5000);
+
+          // Écouter l'événement de confirmation
+          socket.on('game:joined', onJoinConfirmation);
+          
+          // Envoyer la demande de jointure
+          socket.emit('join-game', { gameId });
+          console.log(`📤 Demande d'inscription envoyée pour le jeu: ${gameId}`);
+          
+        } catch (innerError) {
+          console.error(`❌ Erreur lors de la tentative de jointure au jeu ${gameId}:`, innerError);
+          reject(innerError);
+        }
+      });
       
-      // Vérifier si nous sommes déjà dans ce canal de jeu
-      if (SocketService.currentGame === gameId) {
-        console.log(`✅ Déjà connecté au jeu ${gameId}, pas besoin de rejoindre à nouveau`);
+    } catch (error) {
+      console.error(`❌ Erreur lors de la jointure au jeu ${gameId}:`, error);
+      throw error;
+    }
+  }
+
+  // Quitter un canal de jeu
+  public static async leaveGameChannel(gameId: string): Promise<void> {
+    if (!gameId) {
+      console.error('❌ ID de jeu non fourni');
+      return;
+    }
+
+    try {
+      console.log(`🎮 Tentative de quitter le jeu ${gameId}`);
+      const socket = await SocketService.getInstanceAsync();
+      
+      return new Promise((resolve, reject) => {
+        try {
+          // Ajouter un écouteur temporaire pour la confirmation
+          const onLeaveConfirmation = (data: any) => {
+            if (data && data.gameId.toString() === gameId.toString()) {
+              console.log(`✅ Confirmation de départ du jeu ${gameId} reçue`);
+              SocketService.activeGames.delete(gameId);
+              socket.off('game:left', onLeaveConfirmation);
+              clearTimeout(timeout);
+              resolve();
+            }
+          };
+
+          // Définir un timeout pour la réception de confirmation
+          const timeout = setTimeout(() => {
+            socket.off('game:left', onLeaveConfirmation);
+            console.warn(`⚠️ Pas de confirmation de sortie du jeu ${gameId} après 3 secondes, mais on continue`);
+            SocketService.activeGames.delete(gameId); // On considère qu'on a quitté le jeu quand même
+            resolve();
+          }, 3000);
+
+          // Écouter l'événement de confirmation
+          socket.on('game:left', onLeaveConfirmation);
+          
+          // Envoyer la demande de départ
+          socket.emit('leave-game', { gameId });
+          console.log(`📤 Demande de désinscription envoyée pour le jeu: ${gameId}`);
+          
+        } catch (innerError) {
+          console.error(`❌ Erreur lors de la tentative de quitter le jeu ${gameId}:`, innerError);
+          reject(innerError);
+        }
+      });
+      
+    } catch (error) {
+      console.error(`❌ Erreur lors du départ du jeu ${gameId}:`, error);
+      throw error;
+    }
+  }
+
+  // Rejoindre à nouveau tous les canaux actifs après une reconnexion
+  public static async rejoinActiveChannels(): Promise<void> {
+    try {
+      if (!SocketService.instance || !SocketService.instance.connected) {
+        console.warn('⚠️ Socket non connecté, impossible de rejoindre les canaux actifs');
         return;
       }
+
+      console.log('🔄 Reconnexion aux canaux actifs...');
       
-      // Créer une promesse pour attendre la confirmation de jointure au jeu
-      const joinPromise = new Promise<void>((resolve) => {
-        // Configurer un écouteur d'événement de confirmation
-        const onGameJoined = (data: any) => {
-          const receivedId = typeof data.gameId === 'number' ? data.gameId.toString() : data.gameId;
-          const targetId = typeof gameId === 'number' ? gameId.toString() : gameId;
-          
-          if (data && receivedId === targetId) {
-            console.log(`✅ Confirmation de jointure au jeu ${gameId} reçue`);
-            socket.off('game:joined', onGameJoined);
-            clearTimeout(timeoutId);
-            resolve();
-          }
-        };
-        
-        // Configurer un timeout pour éviter de bloquer indéfiniment
-        const timeoutId = setTimeout(() => {
-          socket.off('game:joined', onGameJoined);
-          console.log(`⚠️ Pas de confirmation de jointure au jeu ${gameId} après 5 secondes, mais on continue`);
-          resolve(); // On résout quand même pour ne pas bloquer l'utilisateur
-        }, 5000);
-        
-        // Mettre en place l'écouteur
-        socket.on('game:joined', onGameJoined);
-        
-        // Envoyer l'événement de jointure avec un ID numérique pour cohérence avec le serveur
-        let gameIdNum = Number(gameId);
-        if (isNaN(gameIdNum)) {
-          console.warn(`⚠️ L'ID du jeu n'est pas un nombre valide: ${gameId}, utilisation de la chaîne`);
-          socket.emit('join-game', { gameId }); 
-        } else {
-          socket.emit('join-game', { gameId: gameIdNum });
+      // Rejoindre à nouveau toutes les salles actives
+      for (const roomCode of SocketService.activeRooms) {
+        try {
+          console.log(`🔌 Reconnexion à la salle ${roomCode}`);
+          SocketService.instance.emit('join-room', { roomCode });
+        } catch (error) {
+          console.error(`❌ Erreur lors de la reconnexion à la salle ${roomCode}:`, error);
         }
-        console.log(`📤 Demande d'inscription envoyée pour le jeu: ${gameId}`);
-      });
+      }
       
-      // Mettre à jour notre état local immédiatement
-      SocketService.currentGame = gameId;
-      SocketService.activeChannels.add(`game:${gameId}`);
+      // Rejoindre à nouveau tous les jeux actifs
+      for (const gameId of SocketService.activeGames) {
+        try {
+          console.log(`🔌 Reconnexion au jeu ${gameId}`);
+          SocketService.instance.emit('join-game', { gameId });
+        } catch (error) {
+          console.error(`❌ Erreur lors de la reconnexion au jeu ${gameId}:`, error);
+        }
+      }
       
-      // Attendre la confirmation ou le timeout
-      await joinPromise;
-      
-      return;
+      console.log(`✅ Tentative de reconnexion effectuée pour ${SocketService.activeRooms.size} salles et ${SocketService.activeGames.size} jeux`);
     } catch (error) {
-      console.error('🔌 Erreur lors de la tentative de rejoindre un jeu:', error);
-      throw error;
+      console.error('❌ Erreur lors de la reconnexion aux canaux actifs:', error);
     }
   }
 
-  // Quitter un canal de jeu de manière fiable
-  public static async leaveGameChannel(gameId: string): Promise<void> {
+  // Méthode appelée pour gérer la reconnexion automatique
+  private static async handleReconnect() {
     try {
-      const socket = await SocketService.getInstanceAsync();
-      
-      console.log(`🎮 Tentative de quitter le jeu ${gameId}`);
-      
-      // Créer une promesse pour attendre la confirmation de sortie du jeu
-      const leavePromise = new Promise<void>((resolve) => {
-        // Configurer un écouteur d'événement de confirmation
-        const onGameLeft = (data: any) => {
-          if (data && data.gameId === parseInt(gameId)) {
-            console.log(`✅ Confirmation de sortie du jeu ${gameId} reçue`);
-            socket.off('game:left', onGameLeft);
-            clearTimeout(timeoutId);
-            resolve();
-          }
-        };
-        
-        // Configurer un timeout pour éviter de bloquer indéfiniment
-        const timeoutId = setTimeout(() => {
-          socket.off('game:left', onGameLeft);
-          console.log(`⚠️ Pas de confirmation de sortie du jeu ${gameId} après 3 secondes, mais on continue`);
-          resolve(); // On résout quand même pour ne pas bloquer l'utilisateur
-        }, 3000);
-        
-        // Mettre en place l'écouteur
-        socket.on('game:left', onGameLeft);
-        
-        // Envoyer l'événement de sortie (un seul format pour éviter la confusion)
-        socket.emit('leave-game', { gameId });
-        console.log(`📤 Demande de désinscription envoyée pour le jeu: ${gameId}`);
-      });
-      
-      // Mettre à jour notre état local immédiatement
-      if (SocketService.currentGame === gameId) {
-        SocketService.currentGame = null;
+      // Vérifier la connectivité internet
+      const netInfo = await NetInfo.fetch();
+      if (!netInfo.isConnected) {
+        console.log('🌐 Pas de connexion Internet. Abandon de la reconnexion.');
+        return;
       }
-      SocketService.activeChannels.delete(`game:${gameId}`);
-      
-      // Attendre la confirmation ou le timeout
-      await leavePromise;
-      
-      return;
-    } catch (error) {
-      console.error('🔌 Erreur lors de la tentative de quitter un jeu:', error);
-      throw error;
-    }
-  }
 
-  // Récupérer la latence actuelle
-  public static getLatency(): number {
-    return SocketService.lastPingTime;
-  }
-
-  // Fermer la connexion WebSocket
-  public static close(): void {
-    if (SocketService.instance) {
-      SocketService.instance.disconnect();
-      SocketService.instance = null;
-
-      if (SocketService.heartbeatInterval) {
-        clearInterval(SocketService.heartbeatInterval);
-        SocketService.heartbeatInterval = null;
-      }
+      // Synchroniser l'ID utilisateur avant de recréer l'instance
+      await UserIdManager.syncUserId();
       
-      SocketService.currentRoom = null;
-      SocketService.currentGame = null;
-      SocketService.connectionAttempts = 0;
-      SocketService.activeChannels.clear();
+      console.log('🔄 Tentative de reconnexion WebSocket...');
+      
+      // Réinitialiser les flags pour permettre une nouvelle initialisation
+      SocketService.isInitializing = false;
       SocketService.initializationPromise = null;
+      
+      // Forcer la création d'une nouvelle instance
+      SocketService.instance = null;
+      
+      // Recréer l'instance
+      await SocketService.initialize();
+      
+    } catch (error) {
+      console.error('🔌 Erreur lors de la tentative de reconnexion:', error);
+      
+      // Programmer une nouvelle tentative après un délai
+      if (SocketService.reconnectAttempts < SocketService.maxReconnectAttempts) {
+        const delay = Math.min(1000 * Math.pow(2, SocketService.reconnectAttempts), 30000);
+        console.log(`🔄 Nouvelle tentative de reconnexion dans ${delay / 1000} secondes...`);
+        
+        if (SocketService.reconnectTimeout) {
+          clearTimeout(SocketService.reconnectTimeout);
+        }
+        
+        SocketService.reconnectTimeout = setTimeout(() => {
+          SocketService.handleReconnect();
+        }, delay);
+        
+        SocketService.reconnectAttempts++;
+      } else {
+        console.error(`❌ Abandon des tentatives de reconnexion après ${SocketService.maxReconnectAttempts} essais.`);
+      }
     }
   }
 
-  // Diagnostiquer l'état de la connexion
-  public static diagnose(): {status: string, details: any} {
-    const status = SocketService.instance && SocketService.instance.connected 
-      ? 'connected' 
-      : 'disconnected';
-    
-    return {
-      status,
-      details: {
-        connected: SocketService.isConnected(),
-        socketId: SocketService.instance?.id || null,
-        currentRoom: SocketService.currentRoom,
-        currentGame: SocketService.currentGame,
-        latency: SocketService.lastPingTime,
-        activeChannels: Array.from(SocketService.activeChannels),
-        transport: SocketService.instance?.io?.engine?.transport?.name || null,
-        isInitializing: SocketService.isInitializing,
+  // Vérifier et assurer la connexion WebSocket pour un jeu spécifique
+  public static async ensureSocketConnection(gameId: string): Promise<void> {
+    try {
+      // Vérifier si l'instance existe et est connectée
+      if (SocketService.instance && SocketService.instance.connected) {
+        console.log(`🔌 Diagnostic WebSocket: connected`);
+        
+        // Si le jeu n'est pas enregistré, le rejoindre
+        if (gameId && !SocketService.activeGames.has(gameId)) {
+          console.log(`🔌 Reconnexion WebSocket au jeu ${gameId}`);
+          await SocketService.joinGameChannel(gameId);
+          console.log(`✅ Reconnexion WebSocket réussie pour le jeu ${gameId}`);
+        }
+      } else {
+        // Initialiser une nouvelle connexion
+        console.log(`🔌 Diagnostic WebSocket: not connected`);
+        await SocketService.initialize();
+        
+        if (gameId) {
+          console.log(`🔌 Initialisation de la connexion WebSocket pour le jeu ${gameId}`);
+          await SocketService.joinGameChannel(gameId);
+          console.log(`✅ Connexion WebSocket initialisée pour le jeu ${gameId}`);
+        }
       }
-    };
+    } catch (error) {
+      console.error(`❌ Erreur lors de la vérification de la connexion WebSocket:`, error);
+      // Ne pas propager l'erreur pour éviter de bloquer le processus de chargement
+    }
   }
 }
-
-export default SocketService;

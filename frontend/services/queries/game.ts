@@ -3,6 +3,7 @@ import { Answer } from '@/types/gameTypes';
 import NetInfo from '@react-native-community/netinfo';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import SocketService from '../socketService';
+import UserIdManager from '@/utils/userIdManager';
 
 class GameService {
   // Récupérer l'état actuel du jeu avec mécanisme de réessai
@@ -22,36 +23,30 @@ class GameService {
       // Récupérer l'ID utilisateur avant l'appel API pour le débogage et les vérifications
       let userId = undefined;
       try {
-        // Première tentative: headers de l'API
-        userId = api.defaults.headers.userId;
+        // Utiliser notre nouvel utilitaire
+        userId = await UserIdManager.getUserId();
         
-        // Deuxième tentative: token décodé
-        if (!userId && api.defaults.headers.Authorization) {
-          const token = api.defaults.headers.Authorization.toString().replace('Bearer ', '');
-          const tokenParts = token.split('.');
-          if (tokenParts.length > 1) {
-            try {
-              // Essayer de décoder le payload du token (partie du milieu)
-              const payload = JSON.parse(atob(tokenParts[1]));
-              userId = payload.sub || payload.user_id || payload.id;
-            } catch (err) {
-              console.warn('⚠️ Impossible de décoder le token JWT:', err);
-            }
-          }
-        }
-        
-        // Troisième tentative: AsyncStorage
         if (!userId) {
+          console.warn('⚠️ ID utilisateur non disponible pour la requête');
+          
+          // Dernière tentative avec AsyncStorage direct
           const userData = await AsyncStorage.getItem('@user_data');
           if (userData) {
             const parsedData = JSON.parse(userData);
             userId = parsedData.id;
+            // Sauvegarder pour les futures requêtes
+            await UserIdManager.setUserId(userId);
           }
         }
         
         console.log(`🔑 ID utilisateur détecté: ${userId || 'Non disponible'}`);
       } catch (err) {
         console.warn('⚠️ Erreur lors de la récupération de l\'ID utilisateur:', err);
+      }
+      
+      // Appliquer l'ID utilisateur aux headers de manière sécurisée
+      if (userId && api && api.defaults) {
+        api.defaults.headers.userId = String(userId);
       }
       
       const response = await api.get(url);

@@ -1,163 +1,120 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { authService, User, checkTokenValidity } from '@/services/queries/auth';
-import { useRouter } from 'expo-router';
+import { useQuery, useMutation } from '@tanstack/react-query';
+import { queryClient } from '../config/queryClient';
+import api from '../config/axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Alert } from 'react-native';
-import axios from '@/config/axios'; // Utiliser axios au lieu de api
+import { LoginCredentials, RegisterCredentials, User } from '../types/authTypes';
+import UserIdManager from '../utils/userIdManager';
 
-// Hook pour rafraîchir le token en cas de problème
-export function useTokenRefresh() {
-  console.log('🔄 useTokenRefresh: Initialisation du hook');
-  const queryClient = useQueryClient();
-  
-  return useMutation({
-    mutationFn: async () => {
-      console.log('🔄 useTokenRefresh: Tentative de rafraîchissement du token');
-      
-      // Récupérer les informations utilisateur locales
-      const userData = await AsyncStorage.getItem('@user_data');
-      if (!userData) {
-        throw new Error('Aucune donnée utilisateur disponible');
-      }
-      
-      const user = JSON.parse(userData);
-      
-      // Tenter de se reconnecter avec le nom d'utilisateur existant
-      return authService.registerOrLogin(user.username);
-    },
-    onSuccess: (data) => {
-      console.log('✅ useTokenRefresh: Token rafraîchi avec succès');
-      // Mettre à jour le cache avec les nouvelles données utilisateur
-      queryClient.setQueryData(['user'], data);
-    },
-    onError: (error) => {
-      console.error('❌ useTokenRefresh: Échec du rafraîchissement du token', error);
-    }
-  });
-}
+// Récupérer l'utilisateur actuel depuis l'API - corriger l'endpoint qui retourne 404
+const fetchCurrentUser = async (): Promise<User> => {
+  try {
+    // Modification du chemin /me qui semble ne pas exister
+    const response = await api.get('/users/profile');
+    return response.data.data;
+  } catch (error) {
+    console.error('❌ Erreur lors de la récupération des données utilisateur:', error);
+    throw error;
+  }
+};
 
-// Hook pour récupérer l'utilisateur connecté actuel
-export function useUser() {
-  console.log('👤 useUser: Initialisation du hook');
-  const refreshToken = useTokenRefresh();
-  
+// Hook personnalisé pour récupérer et stocker l'utilisateur actuel
+export const useUser = () => {
   return useQuery({
     queryKey: ['user'],
-    queryFn: async () => {
-      console.log('👤 useUser: Récupération des données utilisateur');
-      try {
-        // Vérifier si le token est valide
-        const isValid = await checkTokenValidity();
-        if (!isValid) {
-          console.log('⚠️ useUser: Token invalide ou expiré, tentative de rafraîchissement');
-          await refreshToken.mutateAsync();
-        }
-        
-        const user = await authService.getCurrentUser();
-        console.log('👤 useUser:', user ? `Utilisateur ${user.username} trouvé` : 'Aucun utilisateur trouvé');
-        return user;
-      } catch (error) {
-        console.error('👤 useUser: Erreur lors de la récupération de l\'utilisateur', error);
-        throw error;
+    queryFn: fetchCurrentUser,
+    staleTime: 1000 * 60 * 5, // 5 minutes
+    gcTime: 1000 * 60 * 10, // 10 minutes (anciennement cacheTime)
+    retry: 1,
+    onSuccess: async (data) => {
+      if (data && data.id) {
+        // Synchroniser l'ID utilisateur dans toute l'application
+        await UserIdManager.setUserId(data.id);
+        // Stocker les données utilisateur complètes
+        await AsyncStorage.setItem('@user_data', JSON.stringify(data));
       }
     },
-    staleTime: 1000 * 60 * 5, // 5 minutes - rafraîchir plus souvent pour éviter les problèmes de token
-    onError: (error) => {
-      console.error('👤 useUser: Erreur lors de la récupération de l\'utilisateur', error);
+    onError: (err) => {
+      console.error('❌ Erreur lors de la récupération des données utilisateur:', err);
     }
   });
-}
+};
 
-// Hook pour se connecter ou s'inscrire
-export function useLogin() {
-  console.log('👤 useLogin: Initialisation du hook');
-  const router = useRouter();
-  const queryClient = useQueryClient();
-  
-  return useMutation({
-    mutationFn: async (username: string) => {
-      console.log('👤 useLogin: Tentative de connexion/inscription pour', username);
-      try {
-        const userData = await authService.registerOrLogin(username);
-        console.log('👤 useLogin: Réponse reçue:', userData);
-        
-        // Les données utilisateur sont déjà formatées par authService.registerOrLogin
-        if (userData && userData.token) {
-          console.log('👤 useLogin: Stockage des données utilisateur');
-          
-          // Mettre à jour le cache avec les données utilisateur
-          queryClient.setQueryData(['user'], userData);
-          console.log('👤 useLogin: Cache mis à jour avec les données utilisateur');
-          
-          return userData;
-        }
-        console.error('👤 useLogin: Données utilisateur invalides', userData);
-        throw new Error('Données utilisateur invalides');
-      } catch (error) {
-        console.error('👤 useLogin: Erreur', error);
-        throw error;
-      }
-    },
-    onSuccess: () => {
-      console.log('👤 useLogin: Connexion réussie, redirection vers l\'accueil');
-      router.replace('/(tabs)/');
-    },
-    onError: (error) => {
-      console.error('👤 useLogin: Erreur lors de la connexion', error);
-      Alert.alert(
-        'Erreur de connexion',
-        'Impossible de se connecter. Veuillez vérifier votre nom d\'utilisateur et réessayer.'
-      );
-    }
-  });
-}
-
-// Hook pour la déconnexion
-export function useLogout() {
-  console.log('👤 useLogout: Initialisation du hook');
-  const router = useRouter();
-  const queryClient = useQueryClient();
-  
+// Hook personnalisé pour le rafraîchissement du token
+export const useTokenRefresh = () => {
   return useMutation({
     mutationFn: async () => {
-      console.log('👤 useLogout: Tentative de déconnexion');
-      return authService.logout();
+      const response = await api.post('/auth/refresh-token');
+      return response.data;
     },
-    onSuccess: () => {
-      console.log('👤 useLogout: Déconnexion réussie');
-      
-      // Réinitialiser le cache
-      queryClient.clear();
-      
-      // Rediriger vers la page de connexion
-      console.log('👤 useLogout: Redirection vers la page de connexion');
-      router.replace('/auth/login');
-    },
-    onError: (error) => {
-      console.error('👤 useLogout: Erreur lors de la déconnexion', error);
-      Alert.alert(
-        'Erreur',
-        'Impossible de se déconnecter. Veuillez réessayer.'
-      );
+    onSuccess: async (data) => {
+      await AsyncStorage.setItem('@auth_token', data.token);
+      queryClient.invalidateQueries({ queryKey: ['user'] });
     }
   });
-}
+};
 
-// Hook pour vérifier l'état d'authentification
-export function useAuth() {
-  console.log('👤 useAuth: Initialisation du hook');
-  const { data: user, isLoading, error } = useUser();
-  
-  const checkAuth = async () => {
-    console.log('👤 useAuth: Vérification de l\'authentification');
-    return authService.isAuthenticated();
-  };
-  
-  return {
-    user,
-    isLoading,
-    error,
-    checkAuth,
-    isAuthenticated: !!user,
-  };
-}
+// Hook personnalisé pour la connexion
+export const useLogin = () => {
+  return useMutation({
+    mutationFn: async (credentials: LoginCredentials) => {
+      const response = await api.post('/auth/login', credentials);
+      return response.data.data;
+    },
+    onSuccess: async (data) => {
+      await AsyncStorage.setItem('@auth_token', data.token);
+      
+      if (data.user && data.user.id) {
+        await UserIdManager.setUserId(data.user.id);
+        await AsyncStorage.setItem('@user_data', JSON.stringify(data.user));
+      }
+      
+      queryClient.invalidateQueries({ queryKey: ['user'] });
+    }
+  });
+};
+
+// Hook personnalisé pour l'inscription
+export const useRegister = () => {
+  return useMutation({
+    mutationFn: async (credentials: RegisterCredentials) => {
+      const response = await api.post('/auth/register', credentials);
+      return response.data.data;
+    },
+    onSuccess: async (data) => {
+      await AsyncStorage.setItem('@auth_token', data.token);
+      
+      if (data.user && data.user.id) {
+        await UserIdManager.setUserId(data.user.id);
+        await AsyncStorage.setItem('@user_data', JSON.stringify(data.user));
+      }
+      
+      queryClient.invalidateQueries({ queryKey: ['user'] });
+    }
+  });
+};
+
+// Hook personnalisé pour la déconnexion
+export const useLogout = () => {
+  return useMutation({
+    mutationFn: async () => {
+      const response = await api.post('/auth/logout');
+      return response.data;
+    },
+    onMutate: async () => {
+      // Optimistic update
+      await AsyncStorage.removeItem('@auth_token');
+      await AsyncStorage.removeItem('@user_data');
+      await AsyncStorage.removeItem('@current_user_id');
+      
+      // Supprimer l'ID utilisateur des headers API
+      if (api.defaults.headers) {
+        delete api.defaults.headers.userId;
+      }
+      
+      queryClient.setQueryData(['user'], null);
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['user'] });
+    }
+  });
+};

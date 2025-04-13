@@ -4,6 +4,7 @@ import { useRouter } from 'expo-router';
 import { Alert } from 'react-native';
 import NetInfo from '@react-native-community/netinfo';
 import { useCreateRoom } from './useCreateRoom'; // Importer depuis le nouveau fichier
+import SocketService from '@/services/socketService'; // Correction du chemin d'importation
 
 // Hook pour lister toutes les salles
 export function useRooms() {
@@ -98,54 +99,63 @@ export function useRoom(roomCode: string | undefined) {
 export { useCreateRoom };
 
 // Hook pour rejoindre une salle
-export function useJoinRoom() {
-  console.log('🎮 useJoinRoom: Initialisation du hook');
-  const queryClient = useQueryClient();
+export const useJoinRoom = () => {
   const router = useRouter();
-
+  
   return useMutation({
-    mutationFn: async (roomCode: string) => {
-      console.log(`🎮 useJoinRoom: Tentative de rejoindre la salle ${roomCode}`);
-      
-      // Vérification de la connexion internet
-      const netInfo = await NetInfo.fetch();
-      if (!netInfo.isConnected) {
-        console.error('❌ Pas de connexion internet disponible');
-        throw new Error('Pas de connexion internet. Veuillez vérifier votre connexion et réessayer.');
-      }
-      
-      return roomService.joinRoom(roomCode);
-    },
-    onSuccess: (_, roomCode) => {
-      console.log(`🎮 useJoinRoom: Salle ${roomCode} rejointe avec succès`);
-      
-      // Invalider la requête de salle spécifique pour avoir les données à jour
-      queryClient.invalidateQueries({ queryKey: ['rooms', roomCode] });
-      
-      // Rediriger vers la page de la salle
-      console.log(`🎮 useJoinRoom: Redirection vers /room/${roomCode}`);
-      router.push(`/room/${roomCode}`);
-    },
-    onError: (error: any) => {
-      console.error('🎮 useJoinRoom: Erreur lors de la tentative de rejoindre la salle', error);
-      
-      let message = 'Impossible de rejoindre la salle. Veuillez vérifier le code et réessayer.';
-      
-      if (error.message.includes('Network Error')) {
-        message = 'Problème de connexion au serveur. Veuillez vérifier votre connexion internet et réessayer.';
+    mutationFn: async (code: string) => {
+      try {
+        console.log(`🎮 Tentative de rejoindre la salle ${code}`);
         
-        // Vérifier l'état de la connexion
-        NetInfo.fetch().then(state => {
-          console.error(`🌐 État connexion lors de l'erreur: ${state.isConnected ? 'Connecté' : 'Non connecté'} (${state.type})`);
-        });
-      } else if (error.response?.data?.error) {
-        message = error.response.data.error;
+        // S'assurer que le socket est initialisé avant de tenter de rejoindre une salle
+        try {
+          await SocketService.initialize();
+        } catch (socketError) {
+          console.warn('⚠️ Erreur lors de l\'initialisation du socket, tentative de continuer:', socketError);
+        }
+
+        // Attendre que le socket soit configuré avant de rejoindre la salle
+        console.log(`🚪 Tentative de rejoindre la salle ${code}`);
+        await SocketService.joinRoom(code);
+        console.log(`✅ Demande WebSocket pour rejoindre la salle ${code} envoyée`);
+        
+        // Appeler l'API pour rejoindre la salle
+        console.log(`🎮 useJoinRoom: Envoi de la requête pour rejoindre ${code}`);
+        const response = await api.post(`/rooms/${code}/join`);
+        console.log(`🎮 useJoinRoom: Salle ${code} rejointe avec succès`);
+        
+        return {
+          code,
+          message: response.data?.message || 'Salle rejointe avec succès'
+        };
+      } catch (error: any) {
+        console.error(`❌ Erreur lors de la tentative de rejoindre la salle ${code}:`, error);
+        
+        // Amélioration de la gestion des erreurs
+        if (error.response) {
+          // L'API a répondu avec une erreur
+          const message = error.response.data?.error || 'Erreur lors de la tentative de rejoindre la salle';
+          throw new Error(message);
+        } else if (error.request) {
+          // Pas de réponse reçue du serveur
+          throw new Error('Le serveur ne répond pas. Veuillez vérifier votre connexion internet.');
+        } else {
+          // Erreur lors de la configuration de la requête
+          throw new Error(`Erreur: ${error.message}`);
+        }
       }
-      
-      Alert.alert('Erreur', message);
+    },
+    onSuccess: (data) => {
+      console.log(`🎮 useJoinRoom: Salle ${data.code} rejointe avec succès`);
+      console.log(`🎮 useJoinRoom: Redirection vers /room/${data.code}`);
+      router.push(`/room/${data.code}`);
+    },
+    onError: (error: Error) => {
+      console.error('🎮 useJoinRoom: Erreur:', error.message);
+      Alert.alert("Erreur", error.message);
     }
   });
-}
+};
 
 // Hook pour quitter une salle
 export function useLeaveRoom() {

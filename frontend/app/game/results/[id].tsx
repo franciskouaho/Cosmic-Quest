@@ -5,7 +5,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { FontAwesome5, Ionicons } from '@expo/vector-icons';
 import Confetti from 'react-native-confetti';
-import { Player } from '../../../types/gameTypes';
+import { Player } from '@/types/gameTypes';
 
 type PlayerScore = Player & { score: number };
 
