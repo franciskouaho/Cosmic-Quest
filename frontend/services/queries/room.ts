@@ -1,5 +1,4 @@
-import api from '@/services/api';
-// Assurez-vous d'utiliser l'import correct
+import axios from '@/config/axios';
 import SocketService from '@/services/socketService';
 
 export interface Room {
@@ -28,7 +27,7 @@ class RoomService {
       const url = `/rooms`;
       console.log('🌐 Envoi requête GET:', url);
       
-      const response = await api.get(url);
+      const response = await axios.get(url);
       
       console.log('✅ Réponse salles reçue:', response.status);
       return response.data.data;
@@ -45,7 +44,7 @@ class RoomService {
       const url = `/rooms/${roomCode}`;
       console.log('🌐 Envoi requête GET:', url);
       
-      const response = await api.get(url);
+      const response = await axios.get(url);
       
       console.log('✅ Détails de la salle reçus:', response.status);
       return response.data.data;
@@ -71,7 +70,7 @@ class RoomService {
       const url = `/rooms`;
       console.log('🌐 Envoi requête POST:', url, formattedPayload);
       
-      const response = await api.post(url, formattedPayload);
+      const response = await axios.post(url, formattedPayload);
       
       console.log('✅ Salle créée avec succès:', response.status);
       return response.data.data;
@@ -89,7 +88,7 @@ class RoomService {
       console.log('🌐 Envoi requête POST:', url);
       
       try {
-        const response = await api.post(url, {});
+        const response = await axios.post(url, {});
         
         console.log('✅ Salle rejointe avec succès:', response.status);
         
@@ -121,7 +120,7 @@ class RoomService {
       const url = `/rooms/${roomCode}/leave`;
       console.log('🌐 Envoi requête POST:', url);
       
-      const response = await api.post(url, {});
+      const response = await axios.post(url, {});
       
       console.log('✅ Salle quittée avec succès:', response.status);
       
@@ -148,7 +147,7 @@ class RoomService {
       const url = `/rooms/${roomCode}/ready`;
       console.log('🌐 Envoi requête POST:', url, payload);
       
-      const response = await api.post(url, payload);
+      const response = await axios.post(url, payload);
       
       console.log('✅ Statut mis à jour avec succès:', response.status);
       return response.data;
@@ -165,7 +164,7 @@ class RoomService {
       const url = `/rooms/${roomCode}/start`;
       console.log('🌐 Envoi requête POST:', url);
       
-      const response = await api.post(url, {});
+      const response = await axios.post(url, {});
       
       console.log('✅ Partie démarrée avec succès:', response.status);
       return response.data;

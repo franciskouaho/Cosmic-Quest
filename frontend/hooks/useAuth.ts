@@ -1,21 +1,67 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { authService, User } from '@/services/queries/auth';
+import { authService, User, checkTokenValidity } from '@/services/queries/auth';
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Alert } from 'react-native';
+import axios from '@/config/axios'; // Utiliser axios au lieu de api
+
+// Hook pour rafraîchir le token en cas de problème
+export function useTokenRefresh() {
+  console.log('🔄 useTokenRefresh: Initialisation du hook');
+  const queryClient = useQueryClient();
+  
+  return useMutation({
+    mutationFn: async () => {
+      console.log('🔄 useTokenRefresh: Tentative de rafraîchissement du token');
+      
+      // Récupérer les informations utilisateur locales
+      const userData = await AsyncStorage.getItem('@user_data');
+      if (!userData) {
+        throw new Error('Aucune donnée utilisateur disponible');
+      }
+      
+      const user = JSON.parse(userData);
+      
+      // Tenter de se reconnecter avec le nom d'utilisateur existant
+      return authService.registerOrLogin(user.username);
+    },
+    onSuccess: (data) => {
+      console.log('✅ useTokenRefresh: Token rafraîchi avec succès');
+      // Mettre à jour le cache avec les nouvelles données utilisateur
+      queryClient.setQueryData(['user'], data);
+    },
+    onError: (error) => {
+      console.error('❌ useTokenRefresh: Échec du rafraîchissement du token', error);
+    }
+  });
+}
 
 // Hook pour récupérer l'utilisateur connecté actuel
 export function useUser() {
   console.log('👤 useUser: Initialisation du hook');
+  const refreshToken = useTokenRefresh();
+  
   return useQuery({
     queryKey: ['user'],
     queryFn: async () => {
       console.log('👤 useUser: Récupération des données utilisateur');
-      const user = await authService.getCurrentUser();
-      console.log('👤 useUser:', user ? `Utilisateur ${user.username} trouvé` : 'Aucun utilisateur trouvé');
-      return user;
+      try {
+        // Vérifier si le token est valide
+        const isValid = await checkTokenValidity();
+        if (!isValid) {
+          console.log('⚠️ useUser: Token invalide ou expiré, tentative de rafraîchissement');
+          await refreshToken.mutateAsync();
+        }
+        
+        const user = await authService.getCurrentUser();
+        console.log('👤 useUser:', user ? `Utilisateur ${user.username} trouvé` : 'Aucun utilisateur trouvé');
+        return user;
+      } catch (error) {
+        console.error('👤 useUser: Erreur lors de la récupération de l\'utilisateur', error);
+        throw error;
+      }
     },
-    staleTime: Infinity, // Ces données ne changent pas souvent
+    staleTime: 1000 * 60 * 5, // 5 minutes - rafraîchir plus souvent pour éviter les problèmes de token
     onError: (error) => {
       console.error('👤 useUser: Erreur lors de la récupération de l\'utilisateur', error);
     }

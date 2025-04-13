@@ -1,4 +1,4 @@
-import api from '@/config/axios';
+import axios from '@/config/axios'; // Remplace l'importation de api
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import SocketService from './socketService';
 import NetInfo from '@react-native-community/netinfo';
@@ -23,20 +23,9 @@ class RoomService {
         throw new Error('Pas de connexion internet. Veuillez vérifier votre connexion et réessayer.');
       }
 
-      // Récupération du token d'authentification
-      const token = await AsyncStorage.getItem('@auth_token');
-      if (!token) {
-        console.error('❌ Aucun token d\'authentification trouvé');
-        throw new Error('Vous n\'êtes pas authentifié. Veuillez vous reconnecter.');
-      }
-
-      const headers = {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      };
-
+      // Plus besoin de gérer l'authentification ici, c'est fait dans l'intercepteur
       console.log('🌐 Envoi de la requête de création de salle');
-      const response = await api.post('/rooms', payload, { headers });
+      const response = await axios.post('/rooms', payload);
       console.log('✅ Salle créée avec succès:', response.data?.status);
       
       return response.data;
@@ -45,8 +34,8 @@ class RoomService {
       
       if (error.message.includes('Network Error')) {
         console.error('❌ Erreur réseau détectée. Détails supplémentaires:');
-        console.error('- URL API configurée:', api.defaults.baseURL);
-        console.error('- Timeout configuré:', api.defaults.timeout, 'ms');
+        console.error('- URL API configurée:', axios.defaults.baseURL);
+        console.error('- Timeout configuré:', axios.defaults.timeout, 'ms');
         
         // Vérifier l'état de la connexion
         const netInfo = await NetInfo.fetch();
@@ -68,26 +57,14 @@ class RoomService {
         throw new Error('Pas de connexion internet. Veuillez vérifier votre connexion et réessayer.');
       }
 
-      // Récupération du token d'authentification
-      const token = await AsyncStorage.getItem('@auth_token');
-      if (!token) {
-        console.error('❌ Aucun token d\'authentification trouvé');
-        throw new Error('Vous n\'êtes pas authentifié. Veuillez vous reconnecter.');
-      }
-
-      const headers = {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      };
-
       console.log(`🌐 Envoi de la requête pour rejoindre la salle ${roomCode}`);
       
       // Première étape : vérifier l'état de la connexion WebSocket mais sans dépendre du résultat
       const isSocketConnected = SocketService.isConnected();
       console.log(`🔌 État de la connexion WebSocket: ${isSocketConnected ? 'Connecté' : 'Non connecté'}`);
       
-      // Deuxième étape : effectuer la requête HTTP
-      const response = await api.post(`/rooms/${roomCode}/join`, {}, { headers });
+      // Deuxième étape : effectuer la requête HTTP (sans besoin de gérer manuellement l'authentification)
+      const response = await axios.post(`/rooms/${roomCode}/join`, {});
       console.log('✅ Salle rejointe avec succès:', response.data?.status);
       
       // Troisième étape : essayer d'envoyer un message WebSocket dans un bloc try-catch séparé

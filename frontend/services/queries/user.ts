@@ -1,5 +1,4 @@
-import axios from 'axios';
-import { getToken } from './auth';
+import axios from '@/config/axios';
 import { API_URL } from '@/config/axios';
 
 export interface UserStats {
@@ -22,21 +21,14 @@ export interface UserRecentRoom {
 }
 
 class UserService {
-  private async getAuthHeader() {
-    const token = await getToken();
-    return {
-      Authorization: `Bearer ${token}`,
-    };
-  }
-
   // Récupérer le profil de l'utilisateur
   async getUserProfile() {
     try {
-      const headers = await this.getAuthHeader();
-      const response = await axios.get(`${API_URL}/users/profile`, { headers });
+      console.log('👤 UserService: Récupération du profil utilisateur');
+      const response = await axios.get(`/users/profile`);
       return response.data.data;
     } catch (error) {
-      console.error('Erreur lors de la récupération du profil:', error);
+      console.error('❌ Erreur lors de la récupération du profil:', error);
       throw error;
     }
   }
@@ -44,11 +36,11 @@ class UserService {
   // Récupérer les statistiques de l'utilisateur
   async getUserStats(): Promise<UserStats> {
     try {
-      const headers = await this.getAuthHeader();
-      const response = await axios.get(`${API_URL}/users/stats`, { headers });
+      console.log('📊 UserService: Récupération des statistiques utilisateur');
+      const response = await axios.get(`/users/stats`);
       return response.data.data;
     } catch (error) {
-      console.error('Erreur lors de la récupération des statistiques:', error);
+      console.error('❌ Erreur lors de la récupération des statistiques:', error);
       throw error;
     }
   }
@@ -56,11 +48,11 @@ class UserService {
   // Récupérer les salles récentes de l'utilisateur
   async getUserRecentRooms(): Promise<UserRecentRoom[]> {
     try {
-      const headers = await this.getAuthHeader();
-      const response = await axios.get(`${API_URL}/users/recent-rooms`, { headers });
+      console.log('🏠 UserService: Récupération des salles récentes');
+      const response = await axios.get(`/users/recent-rooms`);
       return response.data.data;
     } catch (error) {
-      console.error('Erreur lors de la récupération des salles récentes:', error);
+      console.error('❌ Erreur lors de la récupération des salles récentes:', error);
       throw error;
     }
   }
@@ -68,11 +60,11 @@ class UserService {
   // Mettre à jour le profil utilisateur
   async updateUserProfile(data: { username?: string; display_name?: string; avatar?: string }) {
     try {
-      const headers = await this.getAuthHeader();
-      const response = await axios.patch(`${API_URL}/users/profile`, data, { headers });
+      console.log('✏️ UserService: Mise à jour du profil utilisateur');
+      const response = await axios.patch(`/users/profile`, data);
       return response.data.data;
     } catch (error) {
-      console.error('Erreur lors de la mise à jour du profil:', error);
+      console.error('❌ Erreur lors de la mise à jour du profil:', error);
       throw error;
     }
   }

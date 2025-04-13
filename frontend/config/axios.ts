@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { Platform } from 'react-native';
 import NetInfo from '@react-native-community/netinfo';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Configuration pour les appels API
 
@@ -58,22 +59,55 @@ const api = axios.create({
   timeout: 15000,
 });
 
-// Log toutes les requêtes
-api.interceptors.request.use(config => {
-  console.log('➡️ Requête sortante:', {
-    method: config.method,
-    url: config.url,
-    data: config.data,
-    headers: config.headers,
-    baseURL: config.baseURL
-  });
-  return config;
+// Intercepteur pour ajouter le token d'authentification à chaque requête
+api.interceptors.request.use(async config => {
+  try {
+    // Vérifier la connexion internet
+    const netInfo = await NetInfo.fetch();
+    if (!netInfo.isConnected) {
+      throw new Error('Pas de connexion internet. Veuillez vérifier votre connexion et réessayer.');
+    }
+    
+    // Récupérer le token depuis AsyncStorage
+    const token = await AsyncStorage.getItem('@auth_token');
+    
+    // Log pour déboguer (après celle existante)
+    console.log('➡️ Requête sortante:', {
+      method: config.method,
+      url: config.url,
+      data: config.data,
+      headers: config.headers,
+      baseURL: config.baseURL
+    });
+    
+    console.log(`🔑 Token présent: ${!!token}`);
+    
+    // Si le token existe, l'ajouter aux headers
+    if (token) {
+      // Important: s'assurer que les headers sont correctement définis
+      if (!config.headers) {
+        config.headers = {};
+      }
+      config.headers.Authorization = `Bearer ${token}`;
+      console.log('🔒 Token ajouté aux headers de la requête');
+      
+      // Vérifier que le token est bien ajouté
+      console.log('🔍 Headers après ajout du token:', config.headers);
+    } else {
+      console.warn('⚠️ Token absent, requête envoyée sans authentification');
+    }
+    
+    return config;
+  } catch (error) {
+    console.error("❌ Erreur dans l'intercepteur de requête:", error);
+    return Promise.reject(error);
+  }
 }, error => {
   console.error('❌ Erreur lors de la préparation de la requête:', error);
   return Promise.reject(error);
 });
 
-// Log toutes les réponses
+// Intercepteur pour gérer les réponses et les erreurs
 api.interceptors.response.use(
   response => {
     console.log('✅ Réponse reçue:', {
@@ -83,6 +117,26 @@ api.interceptors.response.use(
     return response;
   },
   async error => {
+    // Gérer spécifiquement les erreurs d'authentification (401)
+    if (error.response && error.response.status === 401) {
+      const originalRequest = error.config;
+      
+      if (!originalRequest._retry) {
+        originalRequest._retry = true;
+        
+        console.log('🔄 Tentative de reconnexion automatique après erreur 401');
+        console.log('📄 Détails de l\'erreur 401:', error.response?.data);
+        console.log('🔍 URL de la requête échouée:', originalRequest.url);
+        
+        // Supprimer le token invalide
+        await AsyncStorage.removeItem('@auth_token');
+        console.log('🔑 Token supprimé après erreur 401');
+        
+        // Rediriger l'utilisateur vers la connexion ou rafraîchir le token
+      }
+    }
+    
+    // Traiter les autres types d'erreurs
     if (error.response) {
       // La requête a été faite et le serveur a répondu avec un status code
       console.error('❌ Erreur API (réponse serveur):', {

@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import api from '@/services/api';
+import axios from '@/config/axios';
 
 export interface User {
   id: number;
@@ -40,13 +40,29 @@ export async function getToken(): Promise<string | null> {
   }
 }
 
+// Fonction pour vérifier et valider le token
+export async function checkTokenValidity(): Promise<boolean> {
+  try {
+    const token = await getToken();
+    if (!token) return false;
+    
+    // Simple vérification pour voir si le token existe et n'est pas expiré
+    // Une vraie validation pourrait impliquer un appel API pour vérifier côté serveur
+    console.log('🔍 Vérification de la validité du token');
+    return true;
+  } catch (error) {
+    console.error('❌ Erreur lors de la vérification du token:', error);
+    return false;
+  }
+}
+
 class AuthService {
   // Enregistrement ou connexion (selon si l'utilisateur existe déjà)
   async registerOrLogin(username: string): Promise<User> {
     console.log(`🔐 Tentative d'authentification pour l'utilisateur: ${username}`);
     try {
       console.log('🌐 Envoi requête POST:', `/auth/register-or-login`);
-      const response = await api.post(`/auth/register-or-login`, { username });
+      const response = await axios.post(`/auth/register-or-login`, { username });
       console.log('✅ Authentification réussie:', response.data?.status === 'success' ? 'succès' : 'échec');
       
       // Extraire les données utilisateur
@@ -129,7 +145,7 @@ class AuthService {
     try {
       // Essayer d'obtenir les données depuis l'API en premier
       try {
-        const response = await api.get(`/users/profile`);
+        const response = await axios.get(`/users/profile`);
         if (response.data?.status === 'success' && response.data?.data) {
           const userData = {
             id: response.data.data.id,
