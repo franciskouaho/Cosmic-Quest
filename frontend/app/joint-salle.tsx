@@ -9,6 +9,7 @@ import { useJoinRoom } from '@/hooks/useRooms';
 import { useQuery } from '@tanstack/react-query';
 import { userService } from '@/services/queries/user';
 import LoadingOverlay from '@/components/common/LoadingOverlay';
+import SocketService from '@/services/socketService';
 
 export default function JointSalle() {
   const router = useRouter();
@@ -28,6 +29,22 @@ export default function JointSalle() {
 
   const handleJoinRoom = (code = roomCode) => {
     if (code) {
+      // Avant de lancer la mutation, vérifier que le code est valide
+      if (code.trim().length < 4) {
+        Alert.alert('Erreur', 'Le code de salle doit contenir au moins 4 caractères');
+        return;
+      }
+      
+      console.log(`🚪 Tentative de rejoindre la salle avec le code: ${code}`);
+      
+      // Vérifier l'état du socket de manière synchrone
+      try {
+        const isConnected = SocketService.isConnected();
+        console.log(`🔌 État de la connexion socket avant joinRoom: ${isConnected ? 'connecté' : 'déconnecté'}`);
+      } catch (err) {
+        console.warn('⚠️ Impossible de vérifier l\'état de la connexion socket:', err);
+      }
+      
       joinRoom(code);
     } else {
       Alert.alert('Erreur', 'Veuillez entrer un code de salle valide');

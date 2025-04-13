@@ -7,18 +7,25 @@ export const debugTargetPlayerState = (
   gameState: GameState | null, 
   userId: string | number | null
 ) => {
-  if (!gameState || !gameState.targetPlayer || !userId) return;
+  if (!gameState || !gameState.targetPlayer || !userId) {
+    return { hasInconsistency: false };
+  }
+
+  // Standardiser les types en string pour la comparaison
+  const targetPlayerId = String(gameState.targetPlayer.id);
+  const currentUserId = String(userId);
   
-  // Vérification indépendante si le joueur actuel est la cible
-  const isTargetByComparison = gameState.targetPlayer.id === userId.toString();
+  // Déterminer si l'utilisateur est la cible basé sur l'ID
+  const isTargetByComparison = targetPlayerId === currentUserId;
   
-  // État signalé par le serveur
-  const isTargetPlayer = Boolean(gameState.currentUserState?.isTargetPlayer);
+  // Récupérer la valeur du serveur
+  const isTargetPlayer = !!gameState.currentUserState?.isTargetPlayer;
   
+  // Ajouter plus de détails pour faciliter le débogage
   console.log(`🐞 DEBUG [TargetPlayer]:
     - Phase actuelle: ${gameState.phase}
-    - Joueur cible ID: ${gameState.targetPlayer.id}
-    - Utilisateur actuel ID: ${userId}
+    - Joueur cible ID: ${targetPlayerId} (${typeof gameState.targetPlayer.id})
+    - Utilisateur actuel ID: ${currentUserId} (${typeof userId})
     - isTargetPlayer depuis l'état: ${isTargetPlayer}
     - isTargetPlayer par comparaison: ${isTargetByComparison}
     - Correspondance des détections: ${isTargetPlayer === isTargetByComparison ? 'OUI ✅' : 'NON ❌'}
@@ -29,6 +36,7 @@ export const debugTargetPlayerState = (
     console.error(`⚠️ INCOHÉRENCE DÉTECTÉE: Le statut "cible" ne correspond pas!
       - Selon le serveur: ${isTargetPlayer ? 'Est la cible' : 'N\'est pas la cible'}
       - Selon l'ID: ${isTargetByComparison ? 'Est la cible' : 'N\'est pas la cible'}
+      - Types - Target ID: ${typeof gameState.targetPlayer.id}, User ID: ${typeof userId}
     `);
     
     // Retourner l'incohérence pour correction éventuelle

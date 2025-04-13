@@ -70,9 +70,12 @@ export default function HomeScreen() {
         });
         
         // Vérifier l'état de la connexion
-        NetInfo.fetch().then(state => {
-          console.log(`🌐 État connexion: ${state.isConnected ? 'Connecté' : 'Non connecté'} (${state.type})`);
-        });
+        const netInfo = await NetInfo.fetch();
+        console.log(`🌐 État connexion: ${netInfo.isConnected ? 'Connecté' : 'Non connecté'} (${netInfo.type})`);
+        
+        // Vérifier l'état du socket de manière synchrone
+        const socketConnected = SocketService.isConnected();
+        console.log(`🔌 Socket connecté: ${socketConnected}`);
       } catch (error) {
         console.error('❌ Erreur lors de l\'initialisation du socket:', error);
       }

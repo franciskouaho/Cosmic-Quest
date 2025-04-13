@@ -4,6 +4,7 @@ import { createContext, useContext, ReactNode, useState, useEffect } from "react
 import { useLogin as useLoginHook, useLogout as useLogoutHook, useUser as useUserHook } from "@/hooks/useAuth";
 import { User } from "@/services/queries/auth";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { storeUserIdInApiHeaders } from '@/config/axios';
 
 // Interface du contexte d'authentification
 interface AuthContextType {
@@ -70,6 +71,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         await AsyncStorage.setItem('@auth_token', userData.token);
         console.log('🔑 Token stocké après connexion');
       }
+
+      // Stocker l'ID utilisateur dans les en-têtes API
+      await storeUserIdInApiHeaders();
       
       await refetch(); // Actualiser les données utilisateur après connexion
       console.log('✅ Connexion réussie');

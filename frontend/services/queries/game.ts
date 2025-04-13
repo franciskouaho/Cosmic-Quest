@@ -1,6 +1,7 @@
 import api from '@/config/axios';
 import { Answer } from '@/types/gameTypes';
 import NetInfo from '@react-native-community/netinfo';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import SocketService from '../socketService';
 
 class GameService {
@@ -18,6 +19,41 @@ class GameService {
       const url = `/games/${gameId}`;
       console.log('🔐 API Request: GET', url);
       
+      // Récupérer l'ID utilisateur avant l'appel API pour le débogage et les vérifications
+      let userId = undefined;
+      try {
+        // Première tentative: headers de l'API
+        userId = api.defaults.headers.userId;
+        
+        // Deuxième tentative: token décodé
+        if (!userId && api.defaults.headers.Authorization) {
+          const token = api.defaults.headers.Authorization.toString().replace('Bearer ', '');
+          const tokenParts = token.split('.');
+          if (tokenParts.length > 1) {
+            try {
+              // Essayer de décoder le payload du token (partie du milieu)
+              const payload = JSON.parse(atob(tokenParts[1]));
+              userId = payload.sub || payload.user_id || payload.id;
+            } catch (err) {
+              console.warn('⚠️ Impossible de décoder le token JWT:', err);
+            }
+          }
+        }
+        
+        // Troisième tentative: AsyncStorage
+        if (!userId) {
+          const userData = await AsyncStorage.getItem('@user_data');
+          if (userData) {
+            const parsedData = JSON.parse(userData);
+            userId = parsedData.id;
+          }
+        }
+        
+        console.log(`🔑 ID utilisateur détecté: ${userId || 'Non disponible'}`);
+      } catch (err) {
+        console.warn('⚠️ Erreur lors de la récupération de l\'ID utilisateur:', err);
+      }
+      
       const response = await api.get(url);
       console.log('✅ GameService: État du jeu', gameId, 'récupéré avec succès');
       
@@ -30,24 +66,32 @@ class GameService {
       // Assurer que le joueur cible est correctement identifié
       const gameData = response.data.data;
       if (gameData.currentQuestion?.targetPlayer) {
-        const targetId = gameData.currentQuestion.targetPlayer.id.toString();
+        const targetId = String(gameData.currentQuestion.targetPlayer.id);
+        
         // S'assurer que isTargetPlayer est correctement défini
         if (gameData.currentUserState) {
-          const userId = api.defaults.headers.userId;
-          const isReallyTarget = targetId === userId?.toString();
+          // Convertir tous les IDs en string pour comparaison
+          const userIdStr = String(userId);
+          const targetIdStr = String(targetId);
+          
+          const isReallyTarget = Boolean(userId && targetIdStr === userIdStr);
+          
+          console.log(`🎯 Vérification de cible - ID utilisateur: ${userIdStr}, ID cible: ${targetIdStr}, Correspondance: ${isReallyTarget}`);
+          
           if (gameData.currentUserState.isTargetPlayer !== isReallyTarget) {
             console.warn(`⚠️ Correction d'incohérence de joueur cible: ${gameData.currentUserState.isTargetPlayer} => ${isReallyTarget}`);
+            console.log(`🔍 Détails - ID utilisateur: ${userIdStr}, ID cible: ${targetIdStr}, Types - ID utilisateur: ${typeof userId}, ID cible: ${typeof targetId}`);
             gameData.currentUserState.isTargetPlayer = isReallyTarget;
           }
         }
       }
 
       // S'assurer que les réponses ont bien la propriété isOwnAnswer
-      if (gameData.answers && Array.isArray(gameData.answers)) {
-        const userId = api.defaults.headers.userId;
+      if (gameData.answers && Array.isArray(gameData.answers) && userId) {
+        const userIdStr = String(userId);
         gameData.answers = gameData.answers.map(answer => ({
           ...answer,
-          isOwnAnswer: answer.playerId === userId || answer.isOwnAnswer
+          isOwnAnswer: String(answer.playerId) === userIdStr || answer.isOwnAnswer
         }));
       }
       

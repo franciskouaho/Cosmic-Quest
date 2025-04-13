@@ -107,8 +107,9 @@ export const checkSocketStatus = async () => {
       console.log('🔌 Socket non connecté, tentative d\'initialisation...');
       try {
         const socket = await SocketService.getInstanceAsync();
+        const isConnected = socket.connected; // Utiliser la propriété connected directement
         return {
-          isConnected: socket.connected,
+          isConnected,
           socketId: socket.id || null,
           transport: socket.io?.engine?.transport?.name || null,
           url: SOCKET_URL,

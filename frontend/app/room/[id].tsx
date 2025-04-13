@@ -85,57 +85,80 @@ export default function Room() {
 
   useEffect(() => {
     if (id) {
-      // Connexion WebSocket et rejoindre la salle
-      const socket = SocketService.getInstance();
-      SocketService.joinRoom(id as string);
-
-      // Écouter les événements de la salle
-      socket.on('room:update', (data) => {
-        switch (data.type) {
-          case 'player_joined':
-            // Mettre à jour la liste des joueurs
-            setPlayers(prev => [...prev, {
-              id: data.player.id,
-              name: data.player.displayName || data.player.username,
-              isHost: false,
-              isReady: false,
-              avatar: data.player.avatar || 'https://randomuser.me/api/portraits/men/32.jpg',
-              level: data.player.level || 1
-            }]);
-            break;
+      // Initialiser une fonction asynchrone pour gérer la connexion WebSocket
+      const setupWebSocket = async () => {
+        try {
+          console.log(`🔌 Configuration de la connexion WebSocket pour la salle ${id}`);
           
-          case 'player_left':
-            // Retirer le joueur de la liste
-            setPlayers(prev => prev.filter(p => p.id !== data.playerId));
-            break;
+          // Utiliser getInstanceAsync au lieu de getInstance
+          const socket = await SocketService.getInstanceAsync();
           
-          case 'player_ready_status':
-            // Mettre à jour le statut d'un joueur
-            setPlayers(prev => prev.map(p => 
-              p.id === data.playerId 
-                ? { ...p, isReady: data.isReady }
-                : p
-            ));
+          // Rejoindre la salle de manière asynchrone
+          await SocketService.joinRoom(id as string);
+          console.log(`✅ Salle ${id} rejointe avec succès via WebSocket`);
+          
+          // Écouter les événements de la salle
+          socket.on('room:update', (data) => {
+            console.log(`🔌 Événement room:update reçu:`, data.type);
             
-            // Mettre à jour l'état local si c'est l'utilisateur actuel
-            if (user && data.playerId === user.id) {
-              setIsReady(data.isReady);
+            switch (data.type) {
+              case 'player_joined':
+                // Mettre à jour la liste des joueurs
+                setPlayers(prev => [...prev, {
+                  id: data.player.id,
+                  name: data.player.displayName || data.player.username,
+                  isHost: false,
+                  isReady: false,
+                  avatar: data.player.avatar || 'https://randomuser.me/api/portraits/men/32.jpg',
+                  level: data.player.level || 1
+                }]);
+                break;
+              
+              case 'player_left':
+                // Retirer le joueur de la liste
+                setPlayers(prev => prev.filter(p => p.id !== data.playerId));
+                break;
+              
+              case 'player_ready_status':
+                // Mettre à jour le statut d'un joueur
+                setPlayers(prev => prev.map(p => 
+                  p.id === data.playerId 
+                    ? { ...p, isReady: data.isReady }
+                    : p
+                ));
+                
+                // Mettre à jour l'état local si c'est l'utilisateur actuel
+                if (user && data.playerId === user.id) {
+                  setIsReady(data.isReady);
+                }
+                break;
+                
+              case 'game_started':
+                // Rediriger vers la page de jeu
+                console.log(`🎮 Jeu démarré! Redirection vers /game/${data.gameId}`);
+                router.push(`/game/${data.gameId}`);
+                break;
             }
-            break;
-            
-          case 'game_started':
-            // Rediriger vers la page de jeu
-            router.push(`/game/${data.gameId}`);
-            break;
+          });
+        } catch (error) {
+          console.error(`❌ Erreur lors de la configuration WebSocket pour la salle ${id}:`, error);
+          // Éventuellement afficher un message d'erreur à l'utilisateur
         }
-      });
+      };
+      
+      // Exécuter la fonction
+      setupWebSocket();
 
       // Nettoyage lors du démontage
       return () => {
-        SocketService.leaveRoom(id as string);
+        console.log(`🔌 Nettoyage de la connexion WebSocket pour la salle ${id}`);
+        // Utiliser leaveRoom sans await car nous sommes dans une fonction de cleanup
+        SocketService.leaveRoom(id as string).catch(err => {
+          console.error(`❌ Erreur lors de la déconnexion de la salle ${id}:`, err);
+        });
       };
     }
-  }, [id, user]);
+  }, [id, user, router]);
 
   const handleToggleReady = () => {
     if (id) {

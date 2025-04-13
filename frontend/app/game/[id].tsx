@@ -43,6 +43,19 @@ export default function GameScreen() {
     try {
       console.log(`🎮 Récupération des données du jeu ${id}...`);
       
+      // Assurer que l'ID utilisateur est disponible dans les en-têtes API 
+      // avant de faire des appels
+      try {
+        if (user && user.id) {
+          api.defaults.headers.userId = user.id;
+          console.log(`👤 ID utilisateur ${user.id} enregistré dans les en-têtes API`);
+        } else {
+          console.warn('⚠️ Impossible de définir l\'ID utilisateur dans les en-têtes: utilisateur non disponible');
+        }
+      } catch (err) {
+        console.warn('⚠️ Erreur lors de la définition de l\'ID utilisateur:', err);
+      }
+      
       // S'assurer que la connection WebSocket est active
       await gameService.ensureSocketConnection(id as string);
       
@@ -52,16 +65,17 @@ export default function GameScreen() {
       if (!isReady) {
         try {
           console.log(`🎮 Tentative de rejoindre le canal WebSocket pour le jeu ${id}`);
-          SocketService.joinGameChannel(id as string);
+          await SocketService.joinGameChannel(id as string);
           console.log(`✅ Demande WebSocket pour rejoindre le jeu ${id} envoyée`);
         } catch (socketError) {
           console.error('⚠️ Erreur lors de la connexion WebSocket au jeu:', socketError);
+          // Ne pas bloquer le chargement du jeu si la connexion WebSocket échoue
         }
       }
       
       const targetPlayer = gameData.currentQuestion?.targetPlayer 
         ? {
-            id: gameData.currentQuestion.targetPlayer.id.toString(),
+            id: String(gameData.currentQuestion.targetPlayer.id),
             name: gameData.currentQuestion.targetPlayer.displayName || gameData.currentQuestion.targetPlayer.username || 'Joueur',
             avatar: gameData.currentQuestion.targetPlayer.avatar || 'https://randomuser.me/api/portraits/lego/1.jpg',
           }
@@ -76,29 +90,27 @@ export default function GameScreen() {
           }
         : null;
       
-      // CORRECTION CRITIQUE: Déterminer isTargetPlayer en comparant les IDs
-      const isTargetPlayer = targetPlayer && user ? (targetPlayer.id === user.id.toString()) : false;
+      // CORRECTION CRITIQUE: Garantir que la comparaison est effectuée avec des chaînes
+      // Note: nous utilisons l'état corrigé du service pour sécuriser cette partie
+      const isTargetPlayer = gameData.currentUserState?.isTargetPlayer || false;
       
-      // Corriger l'incohérence dans les données du serveur si nécessaire
-      if (gameData.currentUserState?.isTargetPlayer !== isTargetPlayer) {
-        console.warn(`⚠️ Incohérence détectée: isTargetPlayer serveur=${gameData.currentUserState?.isTargetPlayer}, réel=${isTargetPlayer}`);
-        
-        // Corriger la valeur dans les données du serveur
-        if (gameData.currentUserState) {
-          gameData.currentUserState.isTargetPlayer = isTargetPlayer;
-        }
+      // Vérification supplémentaire de cohérence
+      const userIdStr = String(user?.id || '');
+      const targetIdStr = targetPlayer ? String(targetPlayer.id) : '';
+      const detectedAsTarget = userIdStr === targetIdStr;
+      
+      if (detectedAsTarget !== isTargetPlayer) {
+        console.warn(`⚠️ Incohérence entre la détection locale (${detectedAsTarget}) et l'état du serveur (${isTargetPlayer})`);
+        console.log(`🔍 Détails - ID utilisateur: ${userIdStr}, ID cible: ${targetIdStr}`);
       }
-      
+
       // Déterminer la phase effective en fonction de l'état du jeu et du joueur
       let effectivePhase = GamePhase.WAITING;
       
       if (gameData.game.currentPhase === 'question') {
         effectivePhase = GamePhase.QUESTION;
       } else if (gameData.game.currentPhase === 'answer') {
-        // En phase de réponse:
-        // - Le joueur cible doit attendre
-        // - Les joueurs qui ont déjà répondu doivent attendre
-        // - Les autres doivent répondre
+        // En phase de réponse, le joueur cible doit toujours être en attente
         if (isTargetPlayer) {
           effectivePhase = GamePhase.WAITING;
           console.log("👀 Joueur cible en attente pendant la phase de réponse");
@@ -110,9 +122,7 @@ export default function GameScreen() {
           console.log("📝 Joueur doit répondre");
         }
       } else if (gameData.game.currentPhase === 'vote') {
-        // En phase de vote:
-        // - Seul le joueur cible peut voter
-        // - Les autres doivent attendre
+        // En phase de vote, seul le joueur cible peut voter
         if (isTargetPlayer) {
           effectivePhase = GamePhase.VOTE;
           console.log("🎯 Joueur ciblé entre en phase de vote");

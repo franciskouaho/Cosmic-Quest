@@ -36,7 +36,7 @@ if (isExpo) {
 export const API_URL = `${apiBaseUrl}/api/v1`;
 
 // URL pour les connexions WebSocket
-export const SOCKET_URL = socketBaseUrl;
+export const SOCKET_URL = API_URL.replace('/api/v1', '');
 
 console.log('📱 Platform.OS:', Platform.OS);
 console.log('🌍 API_URL configuré:', API_URL);
@@ -58,6 +58,27 @@ const api = axios.create({
   },
   timeout: 15000,
 });
+
+// Méthode pour récupérer et stocker l'ID utilisateur actuel
+export const storeUserIdInApiHeaders = async () => {
+  try {
+    // Essayer de récupérer l'ID utilisateur depuis le stockage local
+    const userData = await AsyncStorage.getItem('@user_data');
+    if (userData) {
+      const user = JSON.parse(userData);
+      if (user && user.id) {
+        // Stocker l'ID utilisateur dans les en-têtes globaux
+        api.defaults.headers.userId = user.id;
+        console.log(`👤 API: ID utilisateur ${user.id} enregistré dans les en-têtes`);
+        return user.id;
+      }
+    }
+    return null;
+  } catch (err) {
+    console.warn('⚠️ Erreur lors de la récupération/stockage de l\'ID utilisateur:', err);
+    return null;
+  }
+};
 
 // Intercepteur pour ajouter le token d'authentification à chaque requête
 api.interceptors.request.use(async config => {
@@ -93,6 +114,11 @@ api.interceptors.request.use(async config => {
       
       // Vérifier que le token est bien ajouté
       console.log('🔍 Headers après ajout du token:', config.headers);
+
+      // S'assurer que l'ID utilisateur est également disponible
+      if (!api.defaults.headers.userId) {
+        await storeUserIdInApiHeaders();
+      }
     } else {
       console.warn('⚠️ Token absent, requête envoyée sans authentification');
     }
@@ -158,6 +184,11 @@ api.interceptors.response.use(
     
     return Promise.reject(error);
   }
+);
+
+// Initialiser l'ID utilisateur au démarrage de l'application
+storeUserIdInApiHeaders().catch(err => 
+  console.warn('⚠️ Erreur lors de l\'initialisation de l\'ID utilisateur:', err)
 );
 
 export default api;
