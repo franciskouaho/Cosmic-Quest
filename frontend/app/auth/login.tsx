@@ -16,18 +16,18 @@ import {
   ActivityIndicator,
 } from "react-native"
 import { LinearGradient } from "expo-linear-gradient"
-import { useAuth } from "@/contexts/AuthContext"
+import { useLogin } from "@/hooks/useAuth"
 import { Feather } from "@expo/vector-icons"
 
 export default function LoginScreen() {
-  const { signIn, isSigningIn } = useAuth()
+  const { mutate: signIn, isPending: isSigningIn } = useLogin()
   const [username, setUsername] = useState("")
 
   const handleLogin = async () => {
     if (!username.trim() || isSigningIn) return
 
     try {
-      await signIn(username.trim())
+      signIn(username.trim())
     } catch (error: any) {
       console.error('❌ Login échoué:', error)
       Alert.alert(

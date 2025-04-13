@@ -32,26 +32,12 @@ export function useLogin() {
     mutationFn: async (username: string) => {
       console.log('👤 useLogin: Tentative de connexion/inscription pour', username);
       try {
-        const response = await authService.registerOrLogin(username);
-        console.log('👤 useLogin: Réponse reçue:', response.status);
+        const userData = await authService.registerOrLogin(username);
+        console.log('👤 useLogin: Réponse reçue:', userData);
         
-        if (response?.status === 'success' && response?.data) {
-          // Les données utilisateur sont directement dans response.data
-          const userData = {
-            id: response.data.id,
-            username: response.data.username,
-            displayName: response.data.displayName,
-            avatar: response.data.avatar,
-            level: response.data.level || 1,
-            experiencePoints: response.data.experiencePoints || 0,
-            token: response.data.token
-          };
-          
+        // Les données utilisateur sont déjà formatées par authService.registerOrLogin
+        if (userData && userData.token) {
           console.log('👤 useLogin: Stockage des données utilisateur');
-          await Promise.all([
-            AsyncStorage.setItem('@auth_token', response.data.token),
-            AsyncStorage.setItem('@user_data', JSON.stringify(userData))
-          ]);
           
           // Mettre à jour le cache avec les données utilisateur
           queryClient.setQueryData(['user'], userData);
@@ -59,8 +45,8 @@ export function useLogin() {
           
           return userData;
         }
-        console.error('👤 useLogin: Format de réponse invalide', response);
-        throw new Error('Format de réponse invalide');
+        console.error('👤 useLogin: Données utilisateur invalides', userData);
+        throw new Error('Données utilisateur invalides');
       } catch (error) {
         console.error('👤 useLogin: Erreur', error);
         throw error;
