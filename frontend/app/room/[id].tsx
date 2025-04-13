@@ -10,6 +10,8 @@ import LoadingOverlay from '../../components/common/LoadingOverlay';
 import SocketService from '@/services/socketService';
 import { useRoom, useToggleReadyStatus, useLeaveRoom, useStartGame } from '@/hooks/useRooms';
 import { useUser } from '@/hooks/useAuth';
+import api from '@/config/axios';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Type pour les joueurs
 type Player = {
@@ -42,6 +44,7 @@ export default function Room() {
   const [inviteModalVisible, setInviteModalVisible] = useState(false);
   const [rulesVisible, setRulesVisible] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState('Chargement de la salle...');
+  const [redirectingToGame, setRedirectingToGame] = useState<string | null>(null);
 
   // Mettre à jour les états en fonction des données récupérées
   useEffect(() => {
@@ -84,6 +87,19 @@ export default function Room() {
   }, [roomData, user]);
 
   useEffect(() => {
+    if (user && user.id) {
+      // Définir l'ID utilisateur dans les headers API
+      api.defaults.headers.userId = user.id;
+      console.log(`👤 ID utilisateur ${user.id} défini dans les headers API`);
+      
+      // Sauvegarder l'ID utilisateur dans AsyncStorage pour y accéder ailleurs
+      AsyncStorage.setItem('@current_user_id', String(user.id))
+        .then(() => console.log('✅ ID utilisateur sauvegardé dans AsyncStorage'))
+        .catch(err => console.error('❌ Erreur lors de la sauvegarde de l\'ID utilisateur:', err));
+    }
+  }, [user]);
+
+  useEffect(() => {
     if (id) {
       // Initialiser une fonction asynchrone pour gérer la connexion WebSocket
       const setupWebSocket = async () => {
@@ -98,7 +114,7 @@ export default function Room() {
           console.log(`✅ Salle ${id} rejointe avec succès via WebSocket`);
           
           // Écouter les événements de la salle
-          socket.on('room:update', (data) => {
+          socket.on('room:update', async (data) => {
             console.log(`🔌 Événement room:update reçu:`, data.type);
             
             switch (data.type) {
@@ -134,9 +150,24 @@ export default function Room() {
                 break;
                 
               case 'game_started':
-                // Rediriger vers la page de jeu
-                console.log(`🎮 Jeu démarré! Redirection vers /game/${data.gameId}`);
-                router.push(`/game/${data.gameId}`);
+                // Éviter les redirections multiples
+                if (redirectingToGame !== data.gameId) {
+                  setRedirectingToGame(data.gameId);
+                  
+                  console.log(`🎮 Jeu démarré! Redirection vers /game/${data.gameId}`);
+                  
+                  // S'assurer que les headers d'API sont corrects avant la redirection
+                  if (user && user.id) {
+                    api.defaults.headers.userId = user.id;
+                    await AsyncStorage.setItem('@current_user_id', String(user.id));
+                    console.log(`👤 ID utilisateur ${user.id} défini avant redirection`);
+                  }
+                  
+                  // Attendre un peu avant de rediriger pour laisser le temps aux autres opérations
+                  setTimeout(() => {
+                    router.push(`/game/${data.gameId}`);
+                  }, 500);
+                }
                 break;
             }
           });
@@ -158,7 +189,7 @@ export default function Room() {
         });
       };
     }
-  }, [id, user, router]);
+  }, [id, user, router, redirectingToGame]);
 
   const handleToggleReady = () => {
     if (id) {

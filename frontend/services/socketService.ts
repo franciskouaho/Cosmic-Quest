@@ -389,6 +389,12 @@ class SocketService {
       
       console.log(`🎮 Tentative de rejoindre le jeu ${gameId}`);
       
+      // Vérifier si nous sommes déjà dans ce canal de jeu
+      if (SocketService.currentGame === gameId) {
+        console.log(`✅ Déjà connecté au jeu ${gameId}, pas besoin de rejoindre à nouveau`);
+        return;
+      }
+      
       // Créer une promesse pour attendre la confirmation de jointure au jeu
       const joinPromise = new Promise<void>((resolve) => {
         // Configurer un écouteur d'événement de confirmation
@@ -414,8 +420,14 @@ class SocketService {
         // Mettre en place l'écouteur
         socket.on('game:joined', onGameJoined);
         
-        // Envoyer l'événement de jointure (un seul format pour éviter la confusion)
-        socket.emit('join-game', { gameId: Number(gameId) }); // Convertir en nombre pour cohérence
+        // Envoyer l'événement de jointure avec un ID numérique pour cohérence avec le serveur
+        let gameIdNum = Number(gameId);
+        if (isNaN(gameIdNum)) {
+          console.warn(`⚠️ L'ID du jeu n'est pas un nombre valide: ${gameId}, utilisation de la chaîne`);
+          socket.emit('join-game', { gameId }); 
+        } else {
+          socket.emit('join-game', { gameId: gameIdNum });
+        }
         console.log(`📤 Demande d'inscription envoyée pour le jeu: ${gameId}`);
       });
       

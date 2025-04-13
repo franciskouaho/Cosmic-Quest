@@ -15,6 +15,7 @@ import SocketService from '@/services/socketService';
 import axios from 'axios';
 import GameTimer from '../../components/game/GameTimer';
 import gameDebugger from '../../utils/gameDebugger';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function GameScreen() {
   const router = useRouter();
@@ -44,16 +45,22 @@ export default function GameScreen() {
       console.log(`🎮 Récupération des données du jeu ${id}...`);
       
       // Assurer que l'ID utilisateur est disponible dans les en-têtes API 
-      // avant de faire des appels
       try {
         if (user && user.id) {
           api.defaults.headers.userId = user.id;
-          console.log(`👤 ID utilisateur ${user.id} enregistré dans les en-têtes API`);
+          console.log(`👤 ID utilisateur ${user.id} défini dans les headers API`);
         } else {
-          console.warn('⚠️ Impossible de définir l\'ID utilisateur dans les en-têtes: utilisateur non disponible');
+          // Essayer de récupérer l'ID utilisateur depuis AsyncStorage
+          const storedUserId = await AsyncStorage.getItem('@current_user_id');
+          if (storedUserId) {
+            api.defaults.headers.userId = storedUserId;
+            console.log(`👤 ID utilisateur ${storedUserId} récupéré depuis AsyncStorage`);
+          } else {
+            console.warn('⚠️ ID utilisateur non disponible dans les en-têtes ni dans AsyncStorage');
+          }
         }
       } catch (err) {
-        console.warn('⚠️ Erreur lors de la définition de l\'ID utilisateur:', err);
+        console.warn('⚠️ Erreur lors de la définition/récupération de l\'ID utilisateur:', err);
       }
       
       // S'assurer que la connection WebSocket est active
