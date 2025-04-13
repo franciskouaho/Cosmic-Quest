@@ -1,6 +1,12 @@
 import { Question } from '../types/gameTypes';
 
-export type GameTheme = 'standard' | 'fun' | 'dark' | 'personal' | 'crazy' | 'on-ecoute-mais-on-ne-juge-pas';
+export type GameTheme = 
+  | 'standard' 
+  | 'fun'
+  | 'dark'
+  | 'personal'
+  | 'crazy'
+  | 'on-ecoute-mais-on-ne-juge-pas';
 
 /**
  * Génère un objet Question complet basé sur un thème et un nom de joueur
@@ -57,10 +63,17 @@ function generateQuestion(theme: GameTheme, playerName: string): string {
       `Quelle situation fait le plus douter ${playerName} de ses capacités ?`,
     ],
   };
-
-  const selectedQuestions = questions[theme] || questions.standard;
-  return selectedQuestions[Math.floor(Math.random() * selectedQuestions.length)];
+  
+  // Si le thème n'existe pas, utiliser le thème standard
+  const themeQuestions = questions[theme] || questions.standard;
+  
+  // Sélectionner une question aléatoire
+  const randomIndex = Math.floor(Math.random() * themeQuestions.length);
+  return themeQuestions[randomIndex];
 }
+
+// Exporter la fonction pour qu'elle puisse être utilisée ailleurs
+export default generateQuestion;
 
 /**
  * Crée un objet Question à partir d'un texte et d'un thème

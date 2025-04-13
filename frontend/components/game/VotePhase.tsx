@@ -1,5 +1,5 @@
-import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Answer, Question } from '../../types/gameTypes';
@@ -13,24 +13,98 @@ interface VotePhaseProps {
     duration: number;
     startTime: number;
   } | null;
+  isTargetPlayer?: boolean;
 }
 
-const VotePhase: React.FC<VotePhaseProps> = ({ answers, question, onVote, timer }) => {
-  // Filtrer les réponses pour exclure les propres réponses de l'utilisateur
-  const filteredAnswers = answers.filter(answer => !answer.isOwnAnswer);
+const VotePhase: React.FC<VotePhaseProps> = ({ 
+  answers, 
+  question, 
+  onVote, 
+  timer,
+  isTargetPlayer = false 
+}) => {
+  const [votableAnswers, setVotableAnswers] = useState<Answer[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   
-  const handleVote = (answer: Answer) => {
-    if (answer.isOwnAnswer) {
-      Alert.alert("Impossible", "Vous ne pouvez pas voter pour votre propre réponse.");
-      return;
+  useEffect(() => {
+    try {
+      if (!Array.isArray(answers)) {
+        console.error('⚠️ VotePhase: answers n\'est pas un tableau:', answers);
+        setError('Problème avec les données des réponses');
+        setVotableAnswers([]);
+        setLoading(false);
+        return;
+      }
+      
+      const filtered = answers.filter(answer => !answer.isOwnAnswer);
+      console.log(`🎮 VotePhase: ${filtered.length}/${answers.length} réponses filtrées pour le vote`);
+      
+      if (filtered.length === 0 && answers.length > 0) {
+        console.warn('⚠️ VotePhase: toutes les réponses ont été filtrées!');
+      }
+      
+      setVotableAnswers(filtered);
+      setLoading(false);
+      
+      if (filtered.length > 0) {
+        filtered.forEach((answer, i) => {
+          console.log(`🎮 Réponse ${i+1}: ID=${answer.id}, joueur=${answer.playerName}, contenu="${answer.content.substring(0, 30)}..."`);
+        });
+      }
+    } catch (error) {
+      console.error('❌ Erreur lors du filtrage des réponses:', error);
+      setError('Une erreur est survenue lors du chargement des réponses');
+      setLoading(false);
     }
-    onVote(answer.id.toString());
+  }, [answers]);
+  
+  const handleVote = (answerId: string) => {
+    try {
+      console.log(`🎮 Vote pour la réponse ID: ${answerId}`);
+      onVote(answerId);
+    } catch (error) {
+      console.error('❌ Erreur lors du vote:', error);
+      setError('Impossible d\'enregistrer votre vote');
+    }
   };
+
+  if (!isTargetPlayer) {
+    return (
+      <View style={styles.messageContainer}>
+        <Text style={styles.messageTitle}>Action non autorisée</Text>
+        <Text style={styles.messageText}>
+          Cette interface est réservée au joueur ciblé par la question.
+        </Text>
+      </View>
+    );
+  }
+
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#5D6DFF" />
+        <Text style={styles.loadingText}>Chargement des réponses...</Text>
+      </View>
+    );
+  }
+
+  if (error) {
+    return (
+      <View style={styles.messageContainer}>
+        <Text style={styles.messageTitle}>Une erreur est survenue</Text>
+        <Text style={styles.messageText}>{error}</Text>
+        <TouchableOpacity style={styles.retryButton} onPress={() => setError(null)}>
+          <Text style={styles.retryText}>Réessayer</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Vote pour la meilleure réponse</Text>
+        <Text style={styles.headerTitle}>C'est à vous de voter!</Text>
       </View>
 
       {timer && (
@@ -42,6 +116,12 @@ const VotePhase: React.FC<VotePhaseProps> = ({ answers, question, onVote, timer 
         </View>
       )}
 
+      <View style={styles.targetMessageContainer}>
+        <Text style={styles.targetMessage}>
+          Cette question vous concerne. Choisissez votre réponse préférée!
+        </Text>
+      </View>
+      
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.questionCard}>
           <LinearGradient
@@ -52,28 +132,34 @@ const VotePhase: React.FC<VotePhaseProps> = ({ answers, question, onVote, timer 
           </LinearGradient>
         </View>
 
-        <Text style={styles.sectionTitle}>Sélectionne ta réponse préférée</Text>
+        <Text style={styles.sectionTitle}>Les réponses des autres joueurs</Text>
 
-        {filteredAnswers.length > 0 ? filteredAnswers.map((answer) => (
-          <TouchableOpacity 
-            key={answer.id.toString()}
-            style={styles.answerCard}
-            onPress={() => handleVote(answer)}
-          >
-            <LinearGradient
-              colors={['rgba(255, 255, 255, 0.1)', 'rgba(255, 255, 255, 0.05)']}
-              style={styles.answerGradient}
+        {votableAnswers.length > 0 ? (
+          votableAnswers.map((answer) => (
+            <TouchableOpacity 
+              key={answer.id.toString()}
+              style={styles.answerCard}
+              onPress={() => handleVote(answer.id.toString())}
             >
-              <Text style={styles.answerText}>{answer.content}</Text>
-              <View style={styles.voteButton}>
-                <MaterialCommunityIcons name="heart" size={24} color="#ff6b6b" />
-                <Text style={styles.voteText}>Voter</Text>
-              </View>
-            </LinearGradient>
-          </TouchableOpacity>
-        )) : (
+              <LinearGradient
+                colors={['rgba(255, 255, 255, 0.1)', 'rgba(255, 255, 255, 0.05)']}
+                style={styles.answerGradient}
+              >
+                <Text style={styles.answerText}>{answer.content}</Text>
+                <View style={styles.voteButton}>
+                  <MaterialCommunityIcons name="heart" size={24} color="#ff6b6b" />
+                  <Text style={styles.voteText}>Choisir</Text>
+                </View>
+              </LinearGradient>
+            </TouchableOpacity>
+          ))
+        ) : (
           <View style={styles.noAnswersContainer}>
-            <Text style={styles.noAnswersText}>Aucune réponse disponible pour le moment</Text>
+            <Text style={styles.noAnswersText}>
+              {answers.length > 0 
+                ? 'Aucune réponse disponible pour voter' 
+                : 'Personne n\'a encore répondu à cette question'}
+            </Text>
           </View>
         )}
       </ScrollView>
@@ -88,11 +174,13 @@ const styles = StyleSheet.create({
   header: {
     alignItems: 'center',
     marginBottom: 20,
+    marginTop: 10,
   },
   headerTitle: {
     fontSize: 24,
     fontWeight: 'bold',
     color: '#ffffff',
+    textAlign: 'center',
   },
   timerContainer: {
     paddingHorizontal: 16,
@@ -100,6 +188,7 @@ const styles = StyleSheet.create({
   },
   content: {
     flex: 1,
+    paddingHorizontal: 16,
   },
   questionCard: {
     borderRadius: 16,
@@ -161,7 +250,60 @@ const styles = StyleSheet.create({
     color: '#b3a5d9',
     textAlign: 'center',
     fontSize: 16,
-  }
+  },
+  targetMessageContainer: {
+    backgroundColor: 'rgba(105, 78, 214, 0.2)',
+    borderRadius: 12,
+    padding: 16,
+    marginHorizontal: 16,
+    marginBottom: 20,
+  },
+  targetMessage: {
+    color: '#ffffff',
+    fontSize: 16,
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  messageContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  messageTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#ffcc00',
+    textAlign: 'center',
+    marginBottom: 10,
+  },
+  messageText: {
+    fontSize: 16,
+    color: '#ffffff',
+    textAlign: 'center',
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    fontSize: 16,
+    color: '#5D6DFF',
+    marginTop: 10,
+  },
+  retryButton: {
+    marginTop: 20,
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    backgroundColor: '#5D6DFF',
+    borderRadius: 20,
+  },
+  retryText: {
+    color: '#ffffff',
+    fontWeight: 'bold',
+    textAlign: 'center',
+  },
 });
 
 export default VotePhase;

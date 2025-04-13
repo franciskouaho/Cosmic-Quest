@@ -21,13 +21,15 @@ interface AnswerPhaseProps {
     startTime: number;
   } | null;
   isSubmitting?: boolean;
+  isTargetPlayer?: boolean; // Ajout de cette prop pour identifier si l'utilisateur est la cible
 }
 
 const AnswerPhase: React.FC<AnswerPhaseProps> = ({ 
   question, 
   onSubmit, 
   timer,
-  isSubmitting = false 
+  isSubmitting = false,
+  isTargetPlayer = false
 }) => {
   const [answer, setAnswer] = useState('');
   const [localSubmitting, setLocalSubmitting] = useState(isSubmitting);
@@ -37,6 +39,35 @@ const AnswerPhase: React.FC<AnswerPhaseProps> = ({
   useEffect(() => {
     setLocalSubmitting(isSubmitting);
   }, [isSubmitting]);
+
+  // Si l'utilisateur est la cible de la question, afficher un message spécial
+  if (isTargetPlayer) {
+    return (
+      <View style={styles.container}>
+        <View style={styles.targetMessageContainer}>
+          <Text style={styles.targetTitle}>Cette question est à propos de vous!</Text>
+          <Text style={styles.targetMessage}>
+            Vous ne pouvez pas répondre à cette question puisqu'elle vous concerne.
+            Attendez que les autres joueurs finissent de répondre.
+          </Text>
+        </View>
+
+        {timer && (
+          <View style={styles.timerContainer}>
+            <GameTimer 
+              duration={timer.duration}
+              startTime={timer.startTime}
+            />
+          </View>
+        )}
+        
+        <View style={styles.questionContainer}>
+          <Text style={styles.questionLabel}>Question :</Text>
+          <Text style={styles.questionText}>{question.text}</Text>
+        </View>
+      </View>
+    );
+  }
   
   const handleSubmit = async () => {
     if (answer.trim() === '') {
@@ -158,6 +189,25 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontWeight: 'bold',
     fontSize: 16,
+  },
+  targetMessageContainer: {
+    backgroundColor: 'rgba(255, 193, 7, 0.2)',
+    borderRadius: 12,
+    padding: 20,
+    marginBottom: 20,
+    alignItems: 'center',
+  },
+  targetTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#ffffff',
+    marginBottom: 12,
+  },
+  targetMessage: {
+    fontSize: 16,
+    color: '#ffffff',
+    textAlign: 'center',
+    lineHeight: 24,
   },
 });
 

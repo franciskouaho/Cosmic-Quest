@@ -4,15 +4,22 @@ import { SOCKET_URL } from '@/config/axios';
 /**
  * Utilitaire pour tester la connexion WebSocket
  */
-export const testSocketConnection = () => {
+export const testSocketConnection = async () => {
   console.log('🧪 Démarrage du test de connexion WebSocket...');
   
   try {
-    const socket = SocketService.getInstance();
+    // Utiliser la méthode asynchrone pour obtenir une instance valide
+    const socket = await SocketService.getInstanceAsync();
     
     console.log(`🔌 URL WebSocket: ${SOCKET_URL}`);
     console.log(`🔌 Socket ID: ${socket.id || 'non connecté'}`);
     console.log(`🔌 État de connexion: ${socket.connected ? 'connecté' : 'déconnecté'}`);
+    
+    // Vérifier d'abord si le socket est connecté avant d'ajouter des écouteurs
+    if (!socket.connected) {
+      console.log('⚠️ Socket non connecté, attente de connexion...');
+      return false;
+    }
     
     // Ajouter un écouteur temporaire pour les messages de test
     socket.on('pong', (data) => {
@@ -27,7 +34,7 @@ export const testSocketConnection = () => {
     
     // Tester la tentative de rejoindre une salle test
     console.log('🚪 Test de jointure à une salle test...');
-    SocketService.joinRoom('test-room');
+    await SocketService.joinRoom('test-room');
     
     // Ajouter un écouteur temporaire pour confirmer la jointure
     socket.on('room:joined', (data) => {
@@ -46,6 +53,21 @@ export const testSocketConnection = () => {
     // Écouter les événements de jeu pour le débogage
     socket.on('game:update', (data) => {
       console.log('🎮 Événement game:update reçu:', data);
+      
+      // Ajouter une validation spécifique pour le statut de joueur ciblé
+      if (data.type === 'phase_change' && data.phase === 'vote') {
+        console.log('🧪 Test de validation du joueur ciblé...');
+        const currentQuestion = socket?.gameState?.currentQuestion;
+        const currentUser = socket?.userData?.id;
+        
+        if (currentQuestion && currentUser) {
+          const isTarget = currentQuestion.targetPlayer?.id === currentUser;
+          console.log(`🎯 Statut de joueur ciblé: ${isTarget ? 'OUI' : 'NON'}`);
+          if (isTarget) {
+            console.log('⚠️ Détection de joueur ciblé: cet utilisateur est la cible et devrait avoir une interface spéciale');
+          }
+        }
+      }
     });
 
     // Écouter les événements de phase
@@ -55,11 +77,13 @@ export const testSocketConnection = () => {
     
     // Nettoyer les écouteurs après 5 secondes
     setTimeout(() => {
-      socket.off('pong');
-      socket.off('room:joined');
-      socket.off('room:left');
-      // Ne pas supprimer les écouteurs de débogage du jeu pour suivre la partie
-      console.log('🧹 Nettoyage des écouteurs de test terminé');
+      if (socket.connected) {
+        socket.off('pong');
+        socket.off('room:joined');
+        socket.off('room:left');
+        // Ne pas supprimer les écouteurs de débogage du jeu pour suivre la partie
+        console.log('🧹 Nettoyage des écouteurs de test terminé');
+      }
     }, 5000);
     
     return true;
@@ -73,16 +97,37 @@ export const testSocketConnection = () => {
  * Vérifier l'état de la connexion WebSocket
  * @returns Un objet contenant l'état actuel de la connexion
  */
-export const checkSocketStatus = () => {
+export const checkSocketStatus = async () => {
   try {
-    const socket = SocketService.getInstance();
+    // Obtenir le diagnostic complet du service
+    const diagnostic = SocketService.diagnose();
+    
+    // Si déconnecté, tenter une initialisation à la volée
+    if (diagnostic.status !== 'connected') {
+      console.log('🔌 Socket non connecté, tentative d\'initialisation...');
+      try {
+        const socket = await SocketService.getInstanceAsync();
+        return {
+          isConnected: socket.connected,
+          socketId: socket.id || null,
+          transport: socket.io?.engine?.transport?.name || null,
+          url: SOCKET_URL,
+          reconnection: true
+        };
+      } catch (initError) {
+        console.error('❌ Échec de l\'initialisation du socket:', initError);
+      }
+    }
+    
     return {
-      isConnected: socket.connected,
-      socketId: socket.id || null,
-      transport: socket.io?.engine?.transport?.name || null,
+      isConnected: diagnostic.details.connected,
+      socketId: diagnostic.details.socketId,
+      transport: diagnostic.details.transport,
       url: SOCKET_URL,
+      ...diagnostic.details
     };
   } catch (error) {
+    console.error('❌ Erreur lors de la vérification du statut socket:', error);
     return {
       isConnected: false,
       error: error.message,
@@ -96,13 +141,13 @@ export const checkSocketStatus = () => {
  * Utile pour le débogage des parties en cours
  * @param gameId ID de la partie à surveiller
  */
-export const monitorGameEvents = (gameId) => {
+export const monitorGameEvents = async (gameId) => {
   try {
-    const socket = SocketService.getInstance();
+    const socket = await SocketService.getInstanceAsync();
     console.log(`🔍 Démarrage du monitoring pour le jeu ${gameId}...`);
     
     // Rejoindre le canal de la partie
-    SocketService.joinRoom(`game:${gameId}`);
+    await SocketService.joinRoom(`game:${gameId}`);
     
     // Écouter les événements de mise à jour de la partie
     socket.on('game:update', (data) => {
@@ -122,8 +167,39 @@ export const monitorGameEvents = (gameId) => {
   }
 };
 
+/**
+ * Outils de diagnostic pour les situations de joueur ciblé
+ * @param gameId ID de la partie
+ */
+export const testTargetPlayerScenario = async (gameId: string) => {
+  try {
+    const socket = await SocketService.getInstanceAsync();
+    console.log(`🔍 Démarrage du test de scénario 'joueur ciblé' pour le jeu ${gameId}...`);
+    
+    // Écouter spécifiquement les mises à jour qui contiennent des informations sur le joueur ciblé
+    socket.on('game:update', (data) => {
+      if (data.question && data.question.targetPlayer) {
+        console.log(`🎯 Joueur ciblé détecté: ${data.question.targetPlayer.displayName || data.question.targetPlayer.username} (ID: ${data.question.targetPlayer.id})`);
+        
+        // Vérifier si le joueur actuel est la cible
+        if (socket.userData && socket.userData.id === data.question.targetPlayer.id) {
+          console.log('⚠️ VOUS êtes le joueur ciblé pour cette question!');
+          console.log('✅ Comportement attendu: Vous ne devriez PAS pouvoir répondre à cette question.');
+        }
+      }
+    });
+    
+    console.log(`✅ Test de scénario 'joueur ciblé' activé pour le jeu ${gameId}`);
+    return true;
+  } catch (error) {
+    console.error('❌ Échec du test de scénario:', error);
+    return false;
+  }
+};
+
 export default {
   testSocketConnection,
   checkSocketStatus,
   monitorGameEvents,
+  testTargetPlayerScenario,
 };

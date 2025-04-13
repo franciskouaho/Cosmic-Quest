@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, Alert } from 'react-native';
+import { View, Text, StyleSheet, Alert, TouchableOpacity } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -14,6 +14,7 @@ import gameService from '../../services/queries/game';
 import SocketService from '@/services/socketService';
 import axios from 'axios';
 import GameTimer from '../../components/game/GameTimer';
+import gameDebugger from '../../utils/gameDebugger';
 
 export default function GameScreen() {
   const router = useRouter();
@@ -42,6 +43,9 @@ export default function GameScreen() {
     try {
       console.log(`🎮 Récupération des données du jeu ${id}...`);
       
+      // S'assurer que la connection WebSocket est active
+      await gameService.ensureSocketConnection(id as string);
+      
       const gameData = await gameService.getGameState(id as string);
       console.log('✅ Données du jeu récupérées:', gameData);
       
@@ -54,8 +58,6 @@ export default function GameScreen() {
           console.error('⚠️ Erreur lors de la connexion WebSocket au jeu:', socketError);
         }
       }
-      
-      const currentUser = user?.id;
       
       const targetPlayer = gameData.currentQuestion?.targetPlayer 
         ? {
@@ -74,12 +76,29 @@ export default function GameScreen() {
           }
         : null;
       
-      const isTargetPlayer = gameData.currentUserState?.isTargetPlayer;
+      // CORRECTION CRITIQUE: Déterminer isTargetPlayer en comparant les IDs
+      const isTargetPlayer = targetPlayer && user ? (targetPlayer.id === user.id.toString()) : false;
+      
+      // Corriger l'incohérence dans les données du serveur si nécessaire
+      if (gameData.currentUserState?.isTargetPlayer !== isTargetPlayer) {
+        console.warn(`⚠️ Incohérence détectée: isTargetPlayer serveur=${gameData.currentUserState?.isTargetPlayer}, réel=${isTargetPlayer}`);
+        
+        // Corriger la valeur dans les données du serveur
+        if (gameData.currentUserState) {
+          gameData.currentUserState.isTargetPlayer = isTargetPlayer;
+        }
+      }
+      
+      // Déterminer la phase effective en fonction de l'état du jeu et du joueur
       let effectivePhase = GamePhase.WAITING;
       
       if (gameData.game.currentPhase === 'question') {
         effectivePhase = GamePhase.QUESTION;
       } else if (gameData.game.currentPhase === 'answer') {
+        // En phase de réponse:
+        // - Le joueur cible doit attendre
+        // - Les joueurs qui ont déjà répondu doivent attendre
+        // - Les autres doivent répondre
         if (isTargetPlayer) {
           effectivePhase = GamePhase.WAITING;
           console.log("👀 Joueur cible en attente pendant la phase de réponse");
@@ -91,12 +110,15 @@ export default function GameScreen() {
           console.log("📝 Joueur doit répondre");
         }
       } else if (gameData.game.currentPhase === 'vote') {
-        if (gameData.currentUserState?.hasVoted) {
-          effectivePhase = GamePhase.WAITING;
-          console.log("✓ Joueur a déjà voté, en attente");
-        } else {
+        // En phase de vote:
+        // - Seul le joueur cible peut voter
+        // - Les autres doivent attendre
+        if (isTargetPlayer) {
           effectivePhase = GamePhase.VOTE;
-          console.log("🗳️ Phase de vote active pour ce joueur");
+          console.log("🎯 Joueur ciblé entre en phase de vote");
+        } else {
+          effectivePhase = GamePhase.WAITING;
+          console.log("⏱️ Joueur non-cible en attente pendant que le joueur ciblé vote");
         }
       } else if (gameData.game.currentPhase === 'results') {
         effectivePhase = GamePhase.RESULTS;
@@ -105,7 +127,8 @@ export default function GameScreen() {
 
       console.log(`🎮 Phase effective pour l'UI: ${effectivePhase}, Phase serveur: ${gameData.game.currentPhase}`);
       
-      setGameState({
+      // Construction du nouvel état du jeu
+      const newGameState: GameState = {
         phase: effectivePhase,
         currentRound: gameData.game.currentRound || 1,
         totalRounds: gameData.game.totalRounds || 5,
@@ -116,22 +139,47 @@ export default function GameScreen() {
         scores: gameData.game.scores || {},
         theme: gameData.game.gameMode || 'standard',
         timer: gameData.timer || null,
-        currentUserState: gameData.currentUserState || {},
-      });
+        currentUserState: {
+          ...gameData.currentUserState,
+          isTargetPlayer  // Utiliser notre valeur calculée qui est fiable
+        },
+        game: gameData.game
+      };
       
+      // Analyser l'état du jeu pour détecter d'éventuels problèmes
+      const targetPlayerCheck = gameDebugger.debugTargetPlayerState(newGameState, user?.id);
+      gameDebugger.analyzeGameState(newGameState);
+      
+      // Si une incohérence est détectée, corriger l'état du jeu
+      if (targetPlayerCheck?.hasInconsistency && targetPlayerCheck.correctValue !== undefined) {
+        console.log('🔧 Correction automatique de l\'état isTargetPlayer appliquée');
+        newGameState.currentUserState.isTargetPlayer = targetPlayerCheck.correctValue;
+      }
+      
+      setGameState(newGameState);
       setIsReady(true);
     } catch (error) {
       console.error('❌ Erreur lors de la récupération des données du jeu:', error);
       
-      if (axios.isAxiosError(error) && error.response?.status === 404) {
+      // Gestion spécifique des erreurs
+      const axiosError = error as any;
+      if (axiosError?.response?.status === 404) {
         setLoadingError('Partie introuvable. Elle est peut-être terminée ou n\'existe pas.');
-      } else if (axios.isAxiosError(error) && error.response?.status === 401) {
+      } else if (axiosError?.response?.status === 401) {
         setLoadingError('Session expirée. Veuillez vous reconnecter.');
         setTimeout(() => {
           router.replace('/auth/login');
         }, 2000);
-      } else {
+      } else if (axiosError?.message?.includes('Network Error')) {
         setLoadingError('Impossible de se connecter au serveur. Vérifiez votre connexion internet.');
+        // Vérifier la connexion internet
+        const netInfo = await NetInfo.fetch();
+        if (netInfo.isConnected) {
+          // Si connecté à internet, le problème est probablement côté serveur
+          console.log('🌐 Connexion internet détectée, problème probablement côté serveur.');
+        }
+      } else {
+        setLoadingError('Une erreur est survenue. Veuillez réessayer.');
       }
     }
   }, [id, isReady, user]);
@@ -139,69 +187,105 @@ export default function GameScreen() {
   useEffect(() => {
     fetchGameData();
     
-    const socket = SocketService.getInstance();
-    socket.on('game:update', (data) => {
-      console.log('🎮 Mise à jour du jeu reçue:', data);
-      
-      if (data.type === 'phase_change') {
-        console.log(`🎮 Changement de phase: ${data.phase}`);
+    let refreshInterval: NodeJS.Timeout;
+    let recoveryInterval: NodeJS.Timeout;
+    
+    // Initialisation asynchrone du socket
+    const initSocket = async () => {
+      try {
+        const socket = await SocketService.getInstanceAsync();
         
-        // Mise à jour immédiate de la phase, plus fiable que d'attendre fetchGameData
-        let newPhase;
-        switch(data.phase) {
-          case 'vote':
-            newPhase = GamePhase.VOTE;
-            break;
-          case 'results':
-            newPhase = GamePhase.RESULTS;
-            break;
-          case 'answer':
-            // Pour answer, on doit gérer le cas où l'utilisateur est la cible
-            if (gameState.currentUserState?.isTargetPlayer) {
-              newPhase = GamePhase.WAITING;
-            } else {
-              newPhase = GamePhase.ANSWER;
+        // Gestionnaire d'événements optimisé pour les mises à jour du jeu
+        const handleGameUpdate = (data) => {
+          console.log('🎮 Mise à jour du jeu reçue:', data);
+          
+          if (data.type === 'phase_change') {
+            console.log(`🎮 Changement de phase: ${data.phase}`);
+            
+            // En cas de changement vers la phase vote, rafraîchir immédiatement pour obtenir les réponses
+            if (data.phase === 'vote') {
+              console.log("🎮 Changement vers phase 'vote' détecté - initialisation rafraîchissement");
+              setTimeout(() => fetchGameData(), 500);
+              return;
             }
-            break;
-          case 'question':
-            newPhase = GamePhase.QUESTION;
-            break;
-          default:
-            newPhase = GamePhase.WAITING;
-        }
+            
+            // Déterminer la nouvelle phase en fonction de l'état actuel et de la nouvelle phase serveur
+            let newPhase;
+            switch(data.phase) {
+              case 'results':
+                newPhase = GamePhase.RESULTS;
+                break;
+              case 'answer':
+                if (gameState.currentUserState?.isTargetPlayer) {
+                  newPhase = GamePhase.WAITING;
+                } else {
+                  newPhase = GamePhase.ANSWER;
+                }
+                break;
+              case 'question':
+                newPhase = GamePhase.QUESTION;
+                break;
+              default:
+                newPhase = GamePhase.WAITING;
+            }
+            
+            setGameState(prev => ({
+              ...prev,
+              phase: newPhase,
+              timer: data.timer || prev.timer
+            }));
+            
+            // Mettre à jour les réponses si fournies dans l'événement
+            if (data.answers && Array.isArray(data.answers) && data.phase === 'vote') {
+              setGameState(prev => ({
+                ...prev,
+                answers: data.answers.map(answer => ({
+                  ...answer,
+                  isOwnAnswer: answer.playerId === user?.id
+                }))
+              }));
+              console.log(`✅ Réponses mises à jour: ${data.answers.length} réponses reçues`);
+            }
+            
+            // Rafraîchir les données complètes après un court délai
+            setTimeout(fetchGameData, 500);
+          } else if (data.type === 'phase_reminder' || data.type === 'new_answer' || data.type === 'new_vote') {
+            // Rafraîchir les données pour tout autre type d'événement important
+            fetchGameData();
+          }
+        };
         
-        // Mise à jour immédiate de l'état
-        setGameState(prev => ({
-          ...prev,
-          phase: newPhase,
-          timer: data.timer || prev.timer
-        }));
-        
-        // Si on a des réponses dans l'événement (pour vote)
-        if (data.answers && Array.isArray(data.answers) && data.phase === 'vote') {
-          setGameState(prev => ({
-            ...prev,
-            answers: data.answers.map(answer => ({
-              ...answer,
-              isOwnAnswer: answer.playerId === user?.id
-            }))
-          }));
-          console.log(`✅ Réponses mises à jour: ${data.answers.length} réponses reçues`);
-        }
-        
-        // Actualiser après un court délai pour obtenir les données complètes
-        setTimeout(fetchGameData, 500);
-      } else if (data.type === 'phase_reminder') {
-        // Force immédiate pour aller chercher les données complètes
-        fetchGameData();
-      } 
+        socket.on('game:update', handleGameUpdate);
+        socket.on('reconnect', () => {
+          console.log('🔄 Socket reconnecté, rafraîchissement des données...');
+          fetchGameData();
+        });
+
+        // Retourner les nettoyeurs d'événements
+        return {
+          cleanupEvents: () => {
+            socket.off('game:update', handleGameUpdate);
+            socket.off('reconnect');
+          }
+        };
+      } catch (socketError) {
+        console.error('❌ Erreur lors de l\'initialisation du socket:', socketError);
+        return { cleanupEvents: () => {} };
+      }
+    };
+    
+    // Variable pour stocker les fonctions de nettoyage 
+    let socketCleanup = { cleanupEvents: () => {} };
+    
+    // Initialiser le socket de manière asynchrone
+    initSocket().then(cleanup => {
+      socketCleanup = cleanup;
     });
 
-    // Améliorer la détection et récupération de blocages
-    const recoveryInterval = setInterval(() => {
+    // Intervalle de récupération pour les cas où le jeu reste bloqué en phase d'attente
+    recoveryInterval = setInterval(() => {
       const currentTime = Date.now();
       
-      // Si en attente depuis plus de 10 secondes sans timer actif, essayer de récupérer
       if (gameState.phase === GamePhase.WAITING && 
           (!gameState.timer || 
            (gameState.timer && currentTime > gameState.timer.startTime + (gameState.timer.duration * 1000) + 5000))) {
@@ -210,10 +294,11 @@ export default function GameScreen() {
       }
     }, 5000);
     
-    const normalRefreshInterval = setInterval(fetchGameData, 15000);
+    // Intervalle de rafraîchissement normal pour garder les données à jour
+    refreshInterval = setInterval(fetchGameData, 15000);
     
     return () => {
-      clearInterval(normalRefreshInterval);
+      clearInterval(refreshInterval);
       clearInterval(recoveryInterval);
       
       if (id) {
@@ -225,7 +310,8 @@ export default function GameScreen() {
         }
       }
       
-      socket.off('game:update');
+      // Nettoyage des écouteurs d'événements
+      socketCleanup.cleanupEvents();
     };
   }, [id, user, router, fetchGameData]);
   
@@ -383,7 +469,7 @@ export default function GameScreen() {
       ]
     );
   };
-  
+
   const renderGamePhase = () => {
     switch (gameState.phase) {
       case GamePhase.LOADING:
@@ -393,6 +479,30 @@ export default function GameScreen() {
         if (!gameState.targetPlayer || !gameState.currentQuestion) {
           return <LoadingOverlay message="Chargement des données de jeu..." />;
         }
+        
+        const isTargetInQuestionPhase = Boolean(gameState.currentUserState?.isTargetPlayer);
+        
+        if (isTargetInQuestionPhase) {
+          console.log("🎯 Utilisateur identifié comme cible pendant la phase QUESTION - affichage message spécial");
+          return (
+            <View style={styles.messageContainer}>
+              <Text style={styles.messageTitle}>Cette question est à propos de vous</Text>
+              <Text style={styles.messageText}>
+                Cette question vous concerne. Les autres joueurs sont en train de la lire et vont ensuite y répondre.
+                Vous pourrez voir et voter pour leurs réponses plus tard.
+              </Text>
+              {gameState.timer && (
+                <View style={styles.timerContainer}>
+                  <GameTimer 
+                    duration={gameState.timer.duration}
+                    startTime={gameState.timer.startTime}
+                  />
+                </View>
+              )}
+            </View>
+          );
+        }
+        
         return (
           <QuestionPhase 
             question={gameState.currentQuestion}
@@ -418,7 +528,7 @@ export default function GameScreen() {
               <Text style={styles.messageTitle}>Cette question est à propos de vous</Text>
               <Text style={styles.messageText}>
                 Vous ne pouvez pas répondre à une question qui vous concerne.
-                Regardez les réponses des autres joueurs.
+                Attendez que les autres joueurs finissent de répondre.
               </Text>
               {gameState.timer && (
                 <View style={styles.timerContainer}>
@@ -457,6 +567,7 @@ export default function GameScreen() {
             onSubmit={handleSubmitAnswer}
             timer={gameState.timer}
             isSubmitting={isSubmitting}
+            isTargetPlayer={isTarget}
           />
         );
         
@@ -486,12 +597,71 @@ export default function GameScreen() {
         if (!gameState.currentQuestion) {
           return <LoadingOverlay message="Chargement des données de vote..." />;
         }
+        
+        const isTargetPlayer = gameState.targetPlayer && user ? 
+          (gameState.targetPlayer.id === user.id.toString()) : 
+          Boolean(gameState.currentUserState?.isTargetPlayer);
+        const hasVoted = Boolean(gameState.currentUserState?.hasVoted);
+        
+        gameDebugger.analyzeVotingState(gameState, user?.id);
+        
+        if (!isTargetPlayer) {
+          console.log(`🔍 Phase VOTE - Utilisateur ${user?.id} n'est pas la cible (${gameState.targetPlayer?.id})`);
+          
+          if (hasVoted) {
+            return (
+              <View style={styles.messageContainer}>
+                <Text style={styles.messageTitle}>Vote enregistré</Text>
+                <Text style={styles.messageText}>
+                  Votre vote a été enregistré avec succès. Attendez que le joueur ciblé fasse son choix.
+                </Text>
+                {gameState.timer && (
+                  <View style={styles.timerContainer}>
+                    <GameTimer 
+                      duration={gameState.timer.duration}
+                      startTime={gameState.timer.startTime}
+                      onComplete={() => fetchGameData()}
+                    />
+                  </View>
+                )}
+              </View>
+            );
+          }
+          
+          return (
+            <View style={styles.messageContainer}>
+              <Text style={styles.messageTitle}>Phase de vote</Text>
+              <Text style={styles.messageText}>
+                {gameState.targetPlayer?.name} est en train de voter pour la meilleure réponse.
+                Veuillez patienter...
+              </Text>
+              {gameState.timer && (
+                <View style={styles.timerContainer}>
+                  <GameTimer 
+                    duration={gameState.timer.duration}
+                    startTime={gameState.timer.startTime}
+                  />
+                </View>
+              )}
+              <TouchableOpacity 
+                style={styles.refreshButton}
+                onPress={fetchGameData}
+              >
+                <Text style={styles.refreshButtonText}>Actualiser</Text>
+              </TouchableOpacity>
+            </View>
+          );
+        }
+        
+        console.log(`🎯 Phase VOTE - Utilisateur ${user?.id} EST la cible. Affichage interface de vote.`);
+        
         return (
           <VotePhase 
-            answers={gameState.answers}
+            answers={gameState.answers.filter(answer => !answer.isOwnAnswer)}
             question={gameState.currentQuestion}
             onVote={handleVote}
             timer={gameState.timer}
+            isTargetPlayer={true}
           />
         );
         
@@ -516,7 +686,7 @@ export default function GameScreen() {
         return <Text>Erreur: Phase de jeu inconnue</Text>;
     }
   };
-  
+
   if (!isReady) {
     return (
       <View style={styles.container}>
@@ -528,16 +698,14 @@ export default function GameScreen() {
       </View>
     );
   }
-  
+
   return (
     <View style={styles.container}>
       <StatusBar style="light" />
-      
       <LinearGradient
         colors={['#1a0933', '#321a5e']}
         style={styles.background}
       />
-      
       <View style={styles.content}>
         {renderGamePhase()}
       </View>
@@ -591,5 +759,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
-  }
+  },
+  refreshButton: {
+    marginTop: 20,
+    backgroundColor: 'rgba(93, 109, 255, 0.3)',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+  },
+  refreshButtonText: {
+    color: 'white',
+    fontWeight: 'bold',
+  },
 });

@@ -22,6 +22,18 @@ export interface Answer {
   isOwnAnswer?: boolean; // Ajouter cette propriété pour identifier les propres réponses
 }
 
+// Ajouter cette interface pour clarifier l'état du joueur actuel
+export interface CurrentUserState {
+  hasAnswered: boolean;
+  hasVoted: boolean;
+  isTargetPlayer: boolean;
+}
+
+export interface Timer {
+  duration: number;
+  startTime: number;
+}
+
 export enum GamePhase {
   LOADING = 'loading',
   QUESTION = 'question',
@@ -41,15 +53,8 @@ export interface GameState {
   players: Player[];
   scores: Record<string, number>;
   theme: string;
-  timer: {
-    duration: number;
-    startTime: number;
-  } | null;
-  currentUserState?: {
-    hasAnswered: boolean;
-    hasVoted: boolean;
-    isTargetPlayer: boolean;
-  };
+  timer: Timer | null;
+  currentUserState?: CurrentUserState;
 }
 
 export type GameTheme = 'standard' | 'fun' | 'dark' | 'personal' | 'crazy';

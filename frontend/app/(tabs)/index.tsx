@@ -55,30 +55,37 @@ export default function HomeScreen() {
 
   // Gérer les connexions WebSocket
   useEffect(() => {
-    let socket: Socket;
+    let socket: Socket | null = null;
+    let socketInitialized = false;
     
-    try {
-      console.log('🔌 Initialisation du socket sur la page d\'accueil');
-      socket = SocketService.getInstance();
+    const initSocket = async () => {
+      try {
+        console.log('🔌 Initialisation du socket sur la page d\'accueil');
+        socket = await SocketService.getInstanceAsync();
+        socketInitialized = true;
 
-      // Écouter les événements spécifiques à la salle
-      socket.on('room:update', (data) => {
-        console.log('🎮 Mise à jour de la salle reçue:', data);
-      });
-      
-      // Vérifier l'état de la connexion
-      NetInfo.fetch().then(state => {
-        console.log(`🌐 État connexion: ${state.isConnected ? 'Connecté' : 'Non connecté'} (${state.type})`);
-      });
-    } catch (error) {
-      console.error('❌ Erreur lors de l\'initialisation du socket:', error);
-    }
+        // Écouter les événements spécifiques à la salle
+        socket.on('room:update', (data) => {
+          console.log('🎮 Mise à jour de la salle reçue:', data);
+        });
+        
+        // Vérifier l'état de la connexion
+        NetInfo.fetch().then(state => {
+          console.log(`🌐 État connexion: ${state.isConnected ? 'Connecté' : 'Non connecté'} (${state.type})`);
+        });
+      } catch (error) {
+        console.error('❌ Erreur lors de l\'initialisation du socket:', error);
+      }
+    };
+
+    // Initialisation asynchrone
+    initSocket();
 
     return () => {
       console.log('🔌 Nettoyage du socket sur la page d\'accueil');
       // Pas besoin de déconnecter complètement le socket à chaque fois 
       // pour éviter de multiples reconnexions, seulement se désabonner des événements
-      if (socket) {
+      if (socket && socketInitialized) {
         socket.off('room:update');
       }
     };
@@ -268,7 +275,7 @@ export default function HomeScreen() {
                     />
                   </View>
                   <View style={styles.modeTextContainer}>
-                    <Text style={styles.modeName}>Spicy</Text>
+                    <Text style={styles.modeName}>Hot</Text>
                     <Text style={styles.modeDescription}>Un mode avancé avec encore plus de questions et de fun.</Text>
                   </View>
                   <View style={[styles.freeTagContainer, { backgroundColor: "rgba(255, 193, 7, 0.8)" }]}>
