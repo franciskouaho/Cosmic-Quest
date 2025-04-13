@@ -5,6 +5,7 @@ import { Alert } from 'react-native';
 import NetInfo from '@react-native-community/netinfo';
 import { useCreateRoom } from './useCreateRoom'; // Importer depuis le nouveau fichier
 import SocketService from '@/services/socketService'; // Correction du chemin d'importation
+import api from '@/config/axios'; // Ajout de l'import manquant pour l'API
 
 // Hook pour lister toutes les salles
 export function useRooms() {
