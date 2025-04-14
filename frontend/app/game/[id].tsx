@@ -114,42 +114,36 @@ export default function GameScreen() {
 
       // Déterminer la phase effective en fonction de l'état du jeu et du joueur
       let effectivePhase = GamePhase.WAITING;
-      
-      if (gameData.game.currentPhase === 'question') {
-        effectivePhase = GamePhase.QUESTION;
-      } else if (gameData.game.currentPhase === 'answer') {
-        // En phase de réponse, le joueur cible doit toujours être en attente
+
+      if (gameData.game.currentPhase === 'vote') {
         if (isTargetPlayer) {
-          effectivePhase = GamePhase.WAITING;
-          console.log("👀 Joueur cible en attente pendant la phase de réponse");
-        } else if (gameData.currentUserState?.hasAnswered) {
-          effectivePhase = GamePhase.WAITING;
-          console.log("✓ Joueur a déjà répondu, en attente");
+          // Si l'utilisateur est la cible ET n'a pas encore voté, montrer l'interface de vote
+          effectivePhase = gameData.currentUserState?.hasVoted 
+            ? GamePhase.WAITING 
+            : GamePhase.VOTE;
+          console.log(`🎯 Phase vote - Joueur cible: ${effectivePhase}`);
         } else {
-          effectivePhase = GamePhase.ANSWER;
-          console.log("📝 Joueur doit répondre");
+          effectivePhase = GamePhase.WAITING;
+          console.log('⏳ Phase vote - En attente du vote du joueur cible');
         }
-      } else if (gameData.game.currentPhase === 'vote') {
-        // En phase de vote, seul le joueur cible peut voter
+      } else if (gameData.game.currentPhase === 'answer') {
         if (isTargetPlayer) {
-          // Si le joueur est la cible, vérifier s'il a déjà voté
-          if (gameData.currentUserState?.hasVoted) {
-            effectivePhase = GamePhase.WAITING;
-            console.log("✓ Joueur cible a déjà voté, en attente");
-          } else {
-            effectivePhase = GamePhase.VOTE;
-            console.log("🎯 Joueur ciblé entre en phase de vote");
-          }
-        } else {
           effectivePhase = GamePhase.WAITING;
-          console.log("⏱️ Joueur non-cible en attente pendant que le joueur ciblé vote");
+          console.log('👀 Joueur cible en attente pendant la phase de réponse');
+        } else {
+          effectivePhase = gameData.currentUserState?.hasAnswered 
+            ? GamePhase.WAITING 
+            : GamePhase.ANSWER;
+          console.log(`📝 Phase réponse - État: ${effectivePhase}`);
         }
       } else if (gameData.game.currentPhase === 'results') {
         effectivePhase = GamePhase.RESULTS;
-        console.log("🎯 Affichage des résultats");
+      } else if (gameData.game.currentPhase === 'question') {
+        effectivePhase = GamePhase.QUESTION;
       }
 
-      console.log(`🎮 Phase effective pour l'UI: ${effectivePhase}, Phase serveur: ${gameData.game.currentPhase}`);
+      // Afficher un log détaillé pour le débogage
+      console.log(`🎮 Phase serveur: ${gameData.game.currentPhase}, Phase UI: ${effectivePhase}, isTarget: ${isTargetPlayer}, hasVoted: ${gameData.currentUserState?.hasVoted}`);
       
       // Construction du nouvel état du jeu
       const newGameState: GameState = {
@@ -238,55 +232,20 @@ export default function GameScreen() {
           if (data.type === 'phase_change') {
             console.log(`🎮 Changement de phase: ${data.phase}`);
             
-            // En cas de changement vers la phase vote, rafraîchir immédiatement pour obtenir les réponses
-            if (data.phase === 'vote') {
-              console.log("🎮 Changement vers phase 'vote' détecté - initialisation rafraîchissement");
-              setTimeout(() => fetchGameData(), 500);
-              return;
-            }
-            
-            // Déterminer la nouvelle phase en fonction de l'état actuel et de la nouvelle phase serveur
-            let newPhase;
-            switch(data.phase) {
-              case 'results':
-                newPhase = GamePhase.RESULTS;
-                break;
-              case 'answer':
-                if (gameState.currentUserState?.isTargetPlayer) {
-                  newPhase = GamePhase.WAITING;
-                } else {
-                  newPhase = GamePhase.ANSWER;
-                }
-                break;
-              case 'question':
-                newPhase = GamePhase.QUESTION;
-                break;
-              default:
-                newPhase = GamePhase.WAITING;
-            }
-            
+            // Mettre à jour immédiatement l'état sans attendre
             setGameState(prev => ({
               ...prev,
-              phase: newPhase,
+              game: {
+                ...prev.game,
+                currentPhase: data.phase
+              },
               timer: data.timer || prev.timer
             }));
-            
-            // Mettre à jour les réponses si fournies dans l'événement
-            if (data.answers && Array.isArray(data.answers) && data.phase === 'vote') {
-              setGameState(prev => ({
-                ...prev,
-                answers: data.answers.map(answer => ({
-                  ...answer,
-                  isOwnAnswer: answer.playerId === user?.id
-                }))
-              }));
-              console.log(`✅ Réponses mises à jour: ${data.answers.length} réponses reçues`);
-            }
-            
-            // Rafraîchir les données complètes après un court délai
-            setTimeout(fetchGameData, 500);
-          } else if (data.type === 'phase_reminder' || data.type === 'new_answer' || data.type === 'new_vote') {
-            // Rafraîchir les données pour tout autre type d'événement important
+
+            // Ne rafraîchir qu'une seule fois après un changement de phase
+            setTimeout(() => fetchGameData(), 200);
+          } else if (data.type === 'new_answer' || data.type === 'new_vote') {
+            // Pour ces événements, mettre à jour uniquement les données nécessaires
             fetchGameData();
           }
         };
@@ -318,20 +277,21 @@ export default function GameScreen() {
       socketCleanup = cleanup;
     });
 
-    // Intervalle de récupération pour les cas où le jeu reste bloqué en phase d'attente
+    // Modifier l'intervalle de récupération
     recoveryInterval = setInterval(() => {
       const currentTime = Date.now();
+      const isStuck = gameState.phase === GamePhase.WAITING && 
+                     gameState.timer && 
+                     currentTime > gameState.timer.startTime + (gameState.timer.duration * 1000) + 2000;
       
-      if (gameState.phase === GamePhase.WAITING && 
-          (!gameState.timer || 
-           (gameState.timer && currentTime > gameState.timer.startTime + (gameState.timer.duration * 1000) + 5000))) {
-        console.log('⚠️ Détection possible blocage en phase d\'attente - forçage actualisation');
+      if (isStuck) {
+        console.log('⚠️ Phase bloquée détectée - rafraîchissement unique');
         fetchGameData();
       }
-    }, 5000);
+    }, 10000); // Augmenter l'intervalle à 10 secondes
     
-    // Intervalle de rafraîchissement normal pour garder les données à jour
-    refreshInterval = setInterval(fetchGameData, 15000);
+    // Réduire la fréquence du rafraîchissement normal
+    refreshInterval = setInterval(fetchGameData, 30000); // Augmenter à 30 secondes
     
     return () => {
       clearInterval(refreshInterval);

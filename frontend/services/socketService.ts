@@ -565,4 +565,20 @@ export default class SocketService {
       }
     };
   }
+
+  /**
+   * Envoie une mise à jour de jeu via le socket
+   */
+  public static async sendGameUpdate(gameId: string, type: string, data: any) {
+    try {
+      const socket = await SocketService.getInstanceAsync();
+      socket.emit('game:update', {
+        gameId,
+        type,
+        ...data
+      });
+    } catch (error) {
+      console.error('❌ Erreur lors de l\'envoi de la mise à jour:', error);
+    }
+  }
 }
