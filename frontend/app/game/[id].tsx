@@ -5,15 +5,15 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import QuestionPhase from '@/components/game/QuestionPhase';
 import AnswerPhase from '@/components/game/AnswerPhase';
-import VotePhase from '@/components/game/VotePhase';  // S'assurer que l'import est correct
+import VotePhase from '@/components/game/VotePhase';
 import ResultsPhase from '@/components/game/ResultsPhase';
 import LoadingOverlay from '@/components/common/LoadingOverlay';
 import { useAuth } from '@/contexts/AuthContext';
 import { Player, GamePhase, GameState, Answer, Question } from '@/types/gameTypes';
 import gameService from '@/services/queries/game';
 import SocketService from '@/services/socketService';
-import api from '@/config/axios'; // Ajout de l'import manquant
-import NetInfo from '@react-native-community/netinfo'; // Ajout de l'import manquant
+import api from '@/config/axios';
+import NetInfo from '@react-native-community/netinfo';
 import GameTimer from '@/components/game/GameTimer';
 import gameDebugger from '@/utils/gameDebugger';
 import AsyncStorage from '@react-native-async-storage/async-storage';
