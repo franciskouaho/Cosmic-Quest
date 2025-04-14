@@ -151,51 +151,28 @@ class GameService {
       const userId = await UserIdManager.getUserId();
       console.log(`👤 Soumission de réponse par utilisateur ${userId}`);
       
-      // Obtenir une instance du socket
+      // Vérifier que la connexion WebSocket est établie
       const socket = await SocketService.getInstanceAsync();
       
-      // Créer une promesse pour attendre la confirmation du serveur
-      return new Promise((resolve, reject) => {
-        // Définir un timeout plus long (5 secondes) pour la confirmation WebSocket
-        const timeoutId = setTimeout(() => {
-          console.error('⏱️ Timeout WebSocket atteint, la soumission a échoué');
-          reject(new Error('Le serveur a mis trop de temps à répondre. Veuillez réessayer.'));
-        }, 5000);
-        
-        // Écouter l'événement de confirmation
-        const handleConfirmation = (data) => {
-          if (data.questionId === questionId) {
-            console.log('✅ Confirmation WebSocket reçue pour la réponse');
-            clearTimeout(timeoutId);
-            socket.off('answer:confirmation', handleConfirmation);
-            resolve({ success: true });
-          }
-        };
-        
-        // S'abonner à l'événement de confirmation
-        socket.on('answer:confirmation', handleConfirmation);
-        
-        // Envoyer la réponse via WebSocket
-        socket.emit('game:submit_answer', {
-          gameId,
-          questionId,
-          content
-        }, (ackData) => {
-          if (ackData && ackData.success) {
-            console.log('✅ Accusé de réception WebSocket reçu pour la réponse');
-            clearTimeout(timeoutId);
-            socket.off('answer:confirmation', handleConfirmation);
-            resolve({ success: true });
-          } else if (ackData && ackData.error) {
-            console.error(`❌ Erreur lors de la soumission WebSocket: ${ackData.error}`);
-            clearTimeout(timeoutId);
-            socket.off('answer:confirmation', handleConfirmation);
-            reject(new Error(ackData.error));
-          }
-        });
+      if (!socket.connected) {
+        console.warn('⚠️ Socket non connecté, tentative de reconnexion...');
+        await this.ensureSocketConnection(gameId);
+      }
+      
+      // Utiliser la nouvelle méthode du service socket
+      const result = await SocketService.submitAnswer({
+        gameId,
+        questionId,
+        content
       });
+      
+      console.log('✅ Réponse soumise avec succès via WebSocket');
+      return { success: true };
     } catch (error) {
       console.error('❌ Erreur lors de la soumission de la réponse:', error);
+      
+      // Si l'erreur est liée au WebSocket, on pourrait essayer une méthode de secours via HTTP
+      // Mais pour simplifier, on propage simplement l'erreur
       throw error;
     }
   }
@@ -208,82 +185,43 @@ class GameService {
       const userId = await UserIdManager.getUserId();
       console.log(`👤 Soumission de vote par utilisateur ${userId}`);
       
-      // Obtenir une instance du socket
+      // Vérifier que la connexion WebSocket est établie
       const socket = await SocketService.getInstanceAsync();
       
-      // Créer une promesse pour attendre la confirmation du serveur
-      return new Promise((resolve, reject) => {
-        // Définir un timeout pour la confirmation WebSocket
-        const timeoutId = setTimeout(() => {
-          console.error('⏱️ Timeout WebSocket atteint, le vote a échoué');
-          
-          // En cas d'échec WebSocket, essayer en fallback via HTTP
-          console.log('🔄 Tentative de fallback via HTTP');
-          try {
-            const url = `/games/${gameId}/vote`;
-            console.log('🔐 API Request (fallback): POST', url);
-            
-            api.post(url, {
-              answer_id: answerId,
-              question_id: questionId
-            }).then(response => {
-              console.log('✅ GameService: Vote soumis avec succès via HTTP (fallback)');
-              resolve(response.data);
-            }).catch(httpError => {
-              console.error('❌ Même le fallback HTTP a échoué:', httpError);
-              reject(new Error('Impossible de soumettre votre vote. Veuillez réessayer.'));
-            });
-          } catch (fallbackError) {
-            reject(fallbackError);
-          }
-        }, 5000);
-        
-        // Écouter l'événement de confirmation
-        const handleConfirmation = (data) => {
-          if (data.questionId === questionId) {
-            console.log('✅ Confirmation WebSocket reçue pour le vote');
-            clearTimeout(timeoutId);
-            socket.off('vote:confirmation', handleConfirmation);
-            resolve({ success: true });
-          }
-        };
-        
-        // S'abonner à l'événement de confirmation
-        socket.on('vote:confirmation', handleConfirmation);
-        
-        // Envoyer le vote via WebSocket
-        socket.emit('game:submit_vote', {
-          gameId,
-          answerId,
-          questionId
-        }, (ackData) => {
-          if (ackData && ackData.success) {
-            console.log('✅ Accusé de réception WebSocket reçu pour le vote');
-            clearTimeout(timeoutId);
-            socket.off('vote:confirmation', handleConfirmation);
-            resolve({ success: true });
-          } else if (ackData && ackData.error) {
-            console.error(`❌ Erreur lors de la soumission du vote WebSocket: ${ackData.error}`);
-            clearTimeout(timeoutId);
-            socket.off('vote:confirmation', handleConfirmation);
-            reject(new Error(ackData.error));
-          }
-        });
+      if (!socket.connected) {
+        console.warn('⚠️ Socket non connecté, tentative de reconnexion...');
+        await this.ensureSocketConnection(gameId);
+      }
+      
+      // Utiliser la nouvelle méthode du service socket
+      const result = await SocketService.submitVote({
+        gameId,
+        answerId,
+        questionId
       });
+      
+      console.log('✅ Vote soumis avec succès via WebSocket');
+      return { success: true };
     } catch (error) {
       console.error('❌ GameService: Erreur lors de la soumission du vote:', error);
       
-      // En dernier recours, essayer via HTTP
-      const url = `/games/${gameId}/vote`;
-      console.log('🔐 API Request (dernier recours): POST', url);
-      
-      const response = await api.post(url, {
-        answer_id: answerId,
-        question_id: questionId
-      });
-      
-      console.log('✅ GameService: Vote soumis avec succès via HTTP (dernier recours)');
-      return response.data;
+      // En cas d'échec via WebSocket, essayer en fallback via HTTP
+      console.log('🔄 Tentative de fallback via HTTP');
+      try {
+        const url = `/games/${gameId}/vote`;
+        console.log('🔐 API Request (fallback): POST', url);
+        
+        const response = await api.post(url, {
+          answer_id: answerId,
+          question_id: questionId
+        });
+        
+        console.log('✅ GameService: Vote soumis avec succès via HTTP (fallback)');
+        return response.data;
+      } catch (httpError) {
+        console.error('❌ Même le fallback HTTP a échoué:', httpError);
+        throw new Error('Impossible de soumettre votre vote. Veuillez réessayer.');
+      }
     }
   }
 
@@ -326,8 +264,13 @@ class GameService {
         console.log(`🔌 Reconnexion WebSocket au jeu ${gameId}`);
         
         try {
-          // Utiliser l'initialisation asynchrone qui est plus fiable
-          const socket = await SocketService.getInstanceAsync();
+          // Tenter une reconnexion forcée avec un délai court
+          const socket = await SocketService.getInstanceAsync(true);
+          
+          // Attendre un bref moment pour que la connexion se stabilise
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
+          // Rejoindre le canal de jeu
           await SocketService.joinGameChannel(gameId);
           console.log(`✅ Reconnexion WebSocket réussie pour le jeu ${gameId}`);
           return true;

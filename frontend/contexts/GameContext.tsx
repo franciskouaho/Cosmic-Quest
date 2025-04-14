@@ -218,16 +218,19 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       console.log('🎮 GameContext: Soumission du vote...');
       setIsSubmitting(true);
       
-      // Assurer que la connexion WebSocket est bien établie
+      // Assurer que la connexion WebSocket est bien établie avant de soumettre le vote
       await gameService.ensureSocketConnection(gameId);
+      
+      // Attendre un bref moment pour que la connexion WebSocket soit stable
+      await new Promise(resolve => setTimeout(resolve, 300));
       
       // Utiliser la méthode mise à jour qui privilégie WebSocket
       await gameService.submitVote(gameId, answerId, gameState.currentQuestion.id.toString());
       
-      setGameState(prevState => ({
-        ...prevState,
+      setGameState(prev => ({
+        ...prev,
         currentUserState: {
-          ...prevState.currentUserState,
+          ...prev.currentUserState,
           hasVoted: true,
         },
         phase: GamePhase.WAITING,

@@ -24,6 +24,23 @@ interface DiagnosticResult {
   };
 }
 
+// Ajout d'interfaces pour la communication WebSocket
+interface SubmitAnswerPayload {
+  gameId: string;
+  questionId: string;
+  content: string;
+}
+
+interface SubmitVotePayload {
+  gameId: string;
+  answerId: string;
+  questionId: string;
+}
+
+interface SocketCallback {
+  (response: any): void;
+}
+
 export default class SocketService {
   private static instance: Socket | null = null;
   private static isInitializing: boolean = false;
@@ -623,15 +640,14 @@ export default class SocketService {
    * en cas de blocage détecté
    */
   public static async forcePhaseCheck(gameId: string): Promise<void> {
-    try {
-      const socket = await SocketService.getInstanceAsync();
-
-      console.log(`🔄 Demande de vérification forcée pour le jeu ${gameId}`);
-      socket.emit('game:force_check', { gameId });
-    } catch (error) {
-      console.error(`❌ Erreur lors de la vérification de phase pour le jeu ${gameId}:`, error);
-      throw error;
+    const socket = await this.getInstanceAsync();
+    
+    if (!socket.connected) {
+      throw new Error('Socket non connecté. Impossible d\'envoyer la vérification de phase.');
     }
+    
+    socket.emit('game:force_check', { gameId });
+    console.log(`🔄 Demande de vérification forcée envoyée pour le jeu ${gameId}`);
   }
 
   /**
@@ -674,5 +690,103 @@ export default class SocketService {
       console.error('❌ Erreur lors de la réinitialisation de l\'état du jeu:', error);
       return false;
     }
+  }
+
+  /**
+   * Soumettre une réponse via WebSocket
+   * @param payload Données de la réponse 
+   * @returns Promise résolue avec la réponse du serveur
+   */
+  async submitAnswer(payload: SubmitAnswerPayload): Promise<any> {
+    const socket = await this.getInstanceAsync();
+    
+    if (!socket.connected) {
+      throw new Error('Socket non connecté. Impossible de soumettre la réponse.');
+    }
+    
+    return new Promise((resolve, reject) => {
+      // Timeout de 8 secondes pour la réponse du serveur
+      const timeoutId = setTimeout(() => {
+        socket.off('answer:confirmation');
+        reject(new Error('Délai d\'attente dépassé pour la réponse du serveur'));
+      }, 8000);
+      
+      // Configurer l'écouteur pour la confirmation
+      const handleConfirmation = (data) => {
+        if (data.questionId === payload.questionId) {
+          clearTimeout(timeoutId);
+          socket.off('answer:confirmation', handleConfirmation);
+          resolve(data);
+        }
+      };
+      
+      // S'abonner à l'événement de confirmation
+      socket.on('answer:confirmation', handleConfirmation);
+      
+      // Envoyer la réponse
+      socket.emit('game:submit_answer', payload, (ackData) => {
+        // Traitement de l'acquittement immédiat
+        if (ackData) {
+          if (ackData.success) {
+            // L'acquittement est positif mais nous attendons toujours la confirmation
+            console.log('✅ Acquittement positif reçu pour la réponse');
+          } else {
+            // L'acquittement indique une erreur, nous pouvons déjà rejeter
+            clearTimeout(timeoutId);
+            socket.off('answer:confirmation', handleConfirmation);
+            reject(new Error(ackData.error || 'Erreur lors de la soumission de la réponse'));
+          }
+        }
+      });
+    });
+  }
+
+  /**
+   * Soumettre un vote via WebSocket
+   * @param payload Données du vote
+   * @returns Promise résolue avec la réponse du serveur
+   */
+  async submitVote(payload: SubmitVotePayload): Promise<any> {
+    const socket = await this.getInstanceAsync();
+    
+    if (!socket.connected) {
+      throw new Error('Socket non connecté. Impossible de soumettre le vote.');
+    }
+    
+    return new Promise((resolve, reject) => {
+      // Timeout de 8 secondes pour la réponse du serveur
+      const timeoutId = setTimeout(() => {
+        socket.off('vote:confirmation');
+        reject(new Error('Délai d\'attente dépassé pour la confirmation du vote'));
+      }, 8000);
+      
+      // Configurer l'écouteur pour la confirmation
+      const handleConfirmation = (data) => {
+        if (data.questionId === payload.questionId) {
+          clearTimeout(timeoutId);
+          socket.off('vote:confirmation', handleConfirmation);
+          resolve(data);
+        }
+      };
+      
+      // S'abonner à l'événement de confirmation
+      socket.on('vote:confirmation', handleConfirmation);
+      
+      // Envoyer le vote
+      socket.emit('game:submit_vote', payload, (ackData) => {
+        // Traitement de l'acquittement immédiat
+        if (ackData) {
+          if (ackData.success) {
+            // L'acquittement est positif mais nous attendons toujours la confirmation
+            console.log('✅ Acquittement positif reçu pour le vote');
+          } else {
+            // L'acquittement indique une erreur, nous pouvons déjà rejeter
+            clearTimeout(timeoutId);
+            socket.off('vote:confirmation', handleConfirmation);
+            reject(new Error(ackData.error || 'Erreur lors de la soumission du vote'));
+          }
+        }
+      });
+    });
   }
 }

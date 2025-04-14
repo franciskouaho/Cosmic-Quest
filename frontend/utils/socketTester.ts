@@ -334,6 +334,152 @@ export const submitVoteViaSocket = async (gameId: string, answerId: string, ques
   }
 };
 
+/**
+ * Outils de diagnostic pour les situations de joueur ciblé
+ * @param gameId ID de la partie
+ */
+export const diagnoseTargetPlayer = async (gameId: string) => {
+  try {
+    const socket = await SocketService.getInstanceAsync();
+    console.log(`🔍 Diagnostic de joueur ciblé pour jeu ${gameId}...`);
+
+    if (!socket.connected) {
+      console.error('❌ Socket non connecté, diagnostic impossible');
+      return { success: false, error: 'Socket non connecté' };
+    }
+
+    // Récupérer l'état actuel du jeu
+    const gameState = socket.gameState;
+    const userData = socket.userData;
+
+    if (!gameState || !userData) {
+      console.error('❌ Données insuffisantes pour le diagnostic');
+      return { 
+        success: false, 
+        error: 'Données insuffisantes',
+        gameStateAvailable: !!gameState,
+        userDataAvailable: !!userData 
+      };
+    }
+
+    const currentQuestion = gameState?.currentQuestion;
+    const userId = userData.id;
+    
+    console.log('📊 État du jeu:', {
+      currentPhase: gameState.currentPhase,
+      hasCurrentQuestion: !!currentQuestion,
+      questionId: currentQuestion?.id,
+      hasTargetPlayer: !!currentQuestion?.targetPlayer,
+      targetPlayerId: currentQuestion?.targetPlayer?.id,
+      currentUserId: userId
+    });
+
+    // Vérifier si l'utilisateur est la cible
+    const isTarget = currentQuestion?.targetPlayer?.id === userId;
+    
+    return {
+      success: true,
+      isTarget,
+      currentPhase: gameState.currentPhase,
+      userId,
+      targetId: currentQuestion?.targetPlayer?.id,
+      questionId: currentQuestion?.id
+    };
+  } catch (error) {
+    console.error('❌ Erreur durant le diagnostic du joueur ciblé:', error);
+    return { success: false, error: error.message };
+  }
+};
+
+/**
+ * Tester la soumission d'une réponse via WebSocket
+ * @param gameId ID de la partie
+ * @param questionId ID de la question
+ * @param content Contenu de la réponse
+ */
+export const testSubmitAnswerViaSocket = async (gameId: string, questionId: string, content: string) => {
+  try {
+    const socket = await SocketService.getInstanceAsync();
+    console.log(`🧪 Test de soumission de réponse via WebSocket - jeu: ${gameId}, question: ${questionId}`);
+    
+    return new Promise((resolve, reject) => {
+      // Configurer un timeout
+      const timeoutId = setTimeout(() => {
+        socket.off('answer:confirmation');
+        reject(new Error('Timeout: Pas de réponse du serveur après 5 secondes'));
+      }, 5000);
+      
+      // Écouter l'événement de confirmation
+      socket.once('answer:confirmation', (data) => {
+        clearTimeout(timeoutId);
+        console.log('✅ Confirmation de réponse reçue:', data);
+        resolve({ success: true, data });
+      });
+      
+      // Envoyer la réponse
+      socket.emit('game:submit_answer', {
+        gameId,
+        questionId,
+        content
+      }, (ackData) => {
+        // Ceci est le callback d'acquittement immédiat
+        console.log('📨 Acquittement immédiat reçu:', ackData);
+        if (ackData && !ackData.success) {
+          clearTimeout(timeoutId);
+          socket.off('answer:confirmation');
+          reject(new Error(`Erreur lors de la soumission: ${ackData.error || 'Inconnue'}`));
+        }
+      });
+    });
+  } catch (error) {
+    console.error('❌ Erreur lors du test de soumission:', error);
+    throw error;
+  }
+};
+
+/**
+ * Tester la soumission d'un vote via WebSocket
+ */
+export const testSubmitVoteViaSocket = async (gameId: string, answerId: string, questionId: string) => {
+  try {
+    const socket = await SocketService.getInstanceAsync();
+    console.log(`🧪 Test de soumission de vote via WebSocket - jeu: ${gameId}, réponse: ${answerId}`);
+    
+    return new Promise((resolve, reject) => {
+      // Configurer un timeout
+      const timeoutId = setTimeout(() => {
+        socket.off('vote:confirmation');
+        reject(new Error('Timeout: Pas de réponse du serveur après 5 secondes'));
+      }, 5000);
+      
+      // Écouter l'événement de confirmation
+      socket.once('vote:confirmation', (data) => {
+        clearTimeout(timeoutId);
+        console.log('✅ Confirmation de vote reçue:', data);
+        resolve({ success: true, data });
+      });
+      
+      // Envoyer le vote
+      socket.emit('game:submit_vote', {
+        gameId,
+        answerId,
+        questionId
+      }, (ackData) => {
+        // Ceci est le callback d'acquittement immédiat
+        console.log('📨 Acquittement immédiat reçu:', ackData);
+        if (ackData && !ackData.success) {
+          clearTimeout(timeoutId);
+          socket.off('vote:confirmation');
+          reject(new Error(`Erreur lors du vote: ${ackData.error || 'Inconnue'}`));
+        }
+      });
+    });
+  } catch (error) {
+    console.error('❌ Erreur lors du test de vote:', error);
+    throw error;
+  }
+};
+
 export default {
   testSocketConnection,
   checkSocketStatus,
@@ -342,4 +488,7 @@ export default {
   testTargetPlayerScenario,
   diagTargetPlayerStatus,
   submitVoteViaSocket,
+  diagnoseTargetPlayer,
+  testSubmitAnswerViaSocket,
+  testSubmitVoteViaSocket,
 };

@@ -418,13 +418,16 @@ export default function GameScreen() {
     }
     
     try {
-      console.log("🎮 Tentative de soumission de réponse...");
+      console.log("🎮 Tentative de soumission de réponse via WebSocket...");
       setIsSubmitting(true);
       
       // Assurer que la connexion WebSocket est bien établie
       await gameService.ensureSocketConnection(id as string);
       
-      // Utiliser uniquement WebSocket pour soumettre la réponse
+      // Attendre un bref moment pour que la connexion WebSocket soit stable
+      await new Promise(resolve => setTimeout(resolve, 300));
+      
+      // Utiliser la nouvelle méthode WebSocket optimisée
       await gameService.submitAnswer(id as string, gameState.currentQuestion.id, answer);
       
       Alert.alert("Réponse envoyée", "En attente des autres joueurs...");
@@ -468,10 +471,10 @@ export default function GameScreen() {
     } finally {
       setIsSubmitting(false);
       
-      // Rafraîchir les données après un court délai
+      // Rafraîchir les données après un court délai pour refléter les changements
       setTimeout(() => {
         fetchGameData();
-      }, 1500);
+      }, 1000);
     }
   };
   
@@ -488,6 +491,10 @@ export default function GameScreen() {
       // Assurer que la connexion WebSocket est bien établie
       await gameService.ensureSocketConnection(id as string);
       
+      // Attendre un bref moment pour que la connexion soit stable
+      await new Promise(resolve => setTimeout(resolve, 300));
+      
+      // Utiliser la méthode WebSocket optimisée
       await gameService.submitVote(id as string, answerId, gameState.currentQuestion.id.toString());
       
       Alert.alert("Vote enregistré", "En attente des résultats...");
@@ -502,9 +509,22 @@ export default function GameScreen() {
       }));
     } catch (error) {
       console.error("❌ Erreur lors du vote:", error);
-      Alert.alert("Erreur", "Impossible d'enregistrer votre vote. Veuillez réessayer.");
+      
+      // Analyse détaillée de l'erreur
+      let errorMessage = "Impossible d'enregistrer votre vote. Veuillez réessayer.";
+      
+      if (error.message) {
+        errorMessage = error.message;
+      }
+      
+      Alert.alert("Erreur", errorMessage);
     } finally {
       setIsSubmitting(false);
+      
+      // Rafraîchir les données après un court délai pour refléter les changements
+      setTimeout(() => {
+        fetchGameData();
+      }, 1000);
     }
   };
   
