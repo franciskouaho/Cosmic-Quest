@@ -8,6 +8,7 @@ export default class QuestionsController {
   async getRandom({ request, response }: HttpContext) {
     try {
       const theme = request.input('theme', 'standard')
+      const playerName = request.input('playerName', null) // Optionnel: si on veut formater directement côté backend
 
       const question = await questionService.getRandomQuestionByTheme(theme)
 
@@ -17,6 +18,8 @@ export default class QuestionsController {
         })
       }
 
+      // Le texte est renvoyé avec le placeholder {playerName} intact
+      // Le frontend se chargera de remplacer ce placeholder par le nom du joueur
       return response.ok({
         status: 'success',
         data: {

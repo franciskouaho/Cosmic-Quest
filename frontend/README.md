@@ -25,6 +25,29 @@ In the output, you'll find options to open the app in a
 
 You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
 
+## Cosmic Quest: Déroulement du jeu
+
+Le jeu Cosmic Quest se déroule en plusieurs phases:
+
+1. **Phase QUESTION**: Les joueurs voient la question, et la personne concernée (targetPlayer) est informée.
+2. **Phase ANSWER**: Tous les joueurs sauf la cible soumettent leurs réponses.
+3. **Phase VOTE**: La cible vote pour sa réponse préférée (tous les autres en attente).
+4. **Phase RESULTS**: Affichage des résultats et des scores.
+
+Si un joueur reste bloqué en attente alors que tous les joueurs ont répondu, cela peut indiquer:
+
+- Un problème de synchronisation entre le client et le serveur
+- Des conditions de transition de phase non remplies
+- Un problème de socket pour les mises à jour en temps réel
+
+### Dépannage
+
+Si tous les joueurs sont bloqués en "attente":
+
+- Vérifiez si tous les joueurs éligibles ont bien répondu
+- Essayez d'actualiser manuellement l'état du jeu
+- Pour les développeurs: vérifiez les logs côté serveur pour identifier les blocages potentiels
+
 ## Get a fresh project
 
 When you're ready, run:

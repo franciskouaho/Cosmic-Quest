@@ -1,12 +1,9 @@
 import { Question } from '../types/gameTypes';
+import questionService from '../services/queries/question';
+import questionCache from './questionCache';
 
 export type GameTheme = 
-  | 'standard' 
-  | 'fun'
-  | 'dark'
-  | 'personal'
-  | 'crazy'
-  | 'on-ecoute-mais-on-ne-juge-pas';
+'on-ecoute-mais-on-ne-juge-pas';
 
 /**
  * Génère un objet Question complet basé sur un thème et un nom de joueur
@@ -14,85 +11,91 @@ export type GameTheme =
  * @param playerName - Le nom du joueur à insérer dans la question
  * @returns Un objet Question avec le nom du joueur inséré
  */
-export function generateQuestionObject(theme: GameTheme, playerName: string): Question {
-  const questionText = generateQuestion(theme, playerName);
-  return createQuestionObject(questionText, theme);
+export async function generateQuestionObject(theme: GameTheme, playerName: string): Promise<Question> {
+  try {
+    console.log(`🔍 Génération d'une question pour le thème: ${theme}`);
+    
+    // PRIORITÉ 1: Vérifier le cache local
+    if (questionCache.hasCachedQuestions(theme)) {
+      console.log("📋 Utilisation d'une question mise en cache");
+      const cachedQuestion = questionCache.getRandomQuestionFromCache(theme);
+      
+      if (cachedQuestion) {
+        const formattedText = questionService.formatQuestion(cachedQuestion.text, playerName);
+        return {
+          ...cachedQuestion,
+          text: formattedText
+        };
+      }
+    }
+    
+    // PRIORITÉ 2: Récupérer depuis le backend
+    console.log("🌐 Tentative de récupération d'une question depuis le backend");
+    const questionFromServer = await questionService.getRandomQuestion(theme);
+    
+    if (questionFromServer) {
+      // Ajouter au cache pour une utilisation future
+      questionCache.addToCache(questionFromServer);
+      
+      // Formater avec le nom du joueur
+      const formattedText = questionService.formatQuestion(questionFromServer.text, playerName);
+      return {
+        id: questionFromServer.id,
+        text: formattedText,
+        theme: questionFromServer.theme || theme
+      };
+    }
+    
+    // PRIORITÉ 3: Utiliser une question par défaut très basique
+    console.log('⚠️ Échec de la récupération depuis le backend - Utilisation de la question de secours');
+    return createEmergencyQuestion(theme, playerName);
+    
+  } catch (error) {
+    console.error('❌ Erreur lors de la génération de question:', error);
+    // En cas d'erreur, utiliser la question d'urgence
+    return createEmergencyQuestion(theme, playerName);
+  }
 }
 
 /**
- * Génère le texte d'une question basée sur un thème et un nom de joueur
+ * Crée une question d'urgence très simple en cas d'échec total de l'API
  * @param theme - Le thème de la question
- * @param playerName - Le nom du joueur à insérer dans la question
- * @returns Le texte de la question avec le nom du joueur inséré
+ * @param playerName - Le nom du joueur à insérer
+ * @returns Un objet Question basique
  */
-function generateQuestion(theme: GameTheme, playerName: string): string {
-  const questions = {
-    standard: [
-      `${playerName} participe à un jeu télévisé. Quelle serait sa phrase d'accroche ?`,
-      `Si ${playerName} était un super-héros, quel serait son pouvoir ?`,
-      `Quel emoji représente le mieux ${playerName} ?`,
-    ],
-    fun: [
-      `Si ${playerName} était un mème internet, lequel serait-il ?`,
-      `Quel talent caché pourrait avoir ${playerName} ?`,
-      `Quelle chanson définit le mieux ${playerName} ?`,
-    ],
-    dark: [
-      `Quel serait le plan machiavélique de ${playerName} pour dominer le monde ?`,
-      `Si ${playerName} était un méchant de film, quelle serait sa phrase culte ?`,
-      `Quel est le plus grand secret que ${playerName} pourrait cacher ?`,
-    ],
-    personal: [
-      `Quelle habitude agaçante ${playerName} a-t-il probablement ?`,
-      `Quel serait le pire cadeau à offrir à ${playerName} ?`,
-      `Si la vie de ${playerName} était une série TV, quel en serait le titre ?`,
-    ],
-    crazy: [
-      `Si ${playerName} pouvait fusionner avec un objet du quotidien, lequel choisirait-il ?`,
-      `Quelle capacité absurde ${playerName} aimerait développer ?`,
-      `Si ${playerName} était une créature mythologique, laquelle serait-il et pourquoi ?`,
-    ],
-    'on-ecoute-mais-on-ne-juge-pas': [
-      `Si ${playerName} devait confesser un péché mignon, lequel serait-ce ?`,
-      `Quelle est la pire habitude de ${playerName} qu'il/elle n'admettra jamais publiquement ?`,
-      `Comment ${playerName} réagirait face à un compliment sincère mais inattendu ?`,
-      `Quel secret ${playerName} serait-il/elle prêt(e) à partager uniquement dans cette pièce ?`,
-      `Quelle émotion ${playerName} a-t-il/elle le plus de mal à exprimer ?`,
-      `Dans quel domaine ${playerName} aimerait-il/elle être meilleur(e) mais a peur d'essayer ?`,
-      `Si ${playerName} devait écrire une lettre à son "moi" passé, quel conseil donnerait-il/elle ?`,
-      `Quelle situation fait le plus douter ${playerName} de ses capacités ?`,
-    ],
-  };
+function createEmergencyQuestion(theme: GameTheme, playerName: string): Question {
+  // Questions d'urgence très basiques, une par thème
+  let questionText = `À propos de ${playerName}, que pensez-vous de cette personne?`;
   
-  // Si le thème n'existe pas, utiliser le thème standard
-  const themeQuestions = questions[theme] || questions.standard;
-  
-  // Sélectionner une question aléatoire
-  const randomIndex = Math.floor(Math.random() * themeQuestions.length);
-  return themeQuestions[randomIndex];
-}
+  // Légère customisation selon le thème
+  switch(theme) {
+    case 'on-ecoute-mais-on-ne-juge-pas':
+      questionText = `Quel est le secret le mieux gardé de ${playerName}?`;
+      break;
+  }
 
-// Exporter la fonction pour qu'elle puisse être utilisée ailleurs
-export default generateQuestion;
-
-/**
- * Crée un objet Question à partir d'un texte et d'un thème
- * @param text - Le texte de la question
- * @param theme - Le thème de la question
- * @returns Un objet Question
- */
-function createQuestionObject(text: string, theme: GameTheme): Question {
   return {
-    id: generateUniqueId(),
-    text: text,
+    id: `emergency-${generateUniqueId()}`,
+    text: questionText,
     theme: theme,
   };
 }
 
 /**
  * Génère un ID unique pour une question
- * @returns Une chaîne ID unique
+ * @returns Un ID unique
  */
 function generateUniqueId(): string {
   return Math.random().toString(36).substring(2) + Date.now().toString(36);
 }
+
+/**
+ * Pour compatibilité avec le code existant
+ */
+export function generateQuestion(theme: GameTheme, playerName: string): Promise<string> {
+  return generateQuestionObject(theme, playerName)
+    .then(question => question.text)
+    .catch(() => `Si ${playerName} était un personnage fictif, lequel serait-il?`); // Question d'urgence ultime
+}
+
+export default generateQuestion;

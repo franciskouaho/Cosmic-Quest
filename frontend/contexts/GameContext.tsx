@@ -94,6 +94,15 @@ function gameStateReducer(state: GameState, action: GameAction): GameState {
       };
     }
       
+    case 'FORCE_REFRESH_GAME': {
+      // Nouveau cas pour forcer le rafraîchissement du jeu sans attendre
+      console.log(`🔄 Forçage du rafraîchissement de l'état du jeu`);
+      return {
+        ...state,
+        lastRefreshed: Date.now() // Ajouter un timestamp pour déclencher un rafraîchissement
+      };
+    }
+      
     default:
       return state;
   }
