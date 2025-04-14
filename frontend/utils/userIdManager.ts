@@ -1,126 +1,178 @@
-/**
- * Gestionnaire d'ID utilisateur pour l'authentification dans les APIs et WebSockets
- */
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import api from '@/config/axios';
-import SocketService from '@/services/socketService';
+import { Platform } from 'react-native';
 
+/**
+ * Service de gestion de l'ID utilisateur
+ * Centralise l'accès à l'ID utilisateur à travers l'application
+ */
 class UserIdManager {
-  private static USER_ID_KEY = '@current_user_id';
-  
+  private userId: string | null = null;
+  private initialized = false;
+
   /**
-   * Récupère l'ID utilisateur depuis le stockage local
+   * Définit l'ID utilisateur et le stocke dans AsyncStorage
+   * @param userId ID de l'utilisateur
    */
-  static async getUserId(): Promise<string | null> {
+  async setUserId(userId: string | number): Promise<void> {
     try {
-      return await AsyncStorage.getItem(this.USER_ID_KEY);
+      // Convertir en string si nécessaire
+      const userIdStr = String(userId);
+      this.userId = userIdStr;
+      
+      // Stocker dans AsyncStorage
+      await AsyncStorage.setItem('@user_id', userIdStr);
+      
+      console.log(`👤 UserIdManager: ID utilisateur défini: ${userIdStr}`);
+      this.initialized = true;
+      
+      return;
     } catch (error) {
-      console.error('❌ Erreur lors de la récupération de l\'ID utilisateur:', error);
+      console.error('❌ UserIdManager: Erreur lors de la définition de l\'ID utilisateur:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Récupère l'ID utilisateur depuis la mémoire ou AsyncStorage
+   * @returns ID de l'utilisateur ou null si non défini
+   */
+  async getUserId(): Promise<string | null> {
+    try {
+      // Si déjà en mémoire, renvoyer directement
+      if (this.userId) {
+        return this.userId;
+      }
+      
+      // Sinon, tenter de récupérer depuis AsyncStorage
+      const storedId = await AsyncStorage.getItem('@user_id');
+      
+      if (storedId) {
+        this.userId = storedId;
+        this.initialized = true;
+        console.log(`👤 UserIdManager: ID utilisateur récupéré: ${storedId}`);
+      } else {
+        console.log('👤 UserIdManager: Aucun ID utilisateur stocké');
+      }
+      
+      return storedId;
+    } catch (error) {
+      console.error('❌ UserIdManager: Erreur lors de la récupération de l\'ID utilisateur:', error);
       return null;
     }
   }
-  
+
   /**
-   * Définit l'ID utilisateur dans le stockage local et les en-têtes API
+   * Supprime l'ID utilisateur
    */
-  static async setUserId(userId: string | number): Promise<boolean> {
+  async clearUserId(): Promise<void> {
     try {
-      // Convertir en chaîne si nécessaire
-      const userIdStr = String(userId);
-      
-      // Stocker dans AsyncStorage
-      await AsyncStorage.setItem(this.USER_ID_KEY, userIdStr);
-      
-      // Définir dans les en-têtes API
-      api.defaults.headers.userId = userIdStr;
-      
-      // Mettre à jour également dans le socket si disponible
-      try {
-        const socket = SocketService.getInstance();
-        if (socket) {
-          // Définir l'ID utilisateur dans l'objet auth
-          socket.auth = { 
-            ...socket.auth,
-            userId: userIdStr 
-          };
-          
-          console.log(`👤 UserIdManager: ID utilisateur ${userIdStr} défini dans la connexion socket`);
-        }
-      } catch (socketError) {
-        console.warn('⚠️ Socket non initialisé, impossible de définir l\'ID utilisateur dans le socket');
-      }
-      
-      console.log(`👤 UserIdManager: ID utilisateur ${userIdStr} défini et sauvegardé`);
-      return true;
+      this.userId = null;
+      await AsyncStorage.removeItem('@user_id');
+      console.log('👤 UserIdManager: ID utilisateur supprimé');
     } catch (error) {
-      console.error('❌ Erreur lors de la définition de l\'ID utilisateur:', error);
-      return false;
+      console.error('❌ UserIdManager: Erreur lors de la suppression de l\'ID utilisateur:', error);
     }
+  }
+
+  /**
+   * Vérifie si un ID utilisateur est défini
+   */
+  async hasUserId(): Promise<boolean> {
+    const id = await this.getUserId();
+    return id !== null;
   }
   
   /**
-   * Supprime l'ID utilisateur du stockage local et des en-têtes API
+   * Synchronise l'ID utilisateur entre AsyncStorage et les headers API
+   * Fonction spécifiquement demandée par le système
    */
-  static async removeUserId(): Promise<boolean> {
+  async syncUserId(api: any): Promise<string | null> {
     try {
-      // Supprimer de AsyncStorage
-      await AsyncStorage.removeItem(this.USER_ID_KEY);
-      
-      // Supprimer des en-têtes API
-      delete api.defaults.headers.userId;
-      
-      // Supprimer du socket si disponible
-      try {
-        const socket = SocketService.getInstance();
-        if (socket && socket.auth) {
-          delete socket.auth.userId;
-        }
-      } catch (socketError) {
-        // Ignorer les erreurs ici
-      }
-      
-      console.log('🗑️ UserIdManager: ID utilisateur supprimé');
-      return true;
-    } catch (error) {
-      console.error('❌ Erreur lors de la suppression de l\'ID utilisateur:', error);
-      return false;
-    }
-  }
-  
-  /**
-   * Synchronise l'ID utilisateur entre AsyncStorage et les services
-   */
-  static async syncUserIdAcrossServices(): Promise<string | null> {
-    try {
-      // Tenter de récupérer l'ID utilisateur
+      // Récupérer l'ID depuis AsyncStorage
       const userId = await this.getUserId();
       
-      if (userId) {
-        // S'assurer qu'il est défini partout
+      // Si un userId est disponible, le définir dans les en-têtes de l'API
+      if (userId && api?.defaults?.headers) {
         api.defaults.headers.userId = userId;
-        
-        try {
-          const socket = await SocketService.getInstanceAsync();
-          if (socket) {
-            socket.auth = { 
-              ...socket.auth,
-              userId 
-            };
-            console.log(`👤 UserIdManager: ID utilisateur ${userId} synchronisé avec le socket`);
-          }
-        } catch (socketError) {
-          console.warn('⚠️ Erreur lors de la synchronisation de l\'ID utilisateur avec le socket:', socketError);
-        }
-        
-        console.log(`👤 UserIdManager: ID utilisateur ${userId} synchronisé avec les services`);
+        console.log(`👤 UserIdManager: ID utilisateur ${userId} synchronisé avec les en-têtes API`);
+      } else if (!userId) {
+        console.warn('⚠️ UserIdManager: Aucun ID utilisateur à synchroniser');
       }
       
       return userId;
     } catch (error) {
-      console.error('❌ Erreur lors de la synchronisation de l\'ID utilisateur:', error);
+      console.error('❌ UserIdManager: Erreur lors de la synchronisation de l\'ID utilisateur:', error);
       return null;
+    }
+  }
+
+  /**
+   * Récupère le UserID de manière synchrone (sans garantie qu'il soit à jour)
+   * Utile dans les contextes où async/await n'est pas possible
+   */
+  getUserIdSync(): string | null {
+    return this.userId;
+  }
+
+  /**
+   * Vérifie si le gestionnaire a été initialisé
+   */
+  isInitialized(): boolean {
+    return this.initialized;
+  }
+  
+  /**
+   * Affiche les informations de débogage sur les IDs utilisateur
+   * dans différents contextes de l'application
+   * @returns Promise avec les informations de débogage
+   */
+  async debugUserIds(): Promise<Record<string, any>> {
+    try {
+      // Récupérer les IDs depuis différentes sources
+      const memoryId = this.userId;
+      const asyncStorageId = await AsyncStorage.getItem('@user_id');
+      const userDataString = await AsyncStorage.getItem('@user_data');
+      const userData = userDataString ? JSON.parse(userDataString) : null;
+      const userDataId = userData?.id || null;
+      const currentUserId = await AsyncStorage.getItem('@current_user_id');
+      
+      // Créer l'objet de diagnostic
+      const debugInfo = {
+        memoryId,
+        asyncStorageId,
+        userDataId,
+        currentUserId,
+        initialized: this.initialized,
+        platform: Platform.OS,
+        timestamp: new Date().toISOString(),
+      };
+      
+      console.log('🔍 Debug UserIDs:', debugInfo);
+      
+      // Détecter les incohérences
+      const uniqueIds = new Set([memoryId, asyncStorageId, userDataId, currentUserId].filter(Boolean));
+      if (uniqueIds.size > 1) {
+        console.warn('⚠️ Incohérence détectée entre les IDs utilisateur:', Array.from(uniqueIds));
+        
+        // Tenter de résoudre en donnant priorité à memoryId puis à userDataId
+        const prioritizedId = memoryId || userDataId || asyncStorageId || currentUserId;
+        
+        if (prioritizedId) {
+          console.log(`🔧 Tentative d'uniformisation avec ID: ${prioritizedId}`);
+          await this.setUserId(prioritizedId);
+        }
+      }
+      
+      return debugInfo;
+    } catch (error) {
+      console.error('❌ Erreur lors du débogage des IDs utilisateur:', error);
+      return {
+        error: error.message || 'Erreur inconnue',
+        timestamp: new Date().toISOString()
+      };
     }
   }
 }
 
-export default UserIdManager;
+// Exporter une instance singleton
+export default new UserIdManager();

@@ -288,42 +288,11 @@ export const submitVoteViaSocket = async (gameId: string, answerId: string, ques
     
     const socket = await SocketService.getInstanceAsync();
     
-    // Créer une promesse pour attendre la confirmation du serveur
-    return new Promise((resolve, reject) => {
-      // Définir un timeout pour la confirmation WebSocket
-      const timeoutId = setTimeout(() => {
-        console.error('⏱️ Timeout WebSocket atteint, le vote a échoué');
-        reject(new Error('Le serveur a mis trop de temps à répondre. Veuillez réessayer.'));
-      }, 5000);
-      
-      // Écouter l'événement de confirmation
-      const handleConfirmation = (data) => {
-        if (data.questionId === questionId) {
-          console.log('✅ Confirmation WebSocket reçue pour le vote');
-          clearTimeout(timeoutId);
-          socket.off('vote:confirmation', handleConfirmation);
-          resolve(true);
-        }
-      };
-      
-      // S'abonner à l'événement de confirmation
-      socket.on('vote:confirmation', handleConfirmation);
-      
-      // Envoyer le vote via WebSocket
-      socket.emit('game:submit_vote', {
-        gameId,
-        answerId,
-        questionId
-      }, (ackData) => {
-        if (ackData && ackData.success) {
-          console.log('✅ Accusé de réception WebSocket reçu pour le vote');
-        } else if (ackData && ackData.error) {
-          console.error(`❌ Erreur lors de la soumission du vote WebSocket: ${ackData.error}`);
-          clearTimeout(timeoutId);
-          socket.off('vote:confirmation', handleConfirmation);
-          reject(new Error(ackData.error));
-        }
-      });
+    // Utiliser la méthode officielle du SocketService
+    return await SocketService.submitVote({
+      gameId,
+      answerId,
+      questionId
     });
   } catch (error) {
     console.error('❌ Erreur lors de la soumission du vote via WebSocket:', error);
@@ -346,44 +315,11 @@ export const submitAnswerViaSocket = async (
   try {
     console.log(`📝 Tentative de réponse WebSocket - jeu: ${gameId}, question: ${questionId}`);
     
-    const socket = await SocketService.getInstanceAsync();
-    
-    // Créer une promesse pour attendre la confirmation du serveur
-    return new Promise((resolve, reject) => {
-      // Définir un timeout pour la confirmation WebSocket
-      const timeoutId = setTimeout(() => {
-        console.error('⏱️ Timeout WebSocket atteint, la réponse a échoué');
-        reject(new Error('Le serveur a mis trop de temps à répondre. Veuillez réessayer.'));
-      }, 5000);
-      
-      // Écouter l'événement de confirmation
-      const handleConfirmation = (data) => {
-        if (data.questionId === questionId) {
-          console.log('✅ Confirmation WebSocket reçue pour la réponse');
-          clearTimeout(timeoutId);
-          socket.off('answer:confirmation', handleConfirmation);
-          resolve(true);
-        }
-      };
-      
-      // S'abonner à l'événement de confirmation
-      socket.on('answer:confirmation', handleConfirmation);
-      
-      // Envoyer la réponse via WebSocket
-      socket.emit('game:submit_answer', {
-        gameId,
-        questionId,
-        content
-      }, (ackData) => {
-        if (ackData && ackData.success) {
-          console.log('✅ Accusé de réception WebSocket reçu pour la réponse');
-        } else if (ackData && ackData.error) {
-          console.error(`❌ Erreur lors de la soumission de la réponse WebSocket: ${ackData.error}`);
-          clearTimeout(timeoutId);
-          socket.off('answer:confirmation', handleConfirmation);
-          reject(new Error(ackData.error));
-        }
-      });
+    // Utiliser la méthode officielle du SocketService
+    return await SocketService.submitAnswer({
+      gameId,
+      questionId,
+      content
     });
   } catch (error) {
     console.error('❌ Erreur lors de la soumission de la réponse via WebSocket:', error);

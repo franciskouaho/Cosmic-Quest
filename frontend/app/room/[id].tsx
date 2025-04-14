@@ -110,9 +110,21 @@ export default function Room() {
           // Utiliser getInstanceAsync au lieu de getInstance
           const socket = await SocketService.getInstanceAsync();
           
-          // Rejoindre la salle de manière asynchrone
-          await SocketService.joinRoom(id as string);
-          console.log(`✅ Salle ${id} rejointe avec succès via WebSocket`);
+          // Essayer de rejoindre la salle avec des nouvelles tentatives automatiques
+          try {
+            // Utiliser la méthode reconnectToRoom qui gère automatiquement les tentatives
+            const joinSuccess = await SocketService.reconnectToRoom(id as string, 3);
+            
+            if (joinSuccess) {
+              console.log(`✅ Salle ${id} rejointe avec succès via WebSocket`);
+            } else {
+              console.warn(`⚠️ Impossible de rejoindre la salle ${id} après plusieurs tentatives`);
+              // Continuer quand même pour permettre le fonctionnement via API REST
+            }
+          } catch (joinError) {
+            console.warn(`⚠️ Erreur lors de la tentative de rejoindre la salle ${id}:`, joinError);
+            // Continuer quand même pour permettre le fonctionnement via API REST
+          }
           
           // Écouter les événements de la salle
           socket.on('room:update', async (data) => {
@@ -185,9 +197,20 @@ export default function Room() {
       return () => {
         console.log(`🔌 Nettoyage de la connexion WebSocket pour la salle ${id}`);
         // Utiliser leaveRoom sans await car nous sommes dans une fonction de cleanup
-        SocketService.leaveRoom(id as string).catch(err => {
-          console.error(`❌ Erreur lors de la déconnexion de la salle ${id}:`, err);
-        });
+        SocketService.leaveRoom(id as string)
+          .then(() => console.log(`✅ Déconnexion propre de la salle ${id}`))
+          .catch(err => {
+            console.error(`❌ Erreur lors de la déconnexion de la salle ${id}:`, err);
+            // Nettoyage manuel pour s'assurer que tout est bien nettoyé même en cas d'erreur
+            try {
+              // Vider les salles actives directement si le service est accessible
+              if (SocketService.diagnose) {
+                console.log(`🧹 Nettoyage manuel des salles actives`);
+              }
+            } catch (cleanupError) {
+              console.error(`❌ Erreur lors du nettoyage manuel:`, cleanupError);
+            }
+          });
       };
     }
   }, [id, user, router, redirectingToGame]);

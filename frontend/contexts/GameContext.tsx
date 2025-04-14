@@ -260,9 +260,43 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       
       setIsSubmitting(true);
       
+      // Assurer que la connexion WebSocket est établie
+      await gameService.ensureSocketConnection(gameId);
+      
+      // Court délai pour stabiliser la connexion
       await new Promise(resolve => setTimeout(resolve, 300));
       
-      await gameService.nextRound(gameId);
+      // Vérifier si l'utilisateur est l'hôte de la partie
+      const isHost = user?.id && gameState?.game?.roomId ? 
+        await gameService.isUserRoomHost(gameState.game.roomId, user.id) : false;
+      
+      if (isHost) {
+        console.log('👑 L\'utilisateur est l\'hôte de la partie');
+      }
+      
+      // Utiliser la méthode WebSocket pour le passage au tour suivant
+      try {
+        // Premier essai normal
+        await SocketService.nextRound(gameId, false);
+        console.log('✅ Passage au tour suivant via WebSocket réussi');
+      } catch (socketError) {
+        console.warn('⚠️ Échec du passage via WebSocket:', socketError.message);
+
+        // Si l'utilisateur est l'hôte et qu'on a une erreur d'autorisation, réessayer avec force=true
+        if (isHost && socketError.message && socketError.message.includes("l'hôte")) {
+          try {
+            console.log('🔄 Nouvel essai forcé en tant qu\'hôte');
+            await SocketService.nextRound(gameId, true);
+            console.log('✅ Passage forcé au tour suivant réussi');
+          } catch (forceError) {
+            // En dernier recours, utiliser l'API REST
+            await gameService.nextRound(gameId);
+          }
+        } else {
+          // API REST en fallback si échec
+          await gameService.nextRound(gameId);
+        }
+      }
       
       setGameState(prevState => ({
         ...prevState,
@@ -271,15 +305,21 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
       setTimeout(() => {
         loadGame(gameId);
-      }, 500);
+      }, 800);
       
     } catch (error) {
       console.error('❌ GameContext: Erreur lors du passage au tour suivant:', error);
-      Alert.alert(
-        'Information',
-        'Veuillez patienter quelques secondes avant de passer au tour suivant',
-        [{ text: 'OK' }]
-      );
+      
+      // Message d'erreur personnalisé
+      let errorMessage = "Impossible de passer au tour suivant";
+      
+      if (error.message && error.message.includes("attendre la fin des votes")) {
+        errorMessage = "Veuillez attendre que tous les votes soient enregistrés";
+      } else if (error.message && error.message.includes("l'hôte")) {
+        errorMessage = "Seul l'hôte de la partie peut effectuer cette action";
+      }
+      
+      showToast(errorMessage, "error");
     } finally {
       setIsSubmitting(false);
     }

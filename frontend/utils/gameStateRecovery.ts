@@ -32,7 +32,7 @@ export class GameStateRecovery {
       console.log(`⚠️ [GameStateRecovery] Échec de la récupération`);
       return false;
     } catch (error) {
-      console.error(`❌ [GameStateRecovery] Erreur: ${error}`);
+      console.error(`❌ [GameStateRecovery] Erreur lors de la récupération:`, error);
       return false;
     }
   }
@@ -40,23 +40,31 @@ export class GameStateRecovery {
   /**
    * Tente de récupérer l'état via un reset du socket
    */
-  private static async recoverViaSocket(gameId: string): Promise<boolean> {
+  static async recoverViaSocket(gameId: string): Promise<boolean> {
+    console.log(`🔄 [GameStateRecovery] Tentative de récupération via WebSocket pour le jeu ${gameId}`);
     try {
-      // Réinitialiser la connexion socket
-      const socket = await SocketService.getInstanceAsync();
+      // Initialiser la connexion WebSocket si nécessaire
+      await SocketService.getInstanceAsync();
       
-      // Rejoindre le canal du jeu
-      await SocketService.joinGameChannel(gameId);
+      // Rejoindre le canal de jeu si nécessaire
+      const socketDiagnostic = SocketService.diagnose();
+      const isInGameChannel = socketDiagnostic.details?.currentGame === gameId || 
+                             (socketDiagnostic.details?.activeGames && 
+                              Array.isArray(socketDiagnostic.details.activeGames) && 
+                              socketDiagnostic.details.activeGames.includes(gameId));
       
-      // Demander une vérification forcée
-      socket.emit('game:force_check', { gameId });
+      if (!isInGameChannel) {
+        console.log(`🔄 [GameStateRecovery] Tentative de rejoindre le canal de jeu ${gameId}`);
+        await SocketService.joinGameChannel(gameId);
+      }
       
-      // Attendre 1 seconde pour que le serveur traite la demande
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Forcer une vérification de phase
+      console.log(`🔄 [GameStateRecovery] Forçage d'une vérification de phase pour le jeu ${gameId}`);
+      await SocketService.forcePhaseCheck(gameId);
       
       return true;
     } catch (error) {
-      console.error(`❌ [GameStateRecovery] Échec de récupération via socket: ${error}`);
+      console.error(`❌ [GameStateRecovery] Échec de la récupération via WebSocket:`, error);
       return false;
     }
   }
@@ -64,50 +72,51 @@ export class GameStateRecovery {
   /**
    * Tente de récupérer l'état via un appel API direct
    */
-  private static async recoverViaAPI(gameId: string): Promise<boolean> {
+  static async recoverViaAPI(gameId: string): Promise<boolean> {
+    console.log(`🔄 [GameStateRecovery] Tentative de récupération via API pour le jeu ${gameId}`);
     try {
-      // Récupérer l'ID utilisateur pour l'authentification
+      // Obtenir l'ID utilisateur
       const userId = await UserIdManager.getUserId();
       if (!userId) {
-        console.warn('⚠️ [GameStateRecovery] ID utilisateur non disponible');
+        console.warn(`⚠️ [GameStateRecovery] ID utilisateur non disponible`);
         return false;
       }
       
-      // Appeler une API de récupération (la route API standard avec un header spécial)
-      const response = await api.get(`/games/${gameId}`, {
-        headers: {
-          'X-Recovery-Mode': 'true'
-        }
+      // Appeler l'API de récupération
+      const response = await api.post(`/games/${gameId}/recover`, {
+        userId,
+        timestamp: Date.now()
       });
       
-      return response.status === 200;
+      return response.data?.success === true;
     } catch (error) {
-      console.error(`❌ [GameStateRecovery] Échec de récupération via API: ${error}`);
+      console.error(`❌ [GameStateRecovery] Échec de la récupération via API:`, error);
       return false;
     }
   }
   
   /**
    * Fournit un état minimal en cas d'échec total
-   * @param originalState État original (peut être null)
+   * @param gameState État original (peut être null)
    * @param userId ID de l'utilisateur actuel
    */
-  static sanitizeGameState(originalState: any, userId?: string | number): any {
-    // Créer un état minimal pour éviter un crash complet
+  static sanitizeGameState(gameState: any, userId: string | null): any {
+    // Créer un état minimal en cas d'erreur majeure pour éviter un crash complet
     return {
+      recovered: true,
       game: {
-        id: originalState?.game?.id || null,
-        currentRound: originalState?.game?.currentRound || 1,
-        totalRounds: originalState?.game?.totalRounds || 5,
-        status: originalState?.game?.status || "in_progress",
-        gameMode: originalState?.game?.gameMode || "standard",
-        currentPhase: originalState?.game?.currentPhase || "question",
-        scores: originalState?.game?.scores || {}
+        id: gameState?.game?.id || 0,
+        currentRound: gameState?.game?.currentRound || 1,
+        totalRounds: gameState?.game?.totalRounds || 5,
+        currentPhase: 'waiting',
+        status: 'in_progress',
+        roomId: gameState?.game?.roomId || 0,
+        gameMode: gameState?.game?.gameMode || 'standard',
+        scores: gameState?.game?.scores || {}
       },
-      phase: originalState?.phase || "waiting",
-      players: originalState?.players || [],
-      answers: [],
       currentQuestion: null,
+      answers: [],
+      players: gameState?.players || [],
       currentUserState: {
         hasAnswered: false,
         hasVoted: false,

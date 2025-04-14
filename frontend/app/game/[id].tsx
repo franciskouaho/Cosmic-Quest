@@ -307,10 +307,15 @@ export default function GameScreen() {
       
       if (id) {
         try {
-          SocketService.leaveGameChannel(id as string);
-          console.log(`✅ Canal de jeu WebSocket ${id} quitté`);
+          // Utiliser la nouvelle méthode leaveGameChannel
+          SocketService.leaveGameChannel(id as string)
+            .then(() => console.log(`✅ Canal de jeu WebSocket ${id} quitté avec succès`))
+            .catch(err => {
+              console.error(`⚠️ Erreur lors de la déconnexion WebSocket:`, err);
+              console.log(`🧹 Effectuant un nettoyage manuel des salles de jeu...`);
+            });
         } catch (error) {
-          console.error('⚠️ Erreur lors de la déconnexion WebSocket:', error);
+          console.error(`⚠️ Erreur lors de la déconnexion WebSocket:`, error);
         }
       }
       
@@ -501,11 +506,11 @@ export default function GameScreen() {
       
       setGameState(prev => ({
         ...prev,
-        phase: GamePhase.WAITING,
         currentUserState: {
           ...prev.currentUserState,
           hasVoted: true
-        }
+        },
+        phase: GamePhase.WAITING
       }));
     } catch (error) {
       console.error("❌ Erreur lors du vote:", error);

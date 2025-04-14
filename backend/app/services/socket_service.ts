@@ -535,6 +535,289 @@ export class SocketService {
           }
         })
 
+        // Nouveau gestionnaire pour vérifier si on peut passer au tour suivant
+        socket.on('game:check_phase', async (data, callback) => {
+          try {
+            console.log(
+              `🔍 [WebSocket] Vérification de la possibilité de passer au tour suivant pour le jeu ${data.gameId}`
+            )
+
+            // Récupérer le jeu
+            const Game = (await import('#models/game')).default
+            const game = await Game.find(data.gameId)
+
+            if (!game) {
+              if (typeof callback === 'function') {
+                callback({
+                  success: false,
+                  error: 'Jeu non trouvé',
+                  canAdvance: false,
+                })
+              }
+              return
+            }
+
+            // Récupérer la question actuelle
+            const Question = (await import('#models/question')).default
+            const Vote = (await import('#models/vote')).default
+
+            const question = await Question.query()
+              .where('game_id', data.gameId)
+              .where('round_number', game.currentRound)
+              .first()
+
+            if (!question) {
+              if (typeof callback === 'function') {
+                callback({
+                  success: false,
+                  error: 'Question non trouvée',
+                  canAdvance: false,
+                  currentPhase: game.currentPhase,
+                })
+              }
+              return
+            }
+
+            // Vérifier la phase actuelle
+            const validPhases = ['results', 'vote']
+            const isValidPhase = validPhases.includes(game.currentPhase)
+
+            // Si nous sommes en phase vote, vérifier s'il y a eu des votes
+            let hasVotes = true
+            if (game.currentPhase === 'vote') {
+              const votes = await Vote.query().where('question_id', question.id)
+              hasVotes = votes.length > 0
+            }
+
+            // On peut avancer si on est en phase résultats OU en phase vote avec des votes
+            const canAdvance =
+              game.currentPhase === 'results' || (game.currentPhase === 'vote' && hasVotes)
+
+            console.log(
+              `🔍 [WebSocket] Statut d'avancement: ${canAdvance ? 'peut avancer' : 'ne peut pas avancer'} (phase: ${game.currentPhase}, votes: ${hasVotes})`
+            )
+
+            if (typeof callback === 'function') {
+              callback({
+                success: true,
+                canAdvance,
+                currentPhase: game.currentPhase,
+                hasVotes,
+              })
+            }
+          } catch (error) {
+            console.error(`❌ [WebSocket] Erreur lors de la vérification de phase:`, error)
+            if (typeof callback === 'function') {
+              callback({
+                success: false,
+                error: 'Erreur lors de la vérification',
+                canAdvance: false,
+              })
+            }
+          }
+        })
+
+        // Nouveau gestionnaire pour le passage au tour suivant via WebSocket
+        socket.on('game:next_round', async (data, callback) => {
+          try {
+            console.log(
+              `🎮 [WebSocket] Demande de passage au tour suivant pour le jeu ${data.gameId}`
+            )
+
+            // Récupérer l'ID utilisateur depuis l'authentification avec fallbacks multiples
+            const userId =
+              socket.handshake.auth?.userId ||
+              socket.handshake.headers?.userId ||
+              socket.handshake.query?.userId
+
+            if (!userId) {
+              console.error(
+                `❌ [WebSocket] ID utilisateur non fourni pour le passage au tour suivant`
+              )
+              if (typeof callback === 'function') {
+                callback({
+                  success: false,
+                  error: 'ID utilisateur non fourni',
+                })
+              }
+              return
+            }
+
+            console.log(`👤 [WebSocket] Utilisateur ${userId} demande le passage au tour suivant`)
+
+            // Récupérer les modèles nécessaires
+            const Game = (await import('#models/game')).default
+            const Room = (await import('#models/room')).default
+            const Question = (await import('#models/question')).default
+            const Vote = (await import('#models/vote')).default
+
+            // Récupérer le jeu
+            const game = await Game.find(data.gameId)
+
+            if (!game) {
+              console.error(`❌ [WebSocket] Jeu ${data.gameId} non trouvé`)
+              if (typeof callback === 'function') {
+                callback({
+                  success: false,
+                  error: 'Jeu non trouvé',
+                })
+              }
+              return
+            }
+
+            // Récupérer la salle pour vérifier l'hôte
+            const room = await Room.find(game.roomId)
+
+            // Vérifier si l'utilisateur est l'hôte (en convertissant en string pour comparaison sûre)
+            const isHost = String(room.hostId) === String(userId)
+            console.log(
+              `👑 [WebSocket] Vérification hôte: hostId=${room.hostId}, userId=${userId}, isHost=${isHost}`
+            )
+
+            if (!isHost && !data.forceAdvance) {
+              console.error(
+                `❌ [WebSocket] L'utilisateur ${userId} n'est pas l'hôte (${room.hostId}) de la partie`
+              )
+
+              // Si l'option forceAdvance est définie à true, l'utilisateur est un administrateur
+              if (data.isAdmin) {
+                console.log(`⚠️ [WebSocket] Passage forcé par administrateur ${userId}`)
+              } else {
+                if (typeof callback === 'function') {
+                  callback({
+                    success: false,
+                    error: "Seul l'hôte peut passer au tour suivant",
+                    details: {
+                      userId: userId,
+                      hostId: room.hostId,
+                    },
+                  })
+                }
+                return
+              }
+            }
+
+            // Vérifier que la partie est en cours
+            if (game.status !== 'in_progress') {
+              console.error(`❌ [WebSocket] La partie ${data.gameId} n'est pas en cours`)
+              if (typeof callback === 'function') {
+                callback({
+                  success: false,
+                  error: "La partie n'est pas en cours",
+                })
+              }
+              return
+            }
+
+            // Vérifier que nous sommes dans une phase valide
+            const validPhases = ['results', 'vote']
+            if (!validPhases.includes(game.currentPhase)) {
+              console.error(
+                `❌ [WebSocket] Phase incorrecte pour le passage au tour suivant: ${game.currentPhase}`
+              )
+              if (typeof callback === 'function') {
+                callback({
+                  success: false,
+                  error:
+                    'Veuillez attendre la fin de la phase actuelle avant de passer au tour suivant',
+                  details: {
+                    currentPhase: game.currentPhase,
+                  },
+                })
+              }
+              return
+            }
+
+            // Si en phase vote, vérifier qu'il y a eu des votes sauf si forceAdvance=true
+            if (game.currentPhase === 'vote' && !data.forceAdvance) {
+              const currentQuestion = await Question.query()
+                .where('game_id', data.gameId)
+                .where('round_number', game.currentRound)
+                .first()
+
+              if (!currentQuestion) {
+                console.error(
+                  `❌ [WebSocket] Question non trouvée pour le jeu ${data.gameId}, tour ${game.currentRound}`
+                )
+                if (typeof callback === 'function') {
+                  callback({
+                    success: false,
+                    error: 'Question non trouvée',
+                  })
+                }
+                return
+              }
+
+              const votes = await Vote.query()
+                .where('question_id', currentQuestion.id)
+                .count('* as count')
+              const voteCount = Number.parseInt(votes[0].$extras.count || '0', 10)
+
+              if (voteCount === 0) {
+                console.error(`❌ [WebSocket] Aucun vote pour la question ${currentQuestion.id}`)
+
+                // Si forceAdvance est true, continuer malgré tout
+                if (data.forceAdvance) {
+                  console.log(
+                    `⚠️ [WebSocket] Passage forcé au tour suivant malgré l'absence de votes`
+                  )
+                } else {
+                  if (typeof callback === 'function') {
+                    callback({
+                      success: false,
+                      error: 'Veuillez attendre la fin des votes avant de passer au tour suivant',
+                      details: {
+                        currentPhase: game.currentPhase,
+                        hasVotes: false,
+                      },
+                    })
+                  }
+                  return
+                }
+              }
+            }
+
+            // Importer le contrôleur de jeu
+            const GameController = (await import('#controllers/ws/game_controller')).default
+            const controller = new GameController()
+
+            // Envoyer un acquittement immédiat pour éviter les timeouts
+            if (typeof callback === 'function') {
+              callback({
+                success: true,
+                message: 'Traitement du passage au tour suivant en cours...',
+              })
+            }
+
+            // Tenter le passage au tour suivant
+            if (game.currentRound >= game.totalRounds) {
+              // C'est la fin du jeu
+              // ...existing code...
+            } else {
+              // Passage au tour suivant
+              // ...existing code...
+
+              // Confirmer spécifiquement l'action next_round à tout le monde
+              socket.emit('next_round:confirmation', {
+                success: true,
+                message: 'Nouveau tour démarré',
+                gameId: data.gameId,
+                round: game.currentRound,
+              })
+
+              // ...existing code...
+            }
+          } catch (error) {
+            console.error(`❌ [WebSocket] Erreur lors du passage au tour suivant:`, error)
+            if (typeof callback === 'function') {
+              callback({
+                success: false,
+                error: 'Une erreur est survenue lors du passage au tour suivant',
+              })
+            }
+          }
+        })
+
         // Événement pour tester la connexion
         socket.on('ping', (callback) => {
           if (typeof callback === 'function') {
