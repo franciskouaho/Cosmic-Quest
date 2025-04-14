@@ -145,17 +145,17 @@ class GameService {
    * Soumettre une réponse à une question uniquement via WebSocket
    */
   async submitAnswer(gameId: string, questionId: string, content: string) {
-    console.log(`🎮 Soumission de réponse pour le jeu ${gameId}, question ${questionId}`);
+    console.log(`🎮 GameService: Soumission de réponse pour le jeu ${gameId}, question ${questionId}`);
     try {
       // Récupérer l'ID utilisateur pour le débogage
       const userId = await UserIdManager.getUserId();
-      console.log(`👤 Soumission de réponse par utilisateur ${userId}`);
+      console.log(`👤 GameService: Soumission de réponse par utilisateur ${userId}`);
       
       // Vérifier que la connexion WebSocket est établie
       const socket = await SocketService.getInstanceAsync();
       
       if (!socket.connected) {
-        console.warn('⚠️ Socket non connecté, tentative de reconnexion...');
+        console.warn('⚠️ GameService: Socket non connecté, tentative de reconnexion...');
         await this.ensureSocketConnection(gameId);
       }
       
@@ -166,10 +166,10 @@ class GameService {
         content
       });
       
-      console.log('✅ Réponse soumise avec succès via WebSocket');
+      console.log('✅ GameService: Réponse soumise avec succès via WebSocket');
       return { success: true };
     } catch (error) {
-      console.error('❌ Erreur lors de la soumission de la réponse:', error);
+      console.error('❌ GameService: Erreur lors de la soumission de la réponse:', error);
       throw error;
     }
   }
@@ -180,13 +180,13 @@ class GameService {
     try {
       // Récupérer l'ID utilisateur pour le débogage
       const userId = await UserIdManager.getUserId();
-      console.log(`👤 Soumission de vote par utilisateur ${userId}`);
+      console.log(`👤 GameService: Soumission de vote par utilisateur ${userId}`);
       
       // Vérifier que la connexion WebSocket est établie
       const socket = await SocketService.getInstanceAsync();
       
       if (!socket.connected) {
-        console.warn('⚠️ Socket non connecté, tentative de reconnexion...');
+        console.warn('⚠️ GameService: Socket non connecté, tentative de reconnexion...');
         await this.ensureSocketConnection(gameId);
       }
       
@@ -197,13 +197,13 @@ class GameService {
         questionId
       });
       
-      console.log('✅ Vote soumis avec succès via WebSocket');
+      console.log('✅ GameService: Vote soumis avec succès via WebSocket');
       return { success: true };
     } catch (error) {
       console.error('❌ GameService: Erreur lors de la soumission du vote:', error);
       
       // En cas d'échec via WebSocket, essayer en fallback via HTTP
-      console.log('🔄 Tentative de fallback via HTTP');
+      console.log('🔄 GameService: Tentative de fallback via HTTP');
       try {
         const url = `/games/${gameId}/vote`;
         console.log('🔐 API Request (fallback): POST', url);
@@ -213,90 +213,140 @@ class GameService {
           question_id: questionId
         });
         
-        console.log('✅ Vote soumis avec succès via HTTP (fallback)');
+        console.log('✅ GameService: Vote soumis avec succès via HTTP (fallback)');
         return { success: true };
       } catch (httpError) {
-        console.error('❌ Échec du fallback HTTP:', httpError);
+        console.error('❌ GameService: Échec du fallback HTTP:', httpError);
         throw error; // Propager l'erreur WebSocket originale
       }
     }
   }
 
   /**
-   * Vérifier si un utilisateur est l'hôte d'une salle
-   * @param roomId ID de la salle
+   * Vérifier si un utilisateur est l'hôte d'une salle ou d'un jeu
+   * @param gameId ID du jeu ou de la salle
    * @param userId ID de l'utilisateur
    * @returns true si l'utilisateur est l'hôte
    */
-  async isUserRoomHost(roomId: string | number, userId: string | number): Promise<boolean> {
+  async isUserRoomHost(gameId: string | number, userId: string | number): Promise<boolean> {
     try {
-      const response = await api.get(`/rooms/${roomId}`);
-      if (response.data && response.data.data && response.data.data.room) {
-        return String(response.data.data.room.hostId) === String(userId);
+      console.log(`👑 Vérification si utilisateur ${userId} est l'hôte de ${gameId}`);
+      
+      // Essayer d'abord de récupérer depuis le jeu lui-même
+      try {
+        console.log(`🔍 Vérification via l'API de jeu`);
+        const gameResponse = await api.get(`/games/${gameId}`);
+        
+        if (gameResponse?.data?.data?.game?.hostId) {
+          const hostId = gameResponse.data.data.game.hostId;
+          const isHost = String(hostId) === String(userId);
+          console.log(`👑 Comparaison - hostId du jeu: ${hostId}, userId: ${userId}, isHost: ${isHost}`);
+          return isHost;
+        }
+        
+        // Si le jeu existe mais qu'on n'a pas d'hostId, vérifier par la chambre
+        if (gameResponse?.data?.data?.game?.roomId) {
+          console.log(`🔍 Le jeu existe mais pas d'hostId, vérification via roomId ${gameResponse.data.data.game.roomId}`);
+          const roomId = gameResponse.data.data.game.roomId;
+          return await this.checkRoomHost(roomId, userId);
+        }
+      } catch (gameError) {
+        console.warn(`⚠️ Impossible de vérifier l'hôte via le jeu: ${gameError.message}`);
       }
-      return false;
+      
+      // Si l'approche précédente échoue, essayer directement avec l'ID comme roomId
+      console.log(`🔍 Tentative en considérant l'ID comme roomId directement`);
+      return await this.checkRoomHost(gameId, userId);
     } catch (error) {
-      console.error('❌ Erreur lors de la vérification de l\'hôte de la salle:', error);
+      console.error(`❌ Erreur lors de la vérification de l'hôte:`, error);
       return false;
     }
   }
 
   /**
+   * Vérifie si un utilisateur est l'hôte d'une salle spécifique
+   * @param roomId ID de la salle
+   * @param userId ID de l'utilisateur
+   * @returns true si l'utilisateur est l'hôte
+   */
+  private async checkRoomHost(roomId: string | number, userId: string | number): Promise<boolean> {
+    try {
+      const response = await api.get(`/rooms/${roomId}`);
+      if (response?.data?.data?.room?.hostId) {
+        const hostId = response.data.data.room.hostId;
+        const isHost = String(hostId) === String(userId);
+        console.log(`👑 Comparaison - hostId de la salle: ${hostId}, userId: ${userId}, isHost: ${isHost}`);
+        return isHost;
+      }
+      return false;
+    } catch (error) {
+      if (error.response?.status === 404) {
+        console.warn(`⚠️ Salle ${roomId} non trouvée`);
+      } else {
+        console.error(`❌ Erreur lors de la vérification de l'hôte via la salle:`, error);
+      }
+      return false;
+    }
+  }
+
+  // Propriété pour mettre en cache les informations d'hôte afin d'éviter des requêtes répétées
+  private cachedHostInfo: Record<string | number, { userId: string, isHost: boolean }> = {};
+
+  /**
    * Passer au tour suivant avec tentative WebSocket prioritaire et meilleure gestion des erreurs
    */
   async nextRound(gameId: string) {
-    console.log(`🎮 Tentative de passage au tour suivant pour le jeu ${gameId}`);
-    
     try {
-      // Récupérer l'ID utilisateur et vérifier s'il est l'hôte
+      console.log(`🎮 Tentative de passage au tour suivant pour le jeu ${gameId}`);
+      
+      // Récupérer d'abord l'état actuel du jeu
+      const gameData = await this.getGameState(gameId);
+      
+      // Déterminer si l'utilisateur est l'hôte en comparant avec les données du jeu
       const userId = await UserIdManager.getUserId();
-      let isHost = false;
+      const isHost = gameData?.game?.roomId && userId ? 
+        await this.isUserRoomHost(gameData.game.roomId, userId) : 
+        false;
+        
+      console.log(`👑 Vérification de l'hôte: utilisateur ${userId} ${isHost ? 'EST' : 'N\'EST PAS'} l'hôte de la partie`);
+      
+      // Si l'utilisateur n'est pas l'hôte, afficher un message clair et arrêter
+      if (!isHost) {
+        console.warn('⚠️ Opération refusée: seul l\'hôte peut passer au tour suivant');
+        throw new Error('Seul l\'hôte peut passer au tour suivant');
+      }
+      
+      // S'assurer que la connexion WebSocket est établie
+      await this.ensureSocketConnection(gameId);
       
       try {
-        // Récupérer les données du jeu pour obtenir l'ID de la salle
-        const gameData = await this.getGameState(gameId);
-        if (gameData && gameData.game && gameData.game.roomId && userId) {
-          isHost = await this.isUserRoomHost(gameData.game.roomId, userId);
-          console.log(`👑 Vérification hôte: userId=${userId}, isHost=${isHost}`);
-        }
-      } catch (hostCheckError) {
-        console.warn('⚠️ Erreur lors de la vérification de l\'hôte:', hostCheckError);
-      }
-
-      // D'abord, tenter via WebSocket
-      try {
-        await SocketService.ensureSocketConnection(gameId);
-        console.log(`🎮 Tentative de passage au tour suivant via WebSocket...`);
+        // Tenter d'utiliser la méthode WebSocket en priorité
+        console.log(`🔌 Tentative via WebSocket (utilisateur est hôte)`);
+        const result = await SocketService.nextRound(gameId, false);
+        console.log(`✅ Passage au tour suivant réussi via WebSocket`);
+        return { success: true };
+      } catch (standardError) {
+        console.error(`❌ Échec du passage via WebSocket standard:`, standardError);
         
-        // Si l'utilisateur est l'hôte, on peut utiliser forceAdvance=true en cas d'échec
-        try {
-          const result = await SocketService.nextRound(gameId, false);
-          console.log(`✅ Passage au tour suivant réussi via WebSocket`);
+        // Si l'erreur concerne l'hôte, tenter avec force=true
+        if (standardError.message && standardError.message.includes("l'hôte") && isHost) {
+          console.log('🔄 Réessai avec forceAdvance=true en tant qu\'hôte');
+          const forcedResult = await SocketService.nextRound(gameId, true);
+          console.log(`✅ Passage forcé au tour suivant réussi`);
           return { success: true };
-        } catch (standardError) {
-          // Si l'erreur concerne l'hôte et que l'utilisateur est effectivement l'hôte
-          if (standardError.message && standardError.message.includes("l'hôte") && isHost) {
-            console.log('🔄 Réessai avec forceAdvance=true en tant qu\'hôte');
-            const forcedResult = await SocketService.nextRound(gameId, true);
-            console.log(`✅ Passage forcé au tour suivant réussi`);
-            return { success: true };
-          }
-          
-          throw standardError;
         }
-      } catch (socketError) {
-        console.warn(`⚠️ Échec du passage via WebSocket: ${socketError.message}`);
         
         // Si l'erreur concerne les votes ou une phase incorrecte, propager l'erreur
-        if (socketError.message && (
-          socketError.message.includes('votes') ||
-          socketError.message.includes('phase') ||
-          socketError.message.includes('impossible')
+        if (standardError.message && (
+          standardError.message.includes('votes') ||
+          standardError.message.includes('phase') ||
+          standardError.message.includes('impossible')
         )) {
-          throw socketError;
+          throw standardError;
         }
         
         // Sinon, essayer via REST API comme fallback
+        console.log('🔄 Tentative via API REST en fallback');
         const response = await api.post(`/games/${gameId}/next-round`);
         console.log(`✅ Passage au tour suivant réussi via API REST`);
         return response.data;

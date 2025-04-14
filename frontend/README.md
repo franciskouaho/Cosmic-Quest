@@ -59,6 +59,33 @@ Le système dispose maintenant d'un mécanisme de récupération automatique qui
 En cas d'erreur persistante, utilisez la fonction `GameStateRecovery.recoverFromPersistentError(gameId)`
 dans vos outils de développement.
 
+## Communication Socket.IO dans Cosmic Quest
+
+Le jeu utilise Socket.IO pour les communications en temps réel. Voici les événements clés:
+
+### Événements envoyés au serveur:
+
+- `game:submit_answer` - Soumettre une réponse à une question
+- `game:submit_vote` - Voter pour une réponse
+- `game:force_check` - Forcer une vérification de l'état du jeu
+- `game:next_round` - Passer au tour suivant
+- `join-game` - Rejoindre un canal de jeu
+- `join-room` - Rejoindre un canal de salle
+
+### Événements reçus du serveur:
+
+- `game:update` - Mises à jour sur l'état du jeu (changement de phase, nouvelles réponses, etc.)
+- `room:update` - Mises à jour sur l'état de la salle (joueurs qui rejoignent/quittent, etc.)
+
+### Dépannage Socket.IO
+
+Si les communications temps réel ne fonctionnent pas:
+
+1. Vérifier la connexion internet
+2. Essayer de rafraîchir manuellement l'état du jeu
+3. Vérifier dans les logs si les événements sont correctement envoyés/reçus
+4. Utiliser l'utilitaire `socketTester.diagnosticSocket()` pour vérifier l'état de la connexion
+
 ## Get a fresh project
 
 When you're ready, run:

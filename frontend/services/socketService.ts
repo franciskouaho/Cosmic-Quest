@@ -689,7 +689,7 @@ class SocketService {
    */
   async forcePhaseCheck(gameId: string): Promise<boolean> {
     try {
-      console.log(`🔍 Vérification forcée de phase pour le jeu ${gameId}`);
+      console.log(`🔍 SocketService: Vérification forcée de phase pour le jeu ${gameId}`);
       
       // S'assurer que la connexion est établie
       const socket = await this.getInstanceAsync();
@@ -704,7 +704,7 @@ class SocketService {
         }, 1000);
       });
     } catch (error) {
-      console.error(`❌ Erreur lors de la vérification forcée de phase:`, error);
+      console.error(`❌ SocketService: Erreur lors de la vérification forcée de phase:`, error);
       return false;
     }
   }
@@ -717,7 +717,7 @@ class SocketService {
    */
   async nextRound(gameId: string, force: boolean = false): Promise<boolean> {
     try {
-      console.log(`🎮 Demande de passage au tour suivant pour ${gameId} (force=${force})`);
+      console.log(`🎮 SocketService: Demande de passage au tour suivant pour ${gameId} (force=${force})`);
       
       // S'assurer que la connexion est établie
       const socket = await this.getInstanceAsync();
@@ -726,11 +726,11 @@ class SocketService {
       return new Promise<boolean>((resolve, reject) => {
         socket.emit('game:next_round', { gameId, forceAdvance: force }, (response: any) => {
           if (response && response.success) {
-            console.log(`✅ Passage au tour suivant réussi`);
+            console.log(`✅ SocketService: Passage au tour suivant réussi`);
             resolve(true);
           } else {
             const errorMessage = response?.error || 'Échec du passage au tour suivant';
-            console.error(`❌ Échec du passage au tour suivant: ${errorMessage}`);
+            console.error(`❌ SocketService: Échec du passage au tour suivant: ${errorMessage}`);
             reject(new Error(errorMessage));
           }
         });
@@ -741,7 +741,7 @@ class SocketService {
         }, 5000);
       });
     } catch (error) {
-      console.error(`❌ Erreur lors du passage au tour suivant:`, error);
+      console.error(`❌ SocketService: Erreur lors du passage au tour suivant:`, error);
       throw error;
     }
   }
@@ -753,7 +753,7 @@ class SocketService {
    */
   async submitAnswer(data: { gameId: string; questionId: string; content: string }): Promise<boolean> {
     try {
-      console.log(`🎮 Soumission de réponse pour le jeu ${data.gameId}`);
+      console.log(`🎮 SocketService: Soumission de réponse pour le jeu ${data.gameId}`);
       
       // S'assurer que la connexion est établie
       const socket = await this.getInstanceAsync();
@@ -763,18 +763,18 @@ class SocketService {
 
       // Envoyer l'événement de soumission de réponse
       return new Promise<boolean>((resolve, reject) => {
-        // Utiliser le bon nom d'événement 'game:submit_answer' au lieu de 'game:submit-answer'
+        // Utiliser la bonne nomenclature d'événement attendue par le serveur (avec underscore)
         socket.emit('game:submit_answer', { 
           ...data,
           userId,
           timestamp: Date.now()
         }, (response: any) => {
           if (response && response.success) {
-            console.log(`✅ Réponse soumise avec succès`);
+            console.log(`✅ SocketService: Réponse soumise avec succès`);
             resolve(true);
           } else {
             const errorMessage = response?.error || 'Échec de la soumission de réponse';
-            console.error(`❌ Échec de la soumission de réponse: ${errorMessage}`);
+            console.error(`❌ SocketService: Échec de la soumission de réponse: ${errorMessage}`);
             reject(new Error(errorMessage));
           }
         });
@@ -785,7 +785,7 @@ class SocketService {
         }, 5000);
       });
     } catch (error) {
-      console.error(`❌ Erreur lors de la soumission de réponse:`, error);
+      console.error(`❌ SocketService: Erreur lors de la soumission de réponse:`, error);
       throw error;
     }
   }
@@ -797,7 +797,7 @@ class SocketService {
    */
   async submitVote(data: { gameId: string; answerId: string; questionId: string }): Promise<boolean> {
     try {
-      console.log(`🎮 Soumission de vote pour le jeu ${data.gameId}, réponse ${data.answerId}`);
+      console.log(`🎮 SocketService: Soumission de vote pour le jeu ${data.gameId}, réponse ${data.answerId}`);
       
       // S'assurer que la connexion est établie
       const socket = await this.getInstanceAsync();
@@ -807,18 +807,18 @@ class SocketService {
 
       // Envoyer l'événement de soumission de vote
       return new Promise<boolean>((resolve, reject) => {
-        // Utiliser le bon nom d'événement 'game:submit_vote' au lieu de 'game:submit-vote'
+        // Utiliser la bonne nomenclature d'événement attendue par le serveur (avec underscore)
         socket.emit('game:submit_vote', { 
           ...data,
           userId,
           timestamp: Date.now()
         }, (response: any) => {
           if (response && response.success) {
-            console.log(`✅ Vote soumis avec succès`);
+            console.log(`✅ SocketService: Vote soumis avec succès`);
             resolve(true);
           } else {
             const errorMessage = response?.error || 'Échec de la soumission du vote';
-            console.error(`❌ Échec de la soumission du vote: ${errorMessage}`);
+            console.error(`❌ SocketService: Échec de la soumission du vote: ${errorMessage}`);
             reject(new Error(errorMessage));
           }
         });
@@ -829,7 +829,7 @@ class SocketService {
         }, 5000);
       });
     } catch (error) {
-      console.error(`❌ Erreur lors de la soumission du vote:`, error);
+      console.error(`❌ SocketService: Erreur lors de la soumission du vote:`, error);
       throw error;
     }
   }
@@ -983,6 +983,53 @@ class SocketService {
     } catch (error) {
       console.error('❌ Erreur lors de l\'assurance de la connexion WebSocket:', error);
       this.lastError = error.message || 'Erreur inconnue';
+      return false;
+    }
+  }
+
+  /**
+   * Vérifie si l'utilisateur est l'hôte d'un jeu via WebSocket
+   * @param gameId ID du jeu
+   * @returns Promise<boolean> true si l'utilisateur est l'hôte
+   */
+  async checkGameHost(gameId: string): Promise<boolean> {
+    try {
+      console.log(`🔍 SocketService: Vérification d'hôte pour le jeu ${gameId}`);
+      
+      // S'assurer que la connexion est établie
+      const socket = await this.getInstanceAsync();
+
+      // Récupérer l'userId
+      const userId = await UserIdManager.getUserId();
+      if (!userId) {
+        console.warn('⚠️ SocketService: ID utilisateur non disponible pour la vérification d\'hôte');
+        return false;
+      }
+
+      // Envoyer l'événement de vérification
+      return new Promise<boolean>((resolve) => {
+        socket.emit('game:check_host', { 
+          gameId, 
+          userId,
+          timestamp: Date.now()
+        }, (response: any) => {
+          if (response && response.success) {
+            console.log(`👑 SocketService: L'utilisateur ${userId} ${response.isHost ? 'EST' : 'N\'EST PAS'} l'hôte du jeu ${gameId}`);
+            resolve(response.isHost === true);
+          } else {
+            console.log(`⚠️ SocketService: Impossible de vérifier l'hôte via WebSocket`);
+            resolve(false);
+          }
+        });
+        
+        // En cas d'absence de réponse, timeout après 2s
+        setTimeout(() => {
+          console.log(`⏱️ SocketService: Timeout lors de la vérification d'hôte`);
+          resolve(false);
+        }, 2000);
+      });
+    } catch (error) {
+      console.error(`❌ SocketService: Erreur lors de la vérification d'hôte:`, error);
       return false;
     }
   }

@@ -818,6 +818,127 @@ export class SocketService {
           }
         })
 
+        // Nouveau gestionnaire pour vérifier si l'utilisateur est l'hôte d'un jeu
+        socket.on('game:check_host', async (data, callback) => {
+          try {
+            const { gameId, userId } = data
+
+            if (!gameId || !userId) {
+              if (typeof callback === 'function') {
+                callback({
+                  success: false,
+                  error: 'Données incomplètes',
+                  isHost: false,
+                })
+              }
+              return
+            }
+
+            console.log(
+              `👑 [WebSocket] Vérification si l'utilisateur ${userId} est l'hôte du jeu ${gameId}`
+            )
+
+            // Récupérer les modèles nécessaires
+            const Game = (await import('#models/game')).default
+            const Room = (await import('#models/room')).default
+
+            // Récupérer le jeu
+            const game = await Game.find(gameId)
+            if (!game) {
+              console.log(`❌ [WebSocket] Jeu ${gameId} non trouvé`)
+              if (typeof callback === 'function') {
+                callback({
+                  success: false,
+                  error: 'Jeu non trouvé',
+                  isHost: false,
+                })
+              }
+              return
+            }
+
+            // Si le jeu a un hostId direct, l'utiliser
+            if (game.hostId) {
+              const isHost = String(game.hostId) === String(userId)
+              console.log(`👑 [WebSocket] Vérification via hostId du jeu: ${isHost}`)
+
+              if (typeof callback === 'function') {
+                callback({
+                  success: true,
+                  isHost,
+                  hostId: String(game.hostId),
+                  source: 'game',
+                })
+              }
+              return
+            }
+
+            // Sinon vérifier via la salle
+            if (game.roomId) {
+              try {
+                const room = await Room.find(game.roomId)
+                if (room) {
+                  const isHost = String(room.hostId) === String(userId)
+                  console.log(`👑 [WebSocket] Vérification via hostId de la salle: ${isHost}`)
+
+                  if (typeof callback === 'function') {
+                    callback({
+                      success: true,
+                      isHost,
+                      hostId: String(room.hostId),
+                      source: 'room',
+                    })
+                  }
+                  return
+                }
+              } catch (roomError) {
+                console.warn(
+                  `⚠️ [WebSocket] Erreur lors de la récupération de la salle: ${roomError.message}`
+                )
+
+                // Si la salle n'existe plus, gérer cette situation spéciale
+                if (
+                  roomError.code === 'E_ROW_NOT_FOUND' ||
+                  roomError.message.includes('not found')
+                ) {
+                  // Si la salle n'existe plus, on peut utiliser les informations du jeu
+                  // pour déterminer quel joueur était l'hôte initialement
+                  console.log(`⚠️ [WebSocket] Salle non trouvée, tentative via le logger du jeu`)
+
+                  // On pourrait récupérer cette information depuis un log ou une table spécifique
+                  // Pour l'instant, on renvoie un résultat négatif
+                  if (typeof callback === 'function') {
+                    callback({
+                      success: false,
+                      error: 'Salle non trouvée',
+                      isHost: false,
+                      roomDeleted: true,
+                    })
+                  }
+                  return
+                }
+              }
+            }
+
+            // Si tout échoue
+            if (typeof callback === 'function') {
+              callback({
+                success: false,
+                error: "Impossible de déterminer l'hôte",
+                isHost: false,
+              })
+            }
+          } catch (error) {
+            console.error(`❌ [WebSocket] Erreur lors de la vérification d'hôte:`, error)
+            if (typeof callback === 'function') {
+              callback({
+                success: false,
+                error: 'Erreur serveur',
+                isHost: false,
+              })
+            }
+          }
+        })
+
         // Événement pour tester la connexion
         socket.on('ping', (callback) => {
           if (typeof callback === 'function') {

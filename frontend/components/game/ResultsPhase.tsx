@@ -1,8 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Answer, Player, Question } from '../../types/gameTypes';
+import HostChecker from '@/utils/hostChecker';
+import SocketService from '@/services/socketService';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 interface ResultsPhaseProps {
   answers: Answer[];
@@ -16,6 +19,7 @@ interface ResultsPhaseProps {
     duration: number;
     startTime: number;
   } | null;
+  gameId?: string | number;
 }
 
 const ResultsPhase: React.FC<ResultsPhaseProps> = ({ 
@@ -26,7 +30,8 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
   targetPlayer,
   onNextRound,
   isLastRound,
-  timer
+  timer,
+  gameId
 }) => {
   // Trouver la réponse avec le plus de votes
   const winningAnswer = answers.length > 0 
@@ -37,34 +42,130 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
     ? players.find(p => p.id === winningAnswer.playerId) 
     : null;
   
-  // États pour éviter les double-clics accidentels
+  // États pour le contrôle du bouton
   const [isButtonDisabled, setIsButtonDisabled] = useState(false);
-  
-  // Permettre le bouton "Tour suivant" après un délai pour éviter le passage prématuré
+  const [isUserHost, setIsUserHost] = useState<boolean | null>(null);
+  const [isCheckingHost, setIsCheckingHost] = useState(true);
   const [canProceed, setCanProceed] = useState(false);
   
+  // Flag indiquant si le jeu est en cours de synchronisation
+  const [isSynchronizing, setIsSynchronizing] = useState(false);
+  
   useEffect(() => {
-    // Attendre 3 secondes avant de permettre le passage au tour suivant
+    // Attendre un court moment avant de permettre le passage au tour suivant
     const timer = setTimeout(() => {
       setCanProceed(true);
-    }, 3000);
+    }, 2000);
     
     return () => clearTimeout(timer);
   }, []);
   
+  // Vérifier si l'utilisateur est l'hôte de la partie en utilisant toutes les méthodes disponibles
+  useEffect(() => {
+    const checkIfUserIsHost = async () => {
+      setIsCheckingHost(true);
+      
+      try {
+        // Utiliser gameId de props OU extraire des réponses si disponible
+        let effectiveGameId: string | number = null;
+        
+        if (gameId) {
+          effectiveGameId = gameId;
+        } else if (answers && answers.length > 0) {
+          effectiveGameId = answers[0].gameId;
+          
+          // Si gameId n'est pas directement disponible, essayer de l'extraire du questionId
+          if (!effectiveGameId && answers[0].questionId) {
+            const idParts = String(answers[0].questionId).split('-');
+            if (idParts.length > 0) {
+              effectiveGameId = idParts[0];
+            }
+          }
+        }
+        
+        if (!effectiveGameId) {
+          console.warn('⚠️ Impossible de déterminer un gameId pour vérifier l\'hôte');
+          setIsUserHost(false);
+          setIsCheckingHost(false);
+          return;
+        }
+        
+        console.log(`🔍 Vérification d'hôte pour la partie ${effectiveGameId}`);
+        
+        // Utiliser directement HostChecker avec le nouvel algorithme optimisé
+        const isHost = await HostChecker.isCurrentUserHost(effectiveGameId);
+        
+        console.log(`👑 Résultat vérification hôte: ${isHost ? 'EST' : 'N\'EST PAS'} l'hôte`);
+        setIsUserHost(isHost);
+      } catch (error) {
+        console.error("❌ Erreur lors de la vérification de l'hôte:", error);
+        setIsUserHost(false);
+      } finally {
+        setIsCheckingHost(false);
+      }
+    };
+    
+    checkIfUserIsHost();
+    
+    // Re-vérifier périodiquement le statut d'hôte au cas où il y a un changement
+    const refreshHostInterval = setInterval(() => {
+      if (!isSynchronizing) {
+        checkIfUserIsHost();
+      }
+    }, 15000); // Toutes les 15 secondes
+    
+    return () => {
+      clearInterval(refreshHostInterval);
+    };
+  }, [gameId, answers, isSynchronizing]);
+  
+  // Établir une connexion WebSocket et écouter les événements pour le jeu
+  useEffect(() => {
+    if (!gameId) return;
+    
+    const setupGameConnection = async () => {
+      try {
+        const socket = await SocketService.getInstanceAsync();
+        
+        if (socket.connected) {
+          // Rejoindre le canal du jeu pour recevoir les mises à jour en temps réel
+          await SocketService.joinGameChannel(String(gameId));
+          console.log(`✅ Canal WebSocket pour le jeu ${gameId} rejoint avec succès`);
+        }
+      } catch (error) {
+        console.warn(`⚠️ Erreur lors de la configuration WebSocket:`, error);
+      }
+    };
+    
+    setupGameConnection();
+    
+    // Nettoyage lors du démontage
+    return () => {
+      // Quitter le canal du jeu n'est pas nécessaire ici, car déjà géré au niveau supérieur
+    };
+  }, [gameId]);
+  
   const handleNextRound = useCallback(() => {
-    if (isButtonDisabled) return;
+    if (isButtonDisabled || !canProceed || isSynchronizing) return;
     
-    // Désactiver le bouton immédiatement
+    // Désactiver le bouton immédiatement pour éviter les clics multiples
     setIsButtonDisabled(true);
+    setIsSynchronizing(true);
     
-    onNextRound();
-    
-    // Réactiver le bouton après un délai
-    setTimeout(() => {
-      setIsButtonDisabled(false);
-    }, 2000);
-  }, [onNextRound, isButtonDisabled]);
+    try {
+      // Appeler la fonction de passage au tour suivant
+      console.log('⏱️ Passage au tour suivant...');
+      onNextRound();
+    } catch (error) {
+      console.error('❌ Erreur lors du passage au tour suivant:', error);
+    } finally {
+      // Réactiver le bouton après un délai pour éviter les clics rapides successifs
+      setTimeout(() => {
+        setIsButtonDisabled(false);
+        setIsSynchronizing(false);
+      }, 2000);
+    }
+  }, [onNextRound, isButtonDisabled, canProceed, isSynchronizing]);
 
   // Obtenir le nom du joueur correspondant à chaque réponse
   const getPlayerName = (playerId: string | number) => {
@@ -74,6 +175,60 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
   
   // Pour les parties à 2 joueurs où il n'y a pas de vote (donc pas de gagnant clairement défini)
   const noVotesMode = answers.every(a => !a.votesCount || a.votesCount === 0);
+
+  // Rendu du bouton en fonction du rôle (hôte ou joueur)
+  const renderNextButton = () => {
+    // Si on vérifie encore si l'utilisateur est l'hôte, montrer un indicateur de chargement
+    if (isCheckingHost) {
+      return (
+        <View style={[styles.nextButton, styles.checkingButton]}>
+          <ActivityIndicator size="small" color="#ffffff" style={{marginRight: 10}} />
+          <Text style={styles.nextButtonText}>Vérification des droits...</Text>
+        </View>
+      );
+    }
+    
+    // Si l'utilisateur est l'hôte, montrer le bouton de passage au tour suivant
+    if (isUserHost === true) {
+      return (
+        <TouchableOpacity
+          style={[
+            styles.nextButton, 
+            (!canProceed || isButtonDisabled || isSynchronizing) && styles.disabledButton,
+            isUserHost && styles.hostButton
+          ]}
+          onPress={handleNextRound}
+          disabled={!canProceed || isButtonDisabled || isSynchronizing}
+        >
+          {isSynchronizing ? (
+            <View style={{flexDirection: 'row', alignItems: 'center'}}>
+              <ActivityIndicator size="small" color="#ffffff" style={{marginRight: 10}} />
+              <Text style={styles.nextButtonText}>Synchronisation...</Text>
+            </View>
+          ) : (
+            <>
+              <Text style={styles.nextButtonText}>
+                {isLastRound ? 'Voir les résultats finaux' : 'Tour suivant'}
+              </Text>
+              {!canProceed && (
+                <Text style={styles.waitText}>Veuillez patienter...</Text>
+              )}
+            </>
+          )}
+        </TouchableOpacity>
+      );
+    }
+    
+    // Pour les joueurs normaux, afficher un message d'attente avec le même style
+    return (
+      <View style={[styles.nextButton, styles.disabledButton]}>
+        <Text style={styles.nextButtonText}>
+          En attente que l'hôte passe au tour suivant
+        </Text>
+        <MaterialCommunityIcons name="timer-sand" size={18} color="#b3a5d9" style={{marginTop: 4}} />
+      </View>
+    );
+  };
   
   return (
     <View style={styles.container}>
@@ -177,21 +332,7 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
       </ScrollView>
       
       <View style={styles.footer}>
-        <TouchableOpacity
-          style={[
-            styles.nextButton, 
-            (!canProceed || isButtonDisabled) && styles.disabledButton
-          ]}
-          onPress={handleNextRound}
-          disabled={!canProceed || isButtonDisabled}
-        >
-          <Text style={styles.nextButtonText}>
-            {isLastRound ? 'Voir les résultats finaux' : 'Tour suivant'}
-          </Text>
-          {!canProceed && (
-            <Text style={styles.waitText}>Veuillez patienter...</Text>
-          )}
-        </TouchableOpacity>
+        {renderNextButton()}
       </View>
     </View>
   );
@@ -344,6 +485,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 16,
     alignItems: 'center',
+    flexDirection: 'row',
   },
   nextButtonText: {
     color: '#ffffff',
@@ -351,7 +493,8 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   disabledButton: {
-    backgroundColor: 'rgba(105, 78, 214, 0.5)',
+    backgroundColor: 'rgba(105, 78, 214, 0.3)',
+    opacity: 0.8,
   },
   waitText: {
     color: 'rgba(255, 255, 255, 0.7)',
@@ -385,6 +528,15 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     textAlign: 'center',
     padding: 16,
+  },
+  checkingButton: {
+    backgroundColor: 'rgba(105, 78, 214, 0.7)',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  hostButton: {
+    backgroundColor: 'rgba(72, 219, 134, 0.7)',
   },
 });
 

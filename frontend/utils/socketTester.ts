@@ -1,5 +1,6 @@
 import SocketService from '@/services/socketService';
 import { SOCKET_URL } from '@/config/axios';
+import UserIdManager from './userIdManager';
 
 /**
  * Utilitaire pour tester la connexion WebSocket
@@ -285,8 +286,6 @@ export const diagTargetPlayerStatus = async (gameId: string) => {
 export const submitVoteViaSocket = async (gameId: string, answerId: string, questionId: string): Promise<boolean> => {
   try {
     console.log(`🗳️ Tentative de vote WebSocket - jeu: ${gameId}, réponse: ${answerId}`);
-    
-    const socket = await SocketService.getInstanceAsync();
     
     // Utiliser la méthode officielle du SocketService
     return await SocketService.submitVote({
@@ -647,6 +646,36 @@ export const diagnoseSocketMethods = async () => {
   }
 };
 
+/**
+ * Vérifie l'état de la connexion socket et affiche des informations de diagnostic
+ */
+export const diagnosticSocket = async () => {
+  try {
+    console.log('🔌 Diagnostic de connexion Socket.IO en cours...');
+    const socket = await SocketService.getInstanceAsync();
+    
+    console.log('📊 État de la connexion:');
+    console.log(`- Connecté: ${socket.connected}`);
+    console.log(`- ID socket: ${socket.id || 'non disponible'}`);
+    
+    // Vérifier l'utilisateur actuel
+    const userId = await UserIdManager.getUserId();
+    console.log(`- ID utilisateur actuel: ${userId}`);
+    
+    return {
+      connected: socket.connected,
+      socketId: socket.id,
+      userId
+    };
+  } catch (error) {
+    console.error('❌ Erreur lors du diagnostic socket:', error);
+    return {
+      connected: false,
+      error: error.message
+    };
+  }
+};
+
 export default {
   testSocketConnection,
   checkSocketStatus,
@@ -663,4 +692,5 @@ export default {
   testAutoVoteTransition,
   testAnswerSubmission,
   diagnoseSocketMethods,
+  diagnosticSocket,
 };

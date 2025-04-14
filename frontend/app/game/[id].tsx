@@ -432,7 +432,10 @@ export default function GameScreen() {
       // Attendre un bref moment pour que la connexion WebSocket soit stable
       await new Promise(resolve => setTimeout(resolve, 300));
       
-      // Utiliser la nouvelle méthode WebSocket optimisée
+      // Ajout d'un log pour vérifier ce qui est envoyé
+      console.log(`🔍 Paramètres de soumission - gameId: ${id}, questionId: ${gameState.currentQuestion.id}, réponse: ${answer.substring(0, 20)}...`);
+      
+      // Utiliser la méthode WebSocket optimisée avec gestion d'erreur améliorée
       await gameService.submitAnswer(id as string, gameState.currentQuestion.id, answer);
       
       Alert.alert("Réponse envoyée", "En attente des autres joueurs...");
@@ -499,6 +502,9 @@ export default function GameScreen() {
       // Attendre un bref moment pour que la connexion soit stable
       await new Promise(resolve => setTimeout(resolve, 300));
       
+      // Ajout d'un log pour vérifier ce qui est envoyé
+      console.log(`🔍 Paramètres de vote - gameId: ${id}, answerId: ${answerId}, questionId: ${gameState.currentQuestion.id}`);
+      
       // Utiliser la méthode WebSocket optimisée
       await gameService.submitVote(id as string, answerId, gameState.currentQuestion.id.toString());
       
@@ -506,11 +512,11 @@ export default function GameScreen() {
       
       setGameState(prev => ({
         ...prev,
+        phase: GamePhase.WAITING,
         currentUserState: {
           ...prev.currentUserState,
           hasVoted: true
-        },
-        phase: GamePhase.WAITING
+        }
       }));
     } catch (error) {
       console.error("❌ Erreur lors du vote:", error);
@@ -555,25 +561,39 @@ export default function GameScreen() {
       
       setIsSubmitting(true);
       
-      await gameService.nextRound(id as string);
-      
-      setGameState(prev => ({
-        ...prev,
-        phase: GamePhase.LOADING,
-      }));
-      
-      setTimeout(() => {
-        if (typeof fetchGameData === 'function') {
-          fetchGameData();
+      try {
+        // Utiliser le service game qui vérifiera si l'utilisateur est l'hôte
+        await gameService.nextRound(id as string);
+        
+        setGameState(prev => ({
+          ...prev,
+          phase: GamePhase.LOADING,
+        }));
+        
+        setTimeout(() => {
+          if (typeof fetchGameData === 'function') {
+            fetchGameData();
+          }
+        }, 1500);
+      } catch (error) {
+        // Si l'erreur est liée au statut d'hôte, vérifier si nous pouvons quand même continuer
+        if (error.message && error.message.includes("l'hôte")) {
+          // Ce n'est pas l'hôte - c'est normal pour les joueurs non-hôtes
+          console.log("⚠️ L'utilisateur n'est pas l'hôte - attente de la progression initiée par l'hôte");
+          return;
         }
-      }, 1500);
-      
+        
+        // Pour les autres erreurs, les afficher
+        throw error;
+      }
     } catch (error) {
       console.error("❌ Erreur lors du passage au tour suivant:", error);
       
       let errorMessage = "Impossible de passer au tour suivant.";
       if (error.message && typeof error.message === 'string') {
-        if (error.message.includes("Ce n'est pas le moment")) {
+        if (error.message.includes("l'hôte") || error.message.includes("Seul l'hôte")) {
+          errorMessage = "Seul l'hôte de la partie peut passer au tour suivant.";
+        } else if (error.message.includes("Ce n'est pas le moment")) {
           errorMessage = "Ce n'est pas encore le moment de passer au tour suivant. Veuillez attendre la fin de la phase actuelle.";
         } else {
           errorMessage = error.message;
@@ -583,16 +603,7 @@ export default function GameScreen() {
       Alert.alert(
         "Erreur", 
         errorMessage,
-        [
-          {
-            text: 'Actualiser',
-            onPress: () => {
-              if (typeof fetchGameData === 'function') {
-                fetchGameData();
-              }
-            }
-          }
-        ]
+        [{ text: "OK" }]
       );
     } finally {
       setIsSubmitting(false);
@@ -629,6 +640,19 @@ export default function GameScreen() {
 
     // Ne pas autoriser de changement d'interface pendant la phase resultats
     if (gameState.phase === GamePhase.RESULTS) {
+      // Stocker les informations d'hôte au cas où la salle serait supprimée plus tard
+      if (gameState.game?.hostId) {
+        try {
+          AsyncStorage.setItem(`@game_host_${id}`, JSON.stringify({
+            hostId: String(gameState.game.hostId),
+            timestamp: Date.now()
+          }));
+          console.log(`💾 Informations d'hôte stockées localement pour le jeu ${id}`);
+        } catch (error) {
+          console.warn(`⚠️ Erreur lors du stockage des infos d'hôte:`, error);
+        }
+      }
+      
       return (
         <ResultsPhase 
           answers={gameState.answers}
@@ -639,6 +663,7 @@ export default function GameScreen() {
           onNextRound={handleNextRound}
           isLastRound={gameState.currentRound >= gameState.totalRounds}
           timer={gameState.timer}
+          gameId={id} // Passer l'ID du jeu directement
         />
       );
     }
@@ -889,7 +914,7 @@ const styles = StyleSheet.create({
   },
   background: {
     position: 'absolute',
-    left: 0,
+    left:0,
     right: 0,
     top: 0,
     bottom: 0,
