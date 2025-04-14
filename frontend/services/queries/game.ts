@@ -49,48 +49,83 @@ class GameService {
         api.defaults.headers.userId = String(userId);
       }
       
-      const response = await api.get(url);
-      console.log('✅ GameService: État du jeu', gameId, 'récupéré avec succès');
-      
-      // Vérifier si la réponse est correcte et a les propriétés attendues
-      if (!response.data?.data?.game) {
-        console.warn('⚠️ Structure de réponse inattendue:', response.data);
-        throw new Error('Données de jeu incomplètes');
-      }
-      
-      // Assurer que le joueur cible est correctement identifié
-      const gameData = response.data.data;
-      if (gameData.currentQuestion?.targetPlayer) {
-        const targetId = String(gameData.currentQuestion.targetPlayer.id);
+      try {
+        const response = await api.get(url);
+        console.log('✅ GameService: État du jeu', gameId, 'récupéré avec succès');
         
-        // S'assurer que isTargetPlayer est correctement défini
-        if (gameData.currentUserState) {
-          // Convertir tous les IDs en string pour comparaison
-          const userIdStr = String(userId);
-          const targetIdStr = String(targetId);
+        // Vérifier si la réponse est correcte et a les propriétés attendues
+        if (!response.data?.data?.game) {
+          console.warn('⚠️ Structure de réponse inattendue:', response.data);
+          throw new Error('Données de jeu incomplètes');
+        }
+        
+        // Assurer que le joueur cible est correctement identifié
+        const gameData = response.data.data;
+        if (gameData.currentQuestion?.targetPlayer) {
+          const targetId = String(gameData.currentQuestion.targetPlayer.id);
           
-          const isReallyTarget = Boolean(userId && targetIdStr === userIdStr);
-          
-          console.log(`🎯 Vérification de cible - ID utilisateur: ${userIdStr}, ID cible: ${targetIdStr}, Correspondance: ${isReallyTarget}`);
-          
-          if (gameData.currentUserState.isTargetPlayer !== isReallyTarget) {
-            console.warn(`⚠️ Correction d'incohérence de joueur cible: ${gameData.currentUserState.isTargetPlayer} => ${isReallyTarget}`);
-            console.log(`🔍 Détails - ID utilisateur: ${userIdStr}, ID cible: ${targetIdStr}, Types - ID utilisateur: ${typeof userId}, ID cible: ${typeof targetId}`);
-            gameData.currentUserState.isTargetPlayer = isReallyTarget;
+          // S'assurer que isTargetPlayer est correctement défini
+          if (gameData.currentUserState) {
+            // Convertir tous les IDs en string pour comparaison
+            const userIdStr = String(userId);
+            const targetIdStr = String(targetId);
+            
+            const isReallyTarget = Boolean(userId && targetIdStr === userIdStr);
+            
+            console.log(`🎯 Vérification de cible - ID utilisateur: ${userIdStr}, ID cible: ${targetIdStr}, Correspondance: ${isReallyTarget}`);
+            
+            if (gameData.currentUserState.isTargetPlayer !== isReallyTarget) {
+              console.warn(`⚠️ Correction d'incohérence de joueur cible: ${gameData.currentUserState.isTargetPlayer} => ${isReallyTarget}`);
+              console.log(`🔍 Détails - ID utilisateur: ${userIdStr}, ID cible: ${targetIdStr}, Types - ID utilisateur: ${typeof userId}, ID cible: ${typeof targetId}`);
+              gameData.currentUserState.isTargetPlayer = isReallyTarget;
+            }
           }
         }
-      }
 
-      // S'assurer que les réponses ont bien la propriété isOwnAnswer
-      if (gameData.answers && Array.isArray(gameData.answers) && userId) {
-        const userIdStr = String(userId);
-        gameData.answers = gameData.answers.map(answer => ({
-          ...answer,
-          isOwnAnswer: String(answer.playerId) === userIdStr || answer.isOwnAnswer
-        }));
+        // S'assurer que les réponses ont bien la propriété isOwnAnswer
+        if (gameData.answers && Array.isArray(gameData.answers) && userId) {
+          const userIdStr = String(userId);
+          gameData.answers = gameData.answers.map(answer => ({
+            ...answer,
+            isOwnAnswer: String(answer.playerId) === userIdStr || answer.isOwnAnswer
+          }));
+        }
+        
+        return gameData;
+      } catch (apiError) {
+        // Gérer spécifiquement les erreurs 500
+        if (apiError?.response?.status === 500) {
+          console.error('❌ Erreur serveur 500 lors de la récupération de l\'état du jeu');
+          
+          // Si nous avons déjà essayé plusieurs fois, tenter une récupération
+          if (retryCount >= 1) {
+            console.log('🔄 Tentative de récupération d\'état...');
+            
+            // Importer dynamiquement l'utilitaire de récupération pour éviter les problèmes de dépendances circulaires
+            const { GameStateRecovery } = await import('@/utils/gameStateRecovery');
+            
+            // Tenter de récupérer l'état via notre service de récupération
+            const recovered = await GameStateRecovery.recoverFromPersistentError(gameId);
+            
+            if (recovered) {
+              console.log('✅ Récupération d\'état réussie, nouvelle tentative...');
+              // Attendre un peu pour que le serveur se stabilise
+              await new Promise(resolve => setTimeout(resolve, 1000));
+              // Nouvelle tentative avec compteur réinitialisé
+              return this.getGameState(gameId, 0, maxRetries);
+            }
+            
+            // Si la récupération échoue et que nous sommes au dernier essai,
+            // construire un état fallback minimal pour éviter un plantage complet
+            if (retryCount >= maxRetries - 1) {
+              console.log('⚠️ Construction d\'un état minimal pour éviter un plantage');
+              const { GameStateRecovery } = await import('@/utils/gameStateRecovery');
+              return GameStateRecovery.sanitizeGameState(null, userId);
+            }
+          }
+        }
+        throw apiError; // Propager l'erreur pour le traitement normal
       }
-      
-      return gameData;
     } catch (error) {
       console.error('❌ GameService: Erreur lors de la récupération de l\'état du jeu', gameId, ':', error);
       
@@ -106,22 +141,78 @@ class GameService {
     }
   }
 
-  // Soumettre une réponse à une question
-  async submitAnswer(gameId: string, questionId: number | string, content: string) {
-    console.log(`🎮 GameService: Soumission de réponse pour jeu ${gameId}, question ${questionId}`);
+  /**
+   * Soumettre une réponse à une question avec synchronisation WebSocket
+   */
+  async submitAnswer(gameId: string, questionId: string, content: string) {
+    console.log(`🎮 Soumission de réponse pour le jeu ${gameId}, question ${questionId}`);
     try {
-      const url = `/games/${gameId}/answer`;
-      console.log('🔐 API Request: POST', url);
+      // 1. Essayer d'abord la soumission via WebSocket pour meilleure réactivité
+      const socket = await SocketService.getInstanceAsync();
       
-      const response = await api.post(url, {
-        question_id: questionId,
-        content: content
+      // Créer une promesse pour attendre la confirmation du serveur
+      const socketPromise = new Promise<boolean>((resolve, reject) => {
+        // Définir un timeout de 3 secondes pour la confirmation WebSocket
+        const timeoutId = setTimeout(() => {
+          console.log('⏱️ Timeout WebSocket atteint, passage au mode API');
+          resolve(false); // Résoudre avec false pour indiquer qu'il faut utiliser l'API REST
+        }, 3000);
+        
+        // Écouter l'événement de confirmation
+        const handleConfirmation = (data) => {
+          if (data.questionId === questionId) {
+            console.log('✅ Confirmation WebSocket reçue pour la réponse');
+            clearTimeout(timeoutId);
+            socket.off('answer:confirmation', handleConfirmation);
+            resolve(true);
+          }
+        };
+        
+        // S'abonner à l'événement de confirmation
+        socket.on('answer:confirmation', handleConfirmation);
+        
+        // Envoyer la réponse via WebSocket
+        socket.emit('game:submit_answer', {
+          gameId,
+          questionId,
+          content
+        }, (ackData) => {
+          if (ackData && ackData.success) {
+            console.log('✅ Accusé de réception WebSocket reçu pour la réponse');
+            clearTimeout(timeoutId);
+            socket.off('answer:confirmation', handleConfirmation);
+            resolve(true);
+          } else if (ackData && ackData.error) {
+            console.error(`❌ Erreur lors de la soumission WebSocket: ${ackData.error}`);
+            if (ackData.code === 'TARGET_PLAYER_CANNOT_ANSWER') {
+              reject(new Error('Vous êtes la cible de cette question et ne pouvez pas y répondre'));
+            } else {
+              resolve(false); // Essayer via API REST
+            }
+          }
+        });
       });
       
-      console.log('✅ GameService: Réponse soumise avec succès');
+      // Attendre la confirmation WebSocket
+      const socketSuccess = await socketPromise;
+      
+      // Si WebSocket a réussi, on peut s'arrêter là
+      if (socketSuccess) {
+        console.log('✅ Réponse envoyée avec succès via WebSocket');
+        return { success: true };
+      }
+      
+      // 2. En cas d'échec WebSocket, utiliser l'API REST comme fallback
+      console.log('ℹ️ Tentative de soumission via API REST');
+      const response = await api.post(`/games/${gameId}/answer`, {
+        question_id: questionId,
+        content
+      });
+      
+      console.log('✅ Réponse envoyée avec succès via API REST');
       return response.data;
     } catch (error) {
-      console.error('❌ GameService: Erreur lors de la soumission de la réponse:', error);
+      console.error('❌ Erreur lors de la soumission de la réponse:', error);
       throw error;
     }
   }

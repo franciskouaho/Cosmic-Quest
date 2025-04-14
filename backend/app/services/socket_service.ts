@@ -153,6 +153,161 @@ export class SocketService {
           }
         })
 
+        // Nouveau gestionnaire pour la soumission de réponses
+        socket.on('game:submit_answer', async (data, callback) => {
+          try {
+            console.log(`🎮 [WebSocket] Réception d'une réponse via WebSocket:`, data)
+
+            // Extraire les données
+            const { gameId, questionId, content } = data
+
+            // Vérifier que toutes les données nécessaires sont présentes
+            if (!gameId || !questionId || !content) {
+              console.error(`❌ [WebSocket] Données manquantes pour la soumission de réponse`)
+              if (typeof callback === 'function') {
+                callback({
+                  success: false,
+                  error: 'Données incomplètes pour la soumission de la réponse',
+                })
+              }
+              return
+            }
+
+            // Récupérer l'ID utilisateur depuis les informations de session
+            const userId = socket.handshake.auth?.userId || socket.handshake.headers?.userId
+
+            if (!userId) {
+              console.error(`❌ [WebSocket] ID utilisateur manquant pour la soumission de réponse`)
+              if (typeof callback === 'function') {
+                callback({
+                  success: false,
+                  error: 'ID utilisateur manquant',
+                })
+              }
+              return
+            }
+
+            // Récupérer le jeu et la question
+            const Game = (await import('#models/game')).default
+            const Question = (await import('#models/question')).default
+            const Answer = (await import('#models/answer')).default
+
+            // Vérifier que le jeu existe
+            const game = await Game.find(gameId)
+            if (!game) {
+              console.error(`❌ [WebSocket] Jeu non trouvé: ${gameId}`)
+              if (typeof callback === 'function') {
+                callback({
+                  success: false,
+                  error: 'Jeu non trouvé',
+                })
+              }
+              return
+            }
+
+            // Vérifier que la question existe
+            const question = await Question.query()
+              .where('id', questionId)
+              .where('game_id', gameId)
+              .first()
+
+            if (!question) {
+              console.error(`❌ [WebSocket] Question non trouvée: ${questionId}`)
+              if (typeof callback === 'function') {
+                callback({
+                  success: false,
+                  error: 'Question non trouvée',
+                })
+              }
+              return
+            }
+
+            // Vérifier que l'utilisateur n'est pas la cible
+            if (question.targetPlayerId === Number(userId)) {
+              console.error(`❌ [WebSocket] L'utilisateur est la cible: ${userId}`)
+              if (typeof callback === 'function') {
+                callback({
+                  success: false,
+                  error: 'Vous êtes la cible de cette question et ne pouvez pas y répondre',
+                  code: 'TARGET_PLAYER_CANNOT_ANSWER',
+                })
+              }
+              return
+            }
+
+            // Vérifier que l'utilisateur n'a pas déjà répondu
+            const existingAnswer = await Answer.query()
+              .where('question_id', questionId)
+              .where('user_id', userId)
+              .first()
+
+            if (existingAnswer) {
+              console.error(`❌ [WebSocket] L'utilisateur a déjà répondu: ${userId}`)
+              if (typeof callback === 'function') {
+                callback({
+                  success: false,
+                  error: 'Vous avez déjà répondu à cette question',
+                })
+              }
+              return
+            }
+
+            // Créer la réponse
+            const answer = await Answer.create({
+              questionId,
+              userId,
+              content,
+              votesCount: 0,
+              isSelected: false,
+            })
+
+            console.log(`✅ [WebSocket] Réponse créée avec succès: ID=${answer.id}`)
+
+            // Envoyer une confirmation directe à l'émetteur
+            if (typeof callback === 'function') {
+              callback({
+                success: true,
+                answerId: answer.id,
+              })
+            }
+
+            // Récupérer les informations utilisateur
+            const User = (await import('#models/user')).default
+            const user = await User.find(userId)
+
+            // Notifier tous les joueurs de la nouvelle réponse
+            this.io.to(`game:${gameId}`).emit('game:update', {
+              type: 'new_answer',
+              answer: {
+                id: answer.id,
+                content: answer.content,
+                playerId: userId,
+                playerName: user ? user.displayName || user.username : 'Joueur',
+              },
+            })
+
+            // Envoyer également une confirmation spécifique
+            socket.emit('answer:confirmation', {
+              success: true,
+              questionId,
+              answerId: answer.id,
+            })
+
+            // Vérifier si toutes les réponses ont été soumises pour avancer la phase
+            const GameController = (await import('#controllers/ws/game_controller')).default
+            const controller = new GameController()
+            await controller.checkAndProgressPhase(gameId, questionId)
+          } catch (error) {
+            console.error(`❌ [WebSocket] Erreur lors de la soumission de réponse:`, error)
+            if (typeof callback === 'function') {
+              callback({
+                success: false,
+                error: 'Erreur lors de la soumission de la réponse',
+              })
+            }
+          }
+        })
+
         // Événement pour tester la connexion
         socket.on('ping', (callback) => {
           if (typeof callback === 'function') {

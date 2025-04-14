@@ -326,53 +326,42 @@ export default class SocketService {
   }
 
   // Rejoindre un canal de jeu
-  public static async joinGameChannel(gameId: string): Promise<void> {
-    if (!gameId) {
-      console.error('❌ ID de jeu non fourni');
-      return;
-    }
-
+  public static async joinGameChannel(gameId: string): Promise<boolean> {
     try {
-      console.log(`🎮 Tentative de rejoindre le jeu ${gameId}`);
-      const socket = await SocketService.getInstanceAsync();
+      const socket = await this.getInstanceAsync();
       
-      return new Promise((resolve, reject) => {
-        try {
-          // Ajouter un écouteur temporaire pour la confirmation
-          const onJoinConfirmation = (data: any) => {
-            if (data && data.gameId.toString() === gameId.toString()) {
-              console.log(`✅ Confirmation de jointure au jeu ${gameId} reçue`);
-              SocketService.activeGames.add(gameId);
-              socket.off('game:joined', onJoinConfirmation);
-              clearTimeout(timeout);
-              resolve();
-            }
-          };
-
-          // Définir un timeout pour la réception de confirmation
-          const timeout = setTimeout(() => {
-            socket.off('game:joined', onJoinConfirmation);
-            console.warn(`⚠️ Pas de confirmation de jointure au jeu ${gameId} après 5 secondes, mais on continue`);
-            SocketService.activeGames.add(gameId); // On considère qu'on a rejoint le jeu quand même
-            resolve();
-          }, 5000);
-
-          // Écouter l'événement de confirmation
-          socket.on('game:joined', onJoinConfirmation);
-          
-          // Envoyer la demande de jointure
-          socket.emit('join-game', { gameId });
-          console.log(`📤 Demande d'inscription envoyée pour le jeu: ${gameId}`);
-          
-        } catch (innerError) {
-          console.error(`❌ Erreur lors de la tentative de jointure au jeu ${gameId}:`, innerError);
-          reject(innerError);
-        }
+      // Récupérer l'ID utilisateur pour l'envoyer avec la demande
+      const userId = await AsyncStorage.getItem('@current_user_id');
+      
+      console.log(`🎮 Tentative de rejoindre le jeu ${gameId}`);
+      
+      // Envoyer l'ID utilisateur dans la demande
+      socket.emit('join-game', { 
+        gameId,
+        userId
       });
       
+      console.log(`📤 Demande d'inscription envoyée pour le jeu: ${gameId}`);
+      
+      // Attendre la confirmation de jointure
+      return new Promise((resolve) => {
+        // Définir un timeout pour résoudre même sans confirmation
+        const timeoutId = setTimeout(() => {
+          console.warn(`⚠️ Pas de confirmation de jointure pour le jeu ${gameId} après 3s`);
+          resolve(true); // On considère que ça a fonctionné même sans confirmation
+        }, 3000);
+        
+        // Écouter l'événement de confirmation une seule fois
+        socket.once('game:joined', (data) => {
+          console.log(`✅ Confirmation de jointure au jeu ${data.gameId} reçue`);
+          clearTimeout(timeoutId);
+          this.activeGames.add(gameId);
+          resolve(true);
+        });
+      });
     } catch (error) {
       console.error(`❌ Erreur lors de la jointure au jeu ${gameId}:`, error);
-      throw error;
+      return false;
     }
   }
 
@@ -579,6 +568,111 @@ export default class SocketService {
       });
     } catch (error) {
       console.error('❌ Erreur lors de l\'envoi de la mise à jour:', error);
+    }
+  }
+
+  /**
+   * Enregistre un écouteur pour les mises à jour du jeu
+   * @param gameId ID du jeu à surveiller
+   * @param callback Fonction à appeler lors d'une mise à jour
+   */
+  public static listenToGameUpdates(gameId: string, callback: (data: any) => void): () => void {
+    if (!SocketService.instance || !SocketService.instance.connected) {
+      console.error('❌ Socket non connecté, impossible d\'écouter les mises à jour du jeu');
+      return () => {};
+    }
+
+    console.log(`👂 Écoute des mises à jour pour le jeu ${gameId}`);
+    
+    // Attacher l'écouteur d'événements
+    SocketService.instance.on('game:update', callback);
+    
+    // Retourner la fonction pour supprimer l'écouteur
+    return () => {
+      if (SocketService.instance) {
+        SocketService.instance.off('game:update', callback);
+        console.log(`🔇 Arrêt de l'écoute des mises à jour pour le jeu ${gameId}`);
+      }
+    };
+  }
+
+  /**
+   * Envoie une demande de vérification d'état du jeu
+   */
+  public static async checkGameState(gameId: string): Promise<boolean> {
+    try {
+      const socket = await SocketService.getInstanceAsync();
+      
+      return new Promise((resolve) => {
+        socket.emit('game:status_check', { gameId }, (response) => {
+          console.log(`✅ Vérification d'état du jeu ${gameId} réponse:`, response);
+          resolve(true);
+        });
+        
+        // Résoudre après 3s en cas d'absence de réponse
+        setTimeout(() => resolve(false), 3000);
+      });
+    } catch (error) {
+      console.error('❌ Erreur lors de la vérification de l\'état du jeu:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Envoie un signal pour forcer le passage à la phase suivante 
+   * en cas de blocage détecté
+   */
+  public static async forcePhaseCheck(gameId: string): Promise<void> {
+    try {
+      const socket = await SocketService.getInstanceAsync();
+
+      console.log(`🔄 Demande de vérification forcée pour le jeu ${gameId}`);
+      socket.emit('game:force_check', { gameId });
+    } catch (error) {
+      console.error(`❌ Erreur lors de la vérification de phase pour le jeu ${gameId}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Envoie un signal pour réinitialiser l'état d'un jeu en cas
+   * d'erreurs persistantes 500
+   */
+  public static async resetGameState(gameId: string): Promise<boolean> {
+    try {
+      const socket = await SocketService.getInstanceAsync();
+      
+      return new Promise((resolve) => {
+        socket.emit('game:reset_state', { 
+          gameId,
+          timestamp: Date.now(),
+          action: 'restore'
+        });
+        
+        console.log(`📤 Signal de réinitialisation d'état envoyé pour le jeu ${gameId}`);
+        
+        // Écouter la confirmation (avec timeout)
+        const onConfirmation = (data) => {
+          if (data && data.gameId === gameId) {
+            socket.off('game:state_reset', onConfirmation);
+            clearTimeout(timeout);
+            console.log(`✅ État du jeu ${gameId} réinitialisé avec succès`);
+            resolve(true);
+          }
+        };
+        
+        socket.on('game:state_reset', onConfirmation);
+        
+        // Timeout en cas d'absence de réponse
+        const timeout = setTimeout(() => {
+          socket.off('game:state_reset', onConfirmation);
+          console.log(`⚠️ Pas de confirmation de réinitialisation pour le jeu ${gameId}`);
+          resolve(false);
+        }, 5000);
+      });
+    } catch (error) {
+      console.error('❌ Erreur lors de la réinitialisation de l\'état du jeu:', error);
+      return false;
     }
   }
 }

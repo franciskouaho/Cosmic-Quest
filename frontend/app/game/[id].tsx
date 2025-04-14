@@ -15,7 +15,6 @@ import SocketService from '@/services/socketService';
 import api from '@/config/axios';
 import NetInfo from '@react-native-community/netinfo';
 import GameTimer from '@/components/game/GameTimer';
-import gameDebugger from '@/utils/gameDebugger';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import UserIdManager from '@/utils/userIdManager';
 
@@ -68,7 +67,20 @@ export default function GameScreen() {
       await gameService.ensureSocketConnection(id as string);
       
       const gameData = await gameService.getGameState(id as string);
-      console.log('✅ Données du jeu récupérées:', gameData);
+      
+      // Si gameData est un état minimal de récupération, essayer de forcer une vérification d'état
+      if (gameData?.recovered) {
+        console.log('⚠️ Récupération avec état minimal détectée, tentative de récupération complète...');
+        try {
+          const socket = await SocketService.getInstanceAsync();
+          socket.emit('game:force_check', { gameId: id });
+          console.log('🔄 Demande de vérification forcée envoyée');
+        } catch (socketError) {
+          console.error('❌ Erreur lors de la vérification forcée:', socketError);
+        }
+      } else {
+        console.log('✅ Données du jeu récupérées avec succès');
+      }
       
       if (!isReady) {
         try {
@@ -76,7 +88,7 @@ export default function GameScreen() {
           await SocketService.joinGameChannel(id as string);
           console.log(`✅ Demande WebSocket pour rejoindre le jeu ${id} envoyée`);
         } catch (socketError) {
-          console.error('⚠️ Erreur lors de la connexion WebSocket au jeu:', socketError);
+          console.warn('⚠️ Erreur lors de la connexion WebSocket au jeu:', socketError);
           // Ne pas bloquer le chargement du jeu si la connexion WebSocket échoue
         }
       }
@@ -116,7 +128,7 @@ export default function GameScreen() {
       const effectivePhase = (() => {
         // Phase serveur reçue
         const serverPhase = gameData.game.currentPhase;
-        const isTarget = gameData.currentUserState?.isTargetPlayer || false;
+        const isTarget = isTargetPlayer; // Utiliser la variable corrigée
         const hasAnswered = gameData.currentUserState?.hasAnswered || false;
         const hasVoted = gameData.currentUserState?.hasVoted || false;
 
@@ -176,14 +188,11 @@ export default function GameScreen() {
         game: gameData.game
       };
       
-      // Analyser l'état du jeu pour détecter d'éventuels problèmes
-      const targetPlayerCheck = gameDebugger.debugTargetPlayerState(newGameState, user?.id);
-      gameDebugger.analyzeGameState(newGameState);
-      
-      // Si une incohérence est détectée, corriger l'état du jeu
-      if (targetPlayerCheck?.hasInconsistency && targetPlayerCheck.correctValue !== undefined) {
+      // Vérifier si l'utilisateur est la cible et corriger si nécessaire
+      const targetMismatch = detectedAsTarget !== isTargetPlayer;
+      if (targetMismatch) {
         console.log('🔧 Correction automatique de l\'état isTargetPlayer appliquée');
-        newGameState.currentUserState.isTargetPlayer = targetPlayerCheck.correctValue;
+        newGameState.currentUserState.isTargetPlayer = detectedAsTarget;
       }
       
       setGameState(newGameState);
@@ -353,23 +362,16 @@ export default function GameScreen() {
               unblockAttempted = true;
               
               try {
-                // Tentative de récupération avec gameDebugger
-                const unblocked = await gameDebugger.attemptToUnblock(id as string);
+                // Tentative de récupération sans utiliser gameDebugger
+                await SocketService.forcePhaseCheck(id as string);
+                console.log(`✅ Demande de vérification de phase envoyée pour le jeu ${id}`);
                 
-                if (unblocked) {
-                  console.log(`✅ Déblocage réussi!`);
-                  fetchGameData(); // Rafraîchir les données
-                  return;
-                } else {
-                  console.log(`⚠️ Première tentative de déblocage échouée, nouvelle tentative dans 5s...`);
-                  // Ne pas réinitialiser unblockAttempted pour limiter les tentatives multiples
-                  
-                  // Faire une deuxième tentative après un délai plus long
-                  setTimeout(async () => {
-                    await gameDebugger.attemptToUnblock(id as string);
-                    fetchGameData();
-                  }, 5000);
-                }
+                // Rafraîchir les données après un court délai
+                setTimeout(() => {
+                  fetchGameData();
+                }, 2000);
+                
+                return;
               } catch (error) {
                 console.error(`❌ Erreur lors de la tentative de déblocage:`, error);
               }
@@ -420,6 +422,7 @@ export default function GameScreen() {
       
       setIsSubmitting(true);
       
+      // Utiliser la méthode améliorée qui tente d'abord via WebSocket
       await gameService.submitAnswer(id as string, gameState.currentQuestion.id, answer);
       
       Alert.alert("Réponse envoyée", "En attente des autres joueurs...");
@@ -433,6 +436,7 @@ export default function GameScreen() {
         }
       }));
       
+      // Légère attente avant de rafraîchir l'état
       setTimeout(() => {
         fetchGameData();
       }, 1000);
@@ -443,6 +447,8 @@ export default function GameScreen() {
       if (error.message && typeof error.message === 'string' && error.message.includes("Ce n'est pas le moment")) {
         errorMessage = "Le délai de réponse est écoulé. Veuillez attendre la prochaine question.";
         fetchGameData();
+      } else if (error.message && typeof error.message === 'string' && error.message.includes("cible de cette question")) {
+        errorMessage = "Vous êtes la cible de cette question et ne pouvez pas y répondre.";
       }
       
       Alert.alert("Erreur", errorMessage);

@@ -54,18 +54,31 @@ export const testSocketConnection = async () => {
     socket.on('game:update', (data) => {
       console.log('🎮 Événement game:update reçu:', data);
       
-      // Ajouter une validation spécifique pour le statut de joueur ciblé
+      // Amélioration de la validation pour le statut de joueur ciblé
       if (data.type === 'phase_change' && data.phase === 'vote') {
         console.log('🧪 Test de validation du joueur ciblé...');
-        const currentQuestion = socket?.gameState?.currentQuestion;
-        const currentUser = socket?.userData?.id;
         
-        if (currentQuestion && currentUser) {
-          const isTarget = currentQuestion.targetPlayer?.id === currentUser;
-          console.log(`🎯 Statut de joueur ciblé: ${isTarget ? 'OUI' : 'NON'}`);
-          if (isTarget) {
-            console.log('⚠️ Détection de joueur ciblé: cet utilisateur est la cible et devrait avoir une interface spéciale');
+        try {
+          // Vérification plus robuste
+          const currentQuestion = socket?.gameState?.currentQuestion;
+          const currentUser = socket?.userData?.id;
+          
+          if (currentQuestion && currentUser) {
+            // S'assurer que les IDs sont des chaînes pour comparaison
+            const targetId = String(currentQuestion.targetPlayer?.id || '');
+            const userId = String(currentUser);
+            
+            const isTarget = targetId === userId;
+            console.log(`🎯 Statut de joueur ciblé: ${isTarget ? 'OUI' : 'NON'} (targetId: ${targetId}, userId: ${userId})`);
+            
+            if (isTarget) {
+              console.log('⚠️ Détection de joueur ciblé: cet utilisateur est la cible et devrait avoir une interface spéciale');
+            }
+          } else {
+            console.log('⚠️ Données incomplètes pour la vérification du joueur ciblé');
           }
+        } catch (validationError) {
+          console.error('❌ Erreur lors de la validation du joueur ciblé:', validationError);
         }
       }
     });
@@ -138,6 +151,40 @@ export const checkSocketStatus = async () => {
 };
 
 /**
+ * Vérifier l'état de la connexion WebSocket
+ * @returns Un objet contenant l'état actuel de la connexion
+ */
+export const checkSocketConnection = async (): Promise<{ 
+  connected: boolean; 
+  socketId: string | null;
+  activeRooms: string[];
+  activeGames: string[];
+}> => {
+  try {
+    // Utiliser la méthode asynchrone pour obtenir une instance valide
+    const socket = await SocketService.getInstanceAsync();
+    const diagnostic = SocketService.diagnose();
+    
+    console.log(`🔍 Diagnostic WebSocket effectué - connecté: ${socket.connected}`);
+    
+    return {
+      connected: socket.connected,
+      socketId: socket.id,
+      activeRooms: diagnostic.activeChannels.rooms,
+      activeGames: diagnostic.activeChannels.games,
+    };
+  } catch (error) {
+    console.error('❌ Erreur lors de la vérification de la connexion WebSocket:', error);
+    return {
+      connected: false,
+      socketId: null,
+      activeRooms: [],
+      activeGames: [],
+    };
+  }
+};
+
+/**
  * Diagnostic avancé des événements de jeu
  * Utile pour le débogage des parties en cours
  * @param gameId ID de la partie à surveiller
@@ -201,6 +248,7 @@ export const testTargetPlayerScenario = async (gameId: string) => {
 export default {
   testSocketConnection,
   checkSocketStatus,
+  checkSocketConnection,
   monitorGameEvents,
   testTargetPlayerScenario,
 };

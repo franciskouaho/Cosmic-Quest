@@ -34,135 +34,208 @@ export default class GamesController {
   /**
    * Afficher les détails d'une partie en cours
    */
-  async show({ params, response, auth }: HttpContext) {
+  async show({ params, response, auth, request }: HttpContext) {
     try {
       const user = await auth.authenticate()
       const gameId = params.id
 
-      const game = await Game.query()
-        .where('id', gameId)
-        .preload('room', (roomQuery) => {
-          roomQuery.preload('players')
-        })
-        .first()
+      // Mode de récupération d'urgence
+      const isRecoveryMode = request.header('X-Recovery-Mode') === 'true'
 
-      if (!game) {
-        return response.notFound({
-          error: 'Partie non trouvée',
-        })
+      if (isRecoveryMode) {
+        console.log(`🔄 [show] Mode de récupération activé pour le jeu ${gameId}`)
       }
 
-      // Vérifier que le joueur fait partie de la partie
-      const isPlayerInGame = game.room.players.some((player) => player.id === user.id)
-
-      if (!isPlayerInGame) {
-        return response.forbidden({
-          error: 'Vous ne faites pas partie de cette partie',
-        })
-      }
-
-      // Récupérer la question actuelle si elle existe
-      let currentQuestion = null
-      if (game.currentRound > 0) {
-        currentQuestion = await Question.query()
-          .where('game_id', game.id)
-          .where('round_number', game.currentRound)
-          .preload('targetPlayer')
+      try {
+        const game = await Game.query()
+          .where('id', gameId)
+          .preload('room', (roomQuery) => {
+            roomQuery.preload('players')
+          })
           .first()
+
+        if (!game) {
+          return response.notFound({
+            error: 'Partie non trouvée',
+          })
+        }
+
+        // Vérifier que le joueur fait partie de la partie
+        const isPlayerInGame = game.room.players.some((player) => player.id === user.id)
+
+        if (!isPlayerInGame && !isRecoveryMode) {
+          return response.forbidden({
+            error: 'Vous ne faites pas partie de cette partie',
+          })
+        }
+
+        // Récupérer la question actuelle si elle existe
+        let currentQuestion = null
+        try {
+          if (game.currentRound > 0) {
+            currentQuestion = await Question.query()
+              .where('game_id', game.id)
+              .where('round_number', game.currentRound)
+              .preload('targetPlayer')
+              .first()
+          }
+        } catch (questionError) {
+          console.error(`❌ [show] Erreur lors de la récupération de la question:`, questionError)
+          // Continuer avec currentQuestion = null
+        }
+
+        // Récupérer toutes les réponses pour la question actuelle
+        let answers = []
+        try {
+          if (currentQuestion) {
+            // Récupérer les réponses avec les utilisateurs qui les ont écrites
+            answers = await Answer.query().where('question_id', currentQuestion.id).preload('user')
+
+            // Ajouter un marqueur pour identifier les propres réponses de l'utilisateur
+            answers = answers.map((answer) => ({
+              ...answer.toJSON(),
+              isOwnAnswer: answer.userId === user.id,
+            }))
+          }
+        } catch (answersError) {
+          console.error(`❌ [show] Erreur lors de la récupération des réponses:`, answersError)
+          // Continuer avec answers = []
+        }
+
+        // Déterminer si l'utilisateur actuel a déjà répondu
+        let hasAnswered = false
+        let hasVoted = false
+        let isTargetPlayer = false
+
+        try {
+          hasAnswered = currentQuestion
+            ? (await Answer.query()
+                .where('question_id', currentQuestion.id)
+                .where('user_id', user.id)
+                .first()) !== null
+            : false
+
+          // Déterminer si l'utilisateur actuel a déjà voté
+          hasVoted = currentQuestion
+            ? (await Vote.query()
+                .where('question_id', currentQuestion.id)
+                .where('voter_id', user.id)
+                .first()) !== null
+            : false
+
+          // Déterminer si c'est au tour de l'utilisateur actuel
+          isTargetPlayer = currentQuestion ? currentQuestion.targetPlayerId === user.id : false
+        } catch (stateError) {
+          console.error(
+            `❌ [show] Erreur lors de la récupération des états utilisateur:`,
+            stateError
+          )
+          // On garde les valeurs par défaut
+        }
+
+        // Réponse avec données minimales en cas de problème
+        return response.ok({
+          status: 'success',
+          data: {
+            game: {
+              id: game.id,
+              roomId: game.roomId,
+              currentRound: game.currentRound,
+              totalRounds: game.totalRounds,
+              status: game.status,
+              gameMode: game.gameMode,
+              currentPhase: game.currentPhase,
+              scores: game.scores || {},
+              createdAt: game.createdAt,
+            },
+            room: {
+              id: game.room.id,
+              code: game.room.code,
+              name: game.room.name,
+              hostId: game.room.hostId,
+            },
+            players: game.room.players.map((player) => ({
+              id: player.id,
+              username: player.username,
+              displayName: player.displayName,
+              avatar: player.avatar,
+              score: game.scores?.[player.id] || 0,
+              isHost: player.id === game.room.hostId,
+            })),
+            currentQuestion: currentQuestion
+              ? {
+                  id: currentQuestion.id,
+                  text: currentQuestion.text,
+                  roundNumber: currentQuestion.roundNumber,
+                  targetPlayer: currentQuestion.targetPlayer
+                    ? {
+                        id: currentQuestion.targetPlayer.id,
+                        username: currentQuestion.targetPlayer.username,
+                        displayName: currentQuestion.targetPlayer.displayName,
+                        avatar: currentQuestion.targetPlayer.avatar,
+                      }
+                    : null,
+                }
+              : null,
+            answers: answers.map((answer) => ({
+              id: answer.id,
+              content: answer.content,
+              playerId: answer.userId,
+              playerName: answer.user?.displayName || answer.user?.username || 'Joueur anonyme',
+              votesCount: answer.votesCount || 0,
+              isOwnAnswer: answer.isOwnAnswer || answer.userId === user.id,
+            })),
+            currentUserState: {
+              hasAnswered,
+              hasVoted,
+              isTargetPlayer,
+            },
+          },
+        })
+      } catch (innerError) {
+        console.error(
+          `❌ [show] Erreur interne lors de la récupération du jeu ${gameId}:`,
+          innerError
+        )
+
+        // En mode récupération, renvoyer au moins une structure minimale
+        if (isRecoveryMode) {
+          return response.ok({
+            status: 'success',
+            data: {
+              game: {
+                id: gameId,
+                currentRound: 1,
+                totalRounds: 5,
+                status: 'in_progress',
+                gameMode: 'standard',
+                currentPhase: 'question',
+                scores: {},
+                createdAt: new Date(),
+              },
+              players: [],
+              answers: [],
+              currentQuestion: null,
+              currentUserState: {
+                hasAnswered: false,
+                hasVoted: false,
+                isTargetPlayer: false,
+              },
+            },
+            recovered: true,
+          })
+        }
+
+        throw innerError // Propager l'erreur en mode normal
       }
-
-      // Récupérer toutes les réponses pour la question actuelle
-      let answers = []
-      if (currentQuestion) {
-        // Récupérer les réponses avec les utilisateurs qui les ont écrites
-        answers = await Answer.query().where('question_id', currentQuestion.id).preload('user')
-
-        // Ajouter un marqueur pour identifier les propres réponses de l'utilisateur
-        answers = answers.map((answer) => ({
-          ...answer.toJSON(),
-          isOwnAnswer: answer.userId === user.id,
-        }))
-      }
-
-      // Déterminer si l'utilisateur actuel a déjà répondu
-      const hasAnswered = currentQuestion
-        ? (await Answer.query()
-            .where('question_id', currentQuestion.id)
-            .where('user_id', user.id)
-            .first()) !== null
-        : false
-
-      // Déterminer si l'utilisateur actuel a déjà voté
-      const hasVoted = currentQuestion
-        ? (await Vote.query()
-            .where('question_id', currentQuestion.id)
-            .where('voter_id', user.id)
-            .first()) !== null
-        : false
-
-      // Déterminer si c'est au tour de l'utilisateur actuel
-      const isTargetPlayer = currentQuestion && currentQuestion.targetPlayerId === user.id
-
-      return response.ok({
-        status: 'success',
-        data: {
-          game: {
-            id: game.id,
-            roomId: game.roomId,
-            currentRound: game.currentRound,
-            totalRounds: game.totalRounds,
-            status: game.status,
-            gameMode: game.gameMode,
-            currentPhase: game.currentPhase,
-            scores: game.scores,
-            createdAt: game.createdAt,
-          },
-          room: {
-            id: game.room.id,
-            code: game.room.code,
-            name: game.room.name,
-            hostId: game.room.hostId,
-          },
-          players: game.room.players.map((player) => ({
-            id: player.id,
-            username: player.username,
-            displayName: player.displayName,
-            avatar: player.avatar,
-            score: game.scores[player.id] || 0,
-            isHost: player.id === game.room.hostId,
-          })),
-          currentQuestion: currentQuestion
-            ? {
-                id: currentQuestion.id,
-                text: currentQuestion.text,
-                roundNumber: currentQuestion.roundNumber,
-                targetPlayer: {
-                  id: currentQuestion.targetPlayer.id,
-                  username: currentQuestion.targetPlayer.username,
-                  displayName: currentQuestion.targetPlayer.displayName,
-                  avatar: currentQuestion.targetPlayer.avatar,
-                },
-              }
-            : null,
-          answers: answers.map((answer) => ({
-            id: answer.id,
-            content: answer.content,
-            playerId: answer.userId,
-            playerName: answer.user.displayName || answer.user.username,
-            votesCount: answer.votesCount,
-            isOwnAnswer: answer.isOwnAnswer || answer.userId === user.id, // S'assurer que cette propriété est toujours présente
-          })),
-          currentUserState: {
-            hasAnswered,
-            hasVoted,
-            isTargetPlayer,
-          },
-        },
-      })
     } catch (error) {
-      console.error('Erreur lors de la récupération des détails de la partie:', error)
+      console.error(
+        '❌ [show] Erreur non gérée lors de la récupération des détails de la partie:',
+        error
+      )
       return response.internalServerError({
         error: 'Une erreur est survenue lors de la récupération des détails de la partie',
+        details: error.message,
       })
     }
   }

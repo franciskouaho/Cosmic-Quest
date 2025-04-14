@@ -48,6 +48,17 @@ Si tous les joueurs sont bloqués en "attente":
 - Essayez d'actualiser manuellement l'état du jeu
 - Pour les développeurs: vérifiez les logs côté serveur pour identifier les blocages potentiels
 
+### Récupération automatique
+
+Le système dispose maintenant d'un mécanisme de récupération automatique qui:
+
+- Détecte les erreurs 500 persistantes
+- Tente de récupérer l'état via WebSocket
+- Fournit un état minimal en dernier recours pour éviter les crashs d'application
+
+En cas d'erreur persistante, utilisez la fonction `GameStateRecovery.recoverFromPersistentError(gameId)`
+dans vos outils de développement.
+
 ## Get a fresh project
 
 When you're ready, run:

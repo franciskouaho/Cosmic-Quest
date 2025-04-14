@@ -24,13 +24,18 @@ class GameDebugger {
   /**
    * Journalisation conditionnelle
    */
-  private log(message: string, data?: any) {
-    if (this.verbose) {
-      if (data) {
-        console.log(`🔧 [GameDebugger] ${message}`, data);
-      } else {
-        console.log(`🔧 [GameDebugger] ${message}`);
-      }
+  private log(message: string, data?: any, level: 'log' | 'warn' | 'error' = 'log'): void {
+    const prefix = '🔍 [GameDebugger]';
+    
+    switch (level) {
+      case 'warn':
+        console.warn(`⚠️ ${prefix} ${message}`, data || '');
+        break;
+      case 'error':
+        console.error(`❌ ${prefix} ${message}`, data || '');
+        break;
+      default:
+        console.log(`${prefix} ${message}`, data || '');
     }
   }
 
@@ -135,144 +140,149 @@ class GameDebugger {
       };
     }
   }
+
+  /**
+   * Tentative de restauration d'un état de jeu bloqué
+   * Cette fonction tente de restaurer une partie qui génère des erreurs 500
+   */
+  async recoverGameState(): Promise<boolean> {
+    this.log('Tentative de restauration de l\'état du jeu');
+    
+    try {
+      // Obtenir l'instance du service socket
+      const socket = await SocketService.getInstanceAsync();
+      
+      // Émettre un événement spécial pour forcer une réinitialisation de l'état sur le serveur
+      socket.emit('game:reset_state', {
+        gameId: this.gameId,
+        timestamp: Date.now()
+      });
+      
+      this.log('Signal de restauration d\'état envoyé');
+
+      // Donner au serveur le temps de traiter la demande
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      // Tenter de forcer une vérification d'état cohérent
+      await SocketService.forcePhaseCheck(this.gameId);
+      
+      this.log('Vérification forcée effectuée');
+      return true;
+    } catch (error) {
+      console.error('❌ Erreur lors de la restauration de l\'état:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Tentative de nettoyage d'un état de jeu bloqué via API directe
+   * À utiliser quand le socket ne répond pas
+   */
+  async recoverGameStateViaAPI(): Promise<boolean> {
+    this.log('Tentative de restauration via API REST');
+    
+    try {
+      // Récupérer l'ID utilisateur pour l'authentification
+      const userId = await UserIdManager.getUserId();
+      if (!userId) {
+        console.warn('⚠️ Impossible de récupérer: ID utilisateur non disponible');
+        return false;
+      }
+      
+      // Appeler une API spéciale de récupération
+      const response = await api.post(`/games/${this.gameId}/recover-state`, {
+        userId: userId
+      });
+      
+      this.log('Réponse de récupération:', response.data);
+      
+      return response.data?.status === 'success';
+    } catch (error) {
+      console.error('❌ Erreur lors de la tentative de récupération via API:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Analyser l'état du jeu et détecter les problèmes potentiels
+   * @param gameState État actuel du jeu
+   */
+  analyzeGameState(gameState: any): void {
+    if (!gameState) {
+      this.log('État du jeu non défini', null, 'warn');
+      return;
+    }
+    
+    // Vérifier les problèmes courants
+    if (gameState.phase === 'waiting' && gameState.game?.currentPhase === 'answer') {
+      this.log('Détection de possible désynchronisation: UI en attente mais serveur en phase réponse', gameState, 'warn');
+    }
+    
+    // Vérifier si le joueur est correctement identifié comme cible
+    if (gameState.currentQuestion && gameState.currentUserState) {
+      this.log(`État du joueur: isTarget=${gameState.currentUserState.isTargetPlayer}, hasVoted=${gameState.currentUserState.hasVoted}`);
+    }
+  }
+
+  /**
+   * Vérifier la cohérence de l'état du joueur ciblé
+   * @param gameState État du jeu
+   * @param userId ID de l'utilisateur actuel
+   */
+  debugTargetPlayerState(gameState: any, userId?: string | number): { 
+    hasInconsistency: boolean; 
+    correctValue?: boolean; 
+  } {
+    if (!gameState || !gameState.currentQuestion || !userId) {
+      return { hasInconsistency: false };
+    }
+    
+    const targetId = gameState.currentQuestion.targetPlayer?.id;
+    const userIdStr = String(userId);
+    const targetIdStr = String(targetId || '');
+    
+    const calculatedIsTarget = userIdStr === targetIdStr;
+    const currentIsTarget = Boolean(gameState.currentUserState?.isTargetPlayer);
+    
+    if (calculatedIsTarget !== currentIsTarget) {
+      this.log(`Incohérence détectée: isTarget=${currentIsTarget} mais devrait être ${calculatedIsTarget}`, {
+        userId: userIdStr,
+        targetId: targetIdStr
+      }, 'warn');
+      
+      return {
+        hasInconsistency: true,
+        correctValue: calculatedIsTarget
+      };
+    }
+    
+    return { hasInconsistency: false };
+  }
+
+  /**
+   * Tentative de déblocage d'un jeu bloqué
+   * @param gameId ID du jeu
+   */
+  async attemptToUnblock(gameId: string): Promise<boolean> {
+    try {
+      this.log(`Tentative de déblocage du jeu ${gameId}`);
+      
+      // Appeler l'API pour forcer une vérification de phase
+      await SocketService.forcePhaseCheck(gameId);
+      this.log(`✅ Demande de vérification de phase envoyée pour le jeu ${gameId}`);
+      
+      return true;
+    } catch (error) {
+      console.error(`❌ Échec du déblocage:`, error);
+      return false;
+    }
+  }
 }
 
 /**
  * Utilitaire pour déboguer et corriger les problèmes d'état de jeu
  */
-const gameDebugger = {
-  /**
-   * Vérifie si l'utilisateur est correctement identifié comme étant la cible
-   */
-  debugTargetPlayerState: (gameState: GameState | null, userId: string | number | null | undefined) => {
-    if (!gameState || !userId || !gameState.targetPlayer || !gameState.currentUserState) {
-      return null;
-    }
-
-    const userIdStr = String(userId);
-    const targetIdStr = String(gameState.targetPlayer.id);
-    const currentlyMarkedAsTarget = Boolean(gameState.currentUserState.isTargetPlayer);
-    const shouldBeTarget = userIdStr === targetIdStr;
-
-    // Vérifier s'il y a une incohérence
-    const hasInconsistency = shouldBeTarget !== currentlyMarkedAsTarget;
-
-    if (hasInconsistency) {
-      console.log(
-        `⚠️ Incohérence détectée pour isTargetPlayer - Valeur actuelle: ${currentlyMarkedAsTarget}, Valeur correcte: ${shouldBeTarget}`
-      );
-      console.log(`🔍 Détails - ID utilisateur: ${userIdStr}, ID cible: ${targetIdStr}`);
-    }
-
-    return {
-      hasInconsistency,
-      currentValue: currentlyMarkedAsTarget,
-      correctValue: shouldBeTarget,
-      details: {
-        userId: userIdStr,
-        targetId: targetIdStr,
-      }
-    };
-  },
-
-  /**
-   * Analyse l'état complet du jeu pour détecter des anomalies
-   */
-  analyzeGameState: (gameState: GameState | null) => {
-    if (!gameState) {
-      console.log('❌ Impossible d\'analyser un état de jeu null');
-      return null;
-    }
-
-    // Journaliser les informations principales
-    console.log('🔍 Analyse de l\'état du jeu:');
-    console.log(`- Phase actuelle: ${gameState.phase}`);
-    console.log(`- Tour: ${gameState.currentRound}/${gameState.totalRounds}`);
-    console.log(`- Thème: ${gameState.theme}`);
-    console.log(`- Nombre de joueurs: ${gameState.players?.length || 0}`);
-    console.log(`- Nombre de réponses: ${gameState.answers?.length || 0}`);
-    
-    const targetPlayer = gameState.targetPlayer 
-      ? `${gameState.targetPlayer.name} (ID: ${gameState.targetPlayer.id})` 
-      : 'Aucun';
-    console.log(`- Joueur cible: ${targetPlayer}`);
-
-    // Analyser les états des utilisateurs
-    const userState = gameState.currentUserState || {};
-    console.log(`- État utilisateur: isTarget=${userState.isTargetPlayer}, hasAnswered=${userState.hasAnswered}, hasVoted=${userState.hasVoted}`);
-
-    // Vérifier les incohérences courantes
-    const issues = [];
-
-    // 1. Si pas de question mais en phase de réponse/vote
-    if (!gameState.currentQuestion && ['answer', 'vote'].includes(String(gameState.phase))) {
-      issues.push('Question manquante pour une phase nécessitant une question');
-    }
-
-    // 2. Si pas de joueur cible mais une question est présente
-    if (!gameState.targetPlayer && gameState.currentQuestion) {
-      issues.push('Question présente mais joueur cible manquant');
-    }
-
-    // Journaliser les problèmes s'il y en a
-    if (issues.length > 0) {
-      console.warn('⚠️ Problèmes détectés dans l\'état du jeu:');
-      issues.forEach(issue => console.warn(`  - ${issue}`));
-    } else {
-      console.log('✅ Aucun problème majeur détecté dans l\'état du jeu');
-    }
-
-    return issues.length > 0 ? issues : null;
-  },
-
-  /**
-   * Tentative de déblocage d'une partie qui semble bloquée
-   */
-  attemptToUnblock: async (gameId: string): Promise<boolean> => {
-    try {
-      console.log(`🔄 Tentative de déblocage du jeu ${gameId}...`);
-      
-      // Vérifier si nous avons un ID utilisateur valide
-      const userId = await UserIdManager.getUserId();
-      if (!userId) {
-        console.warn('⚠️ Impossible de débloquer: ID utilisateur non disponible');
-        return false;
-      }
-      
-      // Appeler l'API de vérification forcée
-      const response = await api.post(`/games/${gameId}/force-check-phase`);
-      
-      if (response.data?.status === 'success') {
-        console.log(`✅ Déblocage réussi: ${response.data.message}`);
-        return Boolean(response.data?.data?.phaseChanged);
-      } else {
-        console.log(`ℹ️ Aucun changement nécessaire: ${response.data?.message}`);
-        return false;
-      }
-    } catch (error) {
-      console.error('❌ Erreur lors de la tentative de déblocage:', error);
-      return false;
-    }
-  },
-
-  /**
-   * Récupérer le message d'erreur à partir d'un objet d'erreur
-   */
-  getErrorMessage: (error: any): string => {
-    if (!error) return 'Erreur inconnue';
-    
-    // Tentative d'extraction du message d'erreur à partir de différentes structures
-    if (error.response?.data?.error) {
-      return error.response.data.error;
-    } else if (error.message) {
-      return error.message;
-    } else if (typeof error === 'string') {
-      return error;
-    }
-    
-    return 'Erreur inconnue';
-  }
-};
+const gameDebugger = new GameDebugger({ gameId: '', verbose: true });
 
 export const createGameDebugger = (options: GameDebuggerOptions): GameDebugger => {
   return new GameDebugger(options);
