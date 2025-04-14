@@ -159,7 +159,7 @@ class GameService {
         await this.ensureSocketConnection(gameId);
       }
       
-      // Utiliser la nouvelle méthode du service socket
+      // Utiliser la méthode statique de SocketService pour envoyer la réponse
       const result = await SocketService.submitAnswer({
         gameId,
         questionId,
@@ -170,9 +170,6 @@ class GameService {
       return { success: true };
     } catch (error) {
       console.error('❌ Erreur lors de la soumission de la réponse:', error);
-      
-      // Si l'erreur est liée au WebSocket, on pourrait essayer une méthode de secours via HTTP
-      // Mais pour simplifier, on propage simplement l'erreur
       throw error;
     }
   }

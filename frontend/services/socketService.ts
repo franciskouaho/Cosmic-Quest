@@ -698,7 +698,7 @@ export default class SocketService {
    * @returns Promise résolue avec la réponse du serveur
    */
   async submitAnswer(payload: SubmitAnswerPayload): Promise<any> {
-    const socket = await this.getInstanceAsync();
+    const socket = await SocketService.getInstanceAsync();
     
     if (!socket.connected) {
       throw new Error('Socket non connecté. Impossible de soumettre la réponse.');
@@ -736,6 +736,46 @@ export default class SocketService {
             socket.off('answer:confirmation', handleConfirmation);
             reject(new Error(ackData.error || 'Erreur lors de la soumission de la réponse'));
           }
+        }
+      });
+    });
+  }
+
+  // Rendre la méthode disponible comme méthode statique pour pouvoir l'utiliser sans instance
+  static async submitAnswer(payload: SubmitAnswerPayload): Promise<any> {
+    const instance = await this.getInstanceAsync();
+    
+    // Créer une promesse pour attendre la confirmation du serveur
+    return new Promise((resolve, reject) => {
+      // Définir un timeout pour la confirmation WebSocket
+      const timeoutId = setTimeout(() => {
+        console.error('⏱️ Timeout WebSocket atteint, la réponse a échoué');
+        instance.off('answer:confirmation');
+        reject(new Error('Le serveur a mis trop de temps à répondre. Veuillez réessayer.'));
+      }, 8000);
+      
+      // Écouter l'événement de confirmation
+      const handleConfirmation = (data) => {
+        if (data.questionId === payload.questionId) {
+          console.log('✅ Confirmation WebSocket reçue pour la réponse');
+          clearTimeout(timeoutId);
+          instance.off('answer:confirmation', handleConfirmation);
+          resolve(data);
+        }
+      };
+      
+      // S'abonner à l'événement de confirmation
+      instance.on('answer:confirmation', handleConfirmation);
+      
+      // Envoyer la réponse via WebSocket
+      instance.emit('game:submit_answer', payload, (ackData) => {
+        if (ackData && ackData.success) {
+          console.log('✅ Acquittement positif reçu pour la réponse');
+        } else if (ackData && ackData.error) {
+          console.error(`❌ Erreur lors de la soumission de la réponse WebSocket: ${ackData.error}`);
+          clearTimeout(timeoutId);
+          instance.off('answer:confirmation', handleConfirmation);
+          reject(new Error(ackData.error));
         }
       });
     });
@@ -785,6 +825,46 @@ export default class SocketService {
             socket.off('vote:confirmation', handleConfirmation);
             reject(new Error(ackData.error || 'Erreur lors de la soumission du vote'));
           }
+        }
+      });
+    });
+  }
+
+  // Rendre la méthode disponible comme méthode statique pour pouvoir l'utiliser sans instance
+  static async submitVote(payload: SubmitVotePayload): Promise<any> {
+    const instance = await this.getInstanceAsync();
+    
+    // Créer une promesse pour attendre la confirmation du serveur
+    return new Promise((resolve, reject) => {
+      // Définir un timeout pour la confirmation WebSocket
+      const timeoutId = setTimeout(() => {
+        console.error('⏱️ Timeout WebSocket atteint, le vote a échoué');
+        instance.off('vote:confirmation');
+        reject(new Error('Le serveur a mis trop de temps à répondre. Veuillez réessayer.'));
+      }, 8000);
+      
+      // Écouter l'événement de confirmation
+      const handleConfirmation = (data) => {
+        if (data.questionId === payload.questionId) {
+          console.log('✅ Confirmation WebSocket reçue pour le vote');
+          clearTimeout(timeoutId);
+          instance.off('vote:confirmation', handleConfirmation);
+          resolve(data);
+        }
+      };
+      
+      // S'abonner à l'événement de confirmation
+      instance.on('vote:confirmation', handleConfirmation);
+      
+      // Envoyer le vote via WebSocket
+      instance.emit('game:submit_vote', payload, (ackData) => {
+        if (ackData && ackData.success) {
+          console.log('✅ Acquittement positif reçu pour le vote');
+        } else if (ackData && ackData.error) {
+          console.error(`❌ Erreur lors de la soumission du vote WebSocket: ${ackData.error}`);
+          clearTimeout(timeoutId);
+          instance.off('vote:confirmation', handleConfirmation);
+          reject(new Error(ackData.error));
         }
       });
     });

@@ -770,6 +770,25 @@ export default function GameScreen() {
         // Log critique pour débogage
         console.log(`🎯 Phase VOTE - Utilisateur ${user?.id} ${isTargetPlayer ? 'EST' : "n'est pas"} la cible. hasVoted=${hasVoted}`);
         
+        // Afficher l'interface de vote de manière plus agressive pour le joueur cible
+        if (isTargetPlayer && !hasVoted) {
+          return (
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: 'white', fontSize: 18, textAlign: 'center', marginTop: 10, marginBottom: 10 }}>
+                C'est votre tour de voter!
+              </Text>
+              <VotePhase 
+                answers={gameState.answers.filter(answer => !answer.isOwnAnswer)}
+                question={gameState.currentQuestion}
+                onVote={handleVote}
+                timer={gameState.timer}
+                isTargetPlayer={true}
+                hasVoted={false}
+              />
+            </View>
+          );
+        }
+        
         return (
           <VotePhase 
             answers={gameState.answers.filter(answer => !answer.isOwnAnswer)}
@@ -805,7 +824,7 @@ export default function GameScreen() {
             )}
           </View>
         );
-          
+      
       default:
         return <Text>Erreur: Phase de jeu inconnue</Text>;
     }

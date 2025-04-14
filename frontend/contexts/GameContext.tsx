@@ -312,6 +312,30 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
               setGameState(prevState => {
                 if (!prevState) return prevState;
                 
+                // Vérifier si le joueur est la cible dans la phase de vote
+                if (data.phase === 'vote' && data.targetPlayerId && user?.id) {
+                  const isTarget = String(data.targetPlayerId) === String(user.id);
+                  if (isTarget) {
+                    console.log("🎯 Utilisateur cible détecté, passage direct en phase de vote");
+                    // Charger immédiatement les données pour éviter les délais
+                    setTimeout(() => loadGame(gameState.game.id), 200);
+                    return {
+                      ...prevState,
+                      phase: GamePhase.VOTE,
+                      game: {
+                        ...prevState.game,
+                        currentPhase: data.phase
+                      },
+                      timer: data.timer || prevState.timer,
+                      currentUserState: {
+                        ...prevState.currentUserState,
+                        isTargetPlayer: true,
+                        hasVoted: false
+                      }
+                    };
+                  }
+                }
+                
                 const effectivePhase = determineEffectivePhase(
                   data.phase,
                   prevState.currentUserState?.isTargetPlayer || false,
@@ -331,6 +355,52 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
               });
               
               setTimeout(() => loadGame(gameState.game.id), 800);
+              break;
+            
+            case 'target_player_vote':
+              // Traitement spécial lorsque le joueur cible doit voter
+              // Vérifier si l'utilisateur actuel est le joueur cible
+              const userId = user?.id;
+              console.log(`🎯 Notification de vote pour joueur cible reçue. UserId: ${userId}, TargetId: ${data.targetPlayerId}`);
+              
+              if (userId && String(userId) === String(data.targetPlayerId)) {
+                console.log("✅ Utilisateur identifié comme cible, affichage immédiat écran de vote");
+                
+                setGameState(prevState => {
+                  if (!prevState) return prevState;
+                  
+                  // S'assurer que les réponses sont à jour
+                  const updatedAnswers = data.answers || prevState.answers;
+                  
+                  return {
+                    ...prevState,
+                    phase: GamePhase.VOTE,
+                    timer: data.timer || prevState.timer,
+                    answers: updatedAnswers,
+                    currentUserState: {
+                      ...prevState.currentUserState,
+                      isTargetPlayer: true,
+                      hasVoted: false
+                    }
+                  };
+                });
+              } else {
+                console.log("👀 Utilisateur non ciblé, attente du vote");
+                
+                setGameState(prevState => {
+                  if (!prevState) return prevState;
+                  
+                  return {
+                    ...prevState,
+                    phase: GamePhase.WAITING_FOR_VOTE,
+                    timer: data.timer || prevState.timer,
+                    currentUserState: {
+                      ...prevState.currentUserState,
+                      isTargetPlayer: false
+                    }
+                  };
+                });
+              }
               break;
               
             case 'new_answer':

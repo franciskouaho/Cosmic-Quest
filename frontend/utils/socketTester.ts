@@ -317,9 +317,6 @@ export const submitVoteViaSocket = async (gameId: string, answerId: string, ques
       }, (ackData) => {
         if (ackData && ackData.success) {
           console.log('✅ Accusé de réception WebSocket reçu pour le vote');
-          clearTimeout(timeoutId);
-          socket.off('vote:confirmation', handleConfirmation);
-          resolve(true);
         } else if (ackData && ackData.error) {
           console.error(`❌ Erreur lors de la soumission du vote WebSocket: ${ackData.error}`);
           clearTimeout(timeoutId);
@@ -330,6 +327,66 @@ export const submitVoteViaSocket = async (gameId: string, answerId: string, ques
     });
   } catch (error) {
     console.error('❌ Erreur lors de la soumission du vote via WebSocket:', error);
+    throw error;
+  }
+};
+
+/**
+ * Soumettre une réponse via WebSocket directement
+ * @param gameId ID de la partie
+ * @param questionId ID de la question
+ * @param content Contenu de la réponse
+ * @returns Une promesse résolue si la réponse a été soumise avec succès
+ */
+export const submitAnswerViaSocket = async (
+  gameId: string, 
+  questionId: string, 
+  content: string
+): Promise<boolean> => {
+  try {
+    console.log(`📝 Tentative de réponse WebSocket - jeu: ${gameId}, question: ${questionId}`);
+    
+    const socket = await SocketService.getInstanceAsync();
+    
+    // Créer une promesse pour attendre la confirmation du serveur
+    return new Promise((resolve, reject) => {
+      // Définir un timeout pour la confirmation WebSocket
+      const timeoutId = setTimeout(() => {
+        console.error('⏱️ Timeout WebSocket atteint, la réponse a échoué');
+        reject(new Error('Le serveur a mis trop de temps à répondre. Veuillez réessayer.'));
+      }, 5000);
+      
+      // Écouter l'événement de confirmation
+      const handleConfirmation = (data) => {
+        if (data.questionId === questionId) {
+          console.log('✅ Confirmation WebSocket reçue pour la réponse');
+          clearTimeout(timeoutId);
+          socket.off('answer:confirmation', handleConfirmation);
+          resolve(true);
+        }
+      };
+      
+      // S'abonner à l'événement de confirmation
+      socket.on('answer:confirmation', handleConfirmation);
+      
+      // Envoyer la réponse via WebSocket
+      socket.emit('game:submit_answer', {
+        gameId,
+        questionId,
+        content
+      }, (ackData) => {
+        if (ackData && ackData.success) {
+          console.log('✅ Accusé de réception WebSocket reçu pour la réponse');
+        } else if (ackData && ackData.error) {
+          console.error(`❌ Erreur lors de la soumission de la réponse WebSocket: ${ackData.error}`);
+          clearTimeout(timeoutId);
+          socket.off('answer:confirmation', handleConfirmation);
+          reject(new Error(ackData.error));
+        }
+      });
+    });
+  } catch (error) {
+    console.error('❌ Erreur lors de la soumission de la réponse via WebSocket:', error);
     throw error;
   }
 };
@@ -480,6 +537,180 @@ export const testSubmitVoteViaSocket = async (gameId: string, answerId: string, 
   }
 };
 
+/**
+ * Simuler une notification de vote cible pour tester le comportement de l'UI
+ * @param gameId ID de la partie
+ * @param targetUserId ID de l'utilisateur ciblé (laisser vide pour utiliser l'ID actuel)
+ */
+export const simulateTargetVoteNotification = async (gameId: string, targetUserId?: string) => {
+  try {
+    const socket = await SocketService.getInstanceAsync();
+    const userId = targetUserId || await UserIdManager.getUserId();
+    
+    if (!userId) {
+      console.error('❌ ID utilisateur non disponible');
+      return { success: false, error: 'ID utilisateur non disponible' };
+    }
+    
+    console.log(`🔄 Simulation d'une notification de vote pour l'utilisateur ${userId}`);
+    
+    // Écouter l'événement pendant 5 secondes pour vérifier s'il est bien traité
+    const timeoutPromise = new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        console.log('⏱️ Fin de la période d\'observation');
+        resolve({ success: true, observed: false });
+        socket.off('game:update');
+      }, 5000);
+      
+      socket.on('game:update', (data) => {
+        if (data.type === 'target_player_vote' || 
+            (data.type === 'phase_change' && data.phase === 'vote')) {
+          console.log('✅ Événement observé:', data.type);
+          clearTimeout(timeout);
+          socket.off('game:update');
+          resolve({ success: true, observed: true, data });
+        }
+      });
+    });
+    
+    // Émettre un faux événement pour simuler la notification
+    socket.emit('test:simulate_event', {
+      type: 'target_player_vote',
+      gameId,
+      targetUserId: userId,
+      event: {
+        type: 'target_player_vote',
+        phase: 'vote',
+        message: 'C\'est à votre tour de voter! (test)',
+        targetPlayerId: userId,
+        timer: {
+          duration: 20,
+          startTime: Date.now()
+        }
+      }
+    });
+    
+    console.log('📤 Demande de simulation envoyée');
+    
+    const result = await timeoutPromise;
+    return result;
+  } catch (error) {
+    console.error('❌ Erreur lors de la simulation:', error);
+    return { success: false, error: error.message };
+  }
+};
+
+/**
+ * Tester la transition automatique vers la phase de vote
+ * @param gameId ID de la partie
+ */
+export const testAutoVoteTransition = async (gameId: string): Promise<boolean> => {
+  try {
+    const socket = await SocketService.getInstanceAsync();
+    console.log(`🧪 Test de transition automatique vers la phase de vote - jeu: ${gameId}`);
+    
+    // Récupérer l'ID utilisateur actuel pour vérification
+    const userId = await UserIdManager.getUserId();
+    console.log(`👤 Utilisateur actuel: ${userId || 'non défini'}`);
+    
+    // Configurer des écouteurs pour observer les événements pendant 5 secondes
+    let targetVoteReceived = false;
+    let phaseChangeReceived = false;
+    
+    return new Promise((resolve) => {
+      // Écouteur pour l'événement spécifique ciblant le joueur à voter
+      const handleTargetVote = (data) => {
+        if (data.type === 'target_player_vote') {
+          console.log('✅ Événement target_player_vote reçu:', data);
+          targetVoteReceived = true;
+          
+          // Vérifier si l'utilisateur actuel est bien la cible
+          const isTarget = userId && String(userId) === String(data.targetPlayerId);
+          console.log(`👤 L'utilisateur actuel ${isTarget ? 'EST' : "n'est PAS"} la cible du vote`);
+        }
+      };
+      
+      // Écouteur pour le changement de phase général
+      const handlePhaseChange = (data) => {
+        if (data.type === 'phase_change' && data.phase === 'vote') {
+          console.log('✅ Événement phase_change vers vote reçu:', data);
+          phaseChangeReceived = true;
+        }
+      };
+      
+      socket.on('game:update', handleTargetVote);
+      socket.on('game:update', handlePhaseChange);
+      
+      // Configurer un timeout pour nettoyer les écouteurs après 5 secondes
+      setTimeout(() => {
+        socket.off('game:update', handleTargetVote);
+        socket.off('game:update', handlePhaseChange);
+        
+        console.log('📊 Résultat du test:');
+        console.log(`- Événement target_player_vote: ${targetVoteReceived ? 'Reçu ✓' : 'Non reçu ✗'}`);
+        console.log(`- Événement phase_change vote: ${phaseChangeReceived ? 'Reçu ✓' : 'Non reçu ✗'}`);
+        
+        resolve(targetVoteReceived || phaseChangeReceived);
+      }, 5000);
+      
+      // Émettre une requête pour forcer la vérification de la phase
+      socket.emit('game:force_check', { gameId });
+      console.log('📤 Demande de vérification forcée envoyée');
+    });
+  } catch (error) {
+    console.error('❌ Erreur lors du test de transition automatique:', error);
+    return false;
+  }
+};
+
+/**
+ * Tester l'envoi de réponse
+ */
+export const testAnswerSubmission = async (gameId: string, questionId: string, content: string): Promise<boolean> => {
+  try {
+    console.log(`🧪 Test de soumission de réponse - jeu: ${gameId}, question: ${questionId}`);
+    
+    // Utiliser directement la méthode statique du service
+    const result = await SocketService.submitAnswer({
+      gameId,
+      questionId,
+      content
+    });
+    
+    console.log(`✅ Test réussi: réponse soumise avec succès`);
+    return true;
+  } catch (error) {
+    console.error(`❌ Test échoué: erreur lors de la soumission de réponse:`, error);
+    return false;
+  }
+};
+
+/**
+ * Vérifier le statut des méthodes critiques du service WebSocket
+ */
+export const diagnoseSocketMethods = async () => {
+  try {
+    const socket = await SocketService.getInstanceAsync();
+    
+    // Vérifier si les méthodes critiques sont bien définies
+    const diagnosis = {
+      connected: socket.connected,
+      methods: {
+        submitAnswer: typeof SocketService.submitAnswer === 'function',
+        submitVote: typeof SocketService.submitVote === 'function',
+        getInstanceAsync: typeof SocketService.getInstanceAsync === 'function',
+        joinGameChannel: typeof SocketService.joinGameChannel === 'function',
+      }
+    };
+    
+    console.log('🔍 Diagnostic des méthodes Socket:', diagnosis);
+    return diagnosis;
+  } catch (error) {
+    console.error('❌ Erreur lors du diagnostic des méthodes Socket:', error);
+    return { error: error.message };
+  }
+};
+
 export default {
   testSocketConnection,
   checkSocketStatus,
@@ -488,7 +719,12 @@ export default {
   testTargetPlayerScenario,
   diagTargetPlayerStatus,
   submitVoteViaSocket,
+  submitAnswerViaSocket,
   diagnoseTargetPlayer,
   testSubmitAnswerViaSocket,
   testSubmitVoteViaSocket,
+  simulateTargetVoteNotification,
+  testAutoVoteTransition,
+  testAnswerSubmission,
+  diagnoseSocketMethods,
 };

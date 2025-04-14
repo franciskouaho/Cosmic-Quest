@@ -456,10 +456,49 @@ export default class GamesController {
         const io = socketService.getInstance()
         const votePhaseDuration = 20 // 20 secondes
 
+        // Trouver le joueur cible pour lui envoyer une notification spéciale
+        const targetPlayer = players.find((player) => player.id === question.targetPlayerId)
+
+        if (targetPlayer) {
+          console.log(
+            `🎯 [checkAndProgressPhase] Joueur cible trouvé: ${targetPlayer.id}, notification spéciale envoyée`
+          )
+
+          // Récupérer toutes les réponses pour le joueur cible
+          const answers = await Answer.query()
+            .where('question_id', questionId)
+            .preload('user')
+            .orderBy('created_at', 'asc')
+
+          // Préparer les données des réponses pour le ciblage
+          const answerData = answers.map((answer) => ({
+            id: answer.id,
+            content: answer.content,
+            playerId: answer.userId,
+            playerName: answer.user?.displayName || answer.user?.username || 'Joueur anonyme',
+          }))
+
+          // Notification spéciale pour le joueur cible avec les réponses
+          io.to(`game:${gameId}`).emit('game:update', {
+            type: 'target_player_vote',
+            phase: 'vote',
+            message: "C'est à votre tour de voter!",
+            targetPlayerId: targetPlayer.id,
+            questionId: questionId,
+            answers: answerData,
+            timer: {
+              duration: votePhaseDuration,
+              startTime: Date.now(),
+            },
+          })
+        }
+
+        // Notification générale du changement de phase
         io.to(`game:${gameId}`).emit('game:update', {
           type: 'phase_change',
           phase: 'vote',
           message: 'Toutes les réponses ont été reçues. Place au vote!',
+          targetPlayerId: question.targetPlayerId,
           timer: {
             duration: votePhaseDuration,
             startTime: Date.now(),
@@ -472,6 +511,7 @@ export default class GamesController {
             type: 'phase_reminder',
             phase: 'vote',
             message: 'Passé en phase de vote',
+            targetPlayerId: question.targetPlayerId,
             timer: {
               duration: votePhaseDuration - 2,
               startTime: Date.now(),
@@ -1046,6 +1086,162 @@ export default class GamesController {
 
       // Sauvegarder les changements
       await player.save()
+    }
+  }
+
+  /**
+   * Traiter la soumission d'une réponse
+   */
+  public async handleAnswerSubmission(socket: Socket, data: any) {
+    try {
+      // ...existing code...
+
+      // Après avoir sauvegardé la réponse, vérifier si toutes les réponses sont soumises
+      const allAnswers = await this.checkAllAnswersSubmitted(data.gameId, data.questionId)
+
+      if (allAnswers) {
+        console.log(
+          `✅ Toutes les réponses ont été soumises pour le jeu ${data.gameId}, question ${data.questionId}`
+        )
+
+        // Passer à la phase de vote si nécessaire
+        await this.advanceToVotePhase(data.gameId, data.questionId)
+      }
+
+      // ...existing code...
+    } catch (error) {
+      // ...existing code...
+    }
+  }
+
+  /**
+   * Vérifier si toutes les réponses ont été soumises
+   */
+  private async checkAllAnswersSubmitted(
+    gameId: string | number,
+    questionId: string | number
+  ): Promise<boolean> {
+    try {
+      // Récupérer le jeu
+      const game = await Game.find(gameId)
+      if (!game) return false
+
+      // Récupérer la question
+      const question = await Question.findOrFail(questionId)
+
+      // Récupérer la salle et les joueurs
+      const room = await Room.find(game.roomId)
+      const players = await room.related('players').query()
+
+      // Compter les réponses existantes pour cette question
+      const answersCount = await Answer.query().where('question_id', questionId).count('* as count')
+      const count = Number.parseInt(answersCount[0].$extras.count || '0', 10)
+
+      // Calculer combien de joueurs peuvent répondre (tous sauf la cible)
+      const nonTargetPlayers = players.filter(
+        (player) => player.id !== question.targetPlayerId
+      ).length
+
+      console.log(
+        `📊 [checkAllAnswersSubmitted] Réponses: ${count}/${nonTargetPlayers}, Phase: ${game.currentPhase}`
+      )
+
+      // Vérifier si toutes les réponses attendues sont là
+      return count >= nonTargetPlayers
+    } catch (error) {
+      console.error('❌ Erreur lors de la vérification des réponses:', error)
+      return false
+    }
+  }
+
+  /**
+   * Faire passer le jeu à la phase de vote et envoyer une notification spéciale au joueur ciblé
+   */
+  private async advanceToVotePhase(
+    gameId: string | number,
+    questionId: string | number
+  ): Promise<boolean> {
+    try {
+      // Récupérer le jeu
+      const game = await Game.find(gameId)
+      if (!game) return false
+
+      // Si déjà en phase vote ou ultérieure, ne rien faire
+      if (game.currentPhase !== 'answer') {
+        return false
+      }
+
+      // Récupérer la question
+      const question = await Question.findOrFail(questionId)
+
+      // Récupérer la salle et les joueurs
+      const room = await Room.find(game.roomId)
+      const players = await room.related('players').query()
+
+      // Passer à la phase de vote
+      game.currentPhase = 'vote'
+      await game.save()
+
+      // Récupérer les réponses pour les envoyer au joueur ciblé
+      const answers = await Answer.query()
+        .where('question_id', questionId)
+        .preload('user')
+        .orderBy('created_at', 'asc')
+
+      // Formater les réponses pour l'envoi
+      const formattedAnswers = answers.map((answer) => ({
+        id: answer.id,
+        content: answer.content,
+        playerId: answer.userId,
+        playerName: answer.user?.displayName || answer.user?.username || 'Joueur anonyme',
+      }))
+
+      // Trouver le joueur cible
+      const targetPlayer = players.find((player) => player.id === question.targetPlayerId)
+
+      // Instance Socket.IO
+      const io = socketService.getInstance()
+
+      // Durée de la phase de vote
+      const votePhaseDuration = 20 // 20 secondes
+
+      // Notification spécifique pour le joueur ciblé
+      if (targetPlayer) {
+        console.log(
+          `🎯 [advanceToVotePhase] Notification spéciale envoyée au joueur cible ${targetPlayer.id}`
+        )
+
+        // Émettre un événement spécial avec toutes les réponses pour le joueur ciblé
+        io.to(`user:${targetPlayer.id}`).emit('game:update', {
+          type: 'target_player_vote',
+          phase: 'vote',
+          message: "C'est à votre tour de voter pour une réponse!",
+          targetPlayerId: targetPlayer.id,
+          questionId: question.id,
+          answers: formattedAnswers,
+          timer: {
+            duration: votePhaseDuration,
+            startTime: Date.now(),
+          },
+        })
+      }
+
+      // Notification générale pour tous les joueurs
+      io.to(`game:${gameId}`).emit('game:update', {
+        type: 'phase_change',
+        phase: 'vote',
+        message: 'Toutes les réponses ont été reçues. Place au vote!',
+        targetPlayerId: question.targetPlayerId,
+        timer: {
+          duration: votePhaseDuration,
+          startTime: Date.now(),
+        },
+      })
+
+      return true
+    } catch (error) {
+      console.error('❌ Erreur lors du passage à la phase de vote:', error)
+      return false
     }
   }
 }
