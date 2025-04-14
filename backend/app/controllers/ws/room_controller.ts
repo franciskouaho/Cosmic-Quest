@@ -169,7 +169,7 @@ export default class RoomsController {
         .where('code', params.code)
         .preload('host')
         .preload('players', (query) => {
-          query.pivotColumns(['is_ready', 'score'])
+          query.pivotColumns(['is_ready'])
         })
         .first()
 

@@ -114,6 +114,45 @@ export class SocketService {
           }
         })
 
+        // Nouveau gestionnaire pour forcer la vérification de phase
+        socket.on('game:force_check', async (data) => {
+          try {
+            const gameId = data.gameId
+            console.log(`🔄 [WebSocket] Demande de vérification forcée pour le jeu ${gameId}`)
+
+            // Importer le contrôleur de jeu de manière dynamique
+            const GameController = (await import('#controllers/ws/game_controller')).default
+            const controller = new GameController()
+
+            // Récupérer les données nécessaires
+            const game = await Game.find(gameId)
+            if (!game) {
+              console.error(`❌ [WebSocket] Jeu non trouvé: ${gameId}`)
+              return
+            }
+
+            // Récupérer la question actuelle
+            const question = await Question.query()
+              .where('game_id', gameId)
+              .where('round_number', game.currentRound)
+              .first()
+
+            if (!question) {
+              console.error(`❌ [WebSocket] Question non trouvée pour le jeu ${gameId}`)
+              return
+            }
+
+            // Utiliser la méthode du contrôleur pour vérifier et faire progresser la phase
+            const success = await controller.checkAndProgressPhase(gameId, question.id)
+
+            console.log(
+              `${success ? '✅' : 'ℹ️'} [WebSocket] Vérification forcée ${success ? 'a mis à jour' : "n'a pas modifié"} la phase`
+            )
+          } catch (error) {
+            console.error('❌ [WebSocket] Erreur lors de la vérification forcée:', error)
+          }
+        })
+
         // Événement pour tester la connexion
         socket.on('ping', (callback) => {
           if (typeof callback === 'function') {

@@ -129,21 +129,24 @@ export const UserIdManager = {
    */
   debugUserIds: async (): Promise<void> => {
     try {
-      // Récupérer toutes les sources d'ID utilisateur possibles pour le débogage
-      const apiHeaderId = api?.defaults?.headers?.userId ? String(api.defaults.headers.userId) : 'non défini';
-      const asyncStorageId = await AsyncStorage.getItem(USER_ID_KEY) || 'non défini';
-      const reactQueryCacheId = UserIdManager.getIdFromReactQueryCache() || 'non défini';
+      // Récupérer les IDs de différentes sources
+      const apiHeaderId = api && api.defaults && api.defaults.headers ? api.defaults.headers.userId || 'Non défini' : 'Non défini';
+      const asyncStorageId = await AsyncStorage.getItem('@current_user_id') || 'Non défini';
       
-      let userDataId = 'non défini';
+      // Récupérer l'ID depuis les données utilisateur stockées
+      let userDataId = 'Non défini';
       try {
         const userData = await AsyncStorage.getItem('@user_data');
         if (userData) {
-          const user = JSON.parse(userData);
-          userDataId = user?.id ? String(user.id) : 'non défini';
+          const parsed = JSON.parse(userData);
+          userDataId = parsed.id || 'Non défini';
         }
-      } catch (err) {
-        userDataId = `erreur: ${err.message}`;
+      } catch (e) {
+        userDataId = 'Erreur de parsing';
       }
+      
+      // Récupérer l'ID depuis le cache de ReactQuery
+      const reactQueryCacheId = UserIdManager.getIdFromReactQueryCache() || 'Non défini';
       
       console.log(`📊 DEBUG UserID: 
         API Headers: ${apiHeaderId}

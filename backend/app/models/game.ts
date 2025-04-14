@@ -43,9 +43,6 @@ export default class Game extends BaseModel {
   @column({ columnName: 'current_phase' })
   declare currentPhase: 'question' | 'answer' | 'vote' | 'results' | 'waiting'
 
-  @column()
-  declare scores: Record<string, number>
-
   @hasMany(() => Question)
   declare questions: HasMany<typeof Question>
 

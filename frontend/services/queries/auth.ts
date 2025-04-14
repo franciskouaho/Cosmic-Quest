@@ -192,4 +192,34 @@ class AuthService {
   }
 }
 
+// Hook personnalisé pour la connexion
+export const useLogin = () => {
+  return useMutation({
+    mutationFn: async (credentials: LoginCredentials | string) => {
+      // Si credentials est une simple chaîne, la considérer comme username
+      const payload = typeof credentials === 'string' 
+        ? { username: credentials } 
+        : credentials;
+      
+      // Utiliser register-or-login au lieu de login car c'est l'endpoint disponible
+      const response = await axios.post('/auth/register-or-login', payload);
+      return response.data.data;
+    },
+    onSuccess: async (data) => {
+      await AsyncStorage.setItem('@auth_token', data.token);
+      
+      if (data.user && data.user.id) {
+        await UserIdManager.setUserId(data.user.id);
+        await AsyncStorage.setItem('@user_data', JSON.stringify(data.user));
+      } else if (data.id) {
+        // Format alternatif de la réponse
+        await UserIdManager.setUserId(data.id);
+        await AsyncStorage.setItem('@user_data', JSON.stringify(data));
+      }
+      
+      queryClient.invalidateQueries({ queryKey: ['user'] });
+    }
+  });
+};
+
 export default new AuthService();

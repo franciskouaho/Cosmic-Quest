@@ -36,18 +36,17 @@ const determineEffectivePhase = (
         // Si l'utilisateur est la cible pendant la phase de réponse, il doit attendre
         return GamePhase.WAITING;  
       }
+      
+      // FIX: Si le joueur a répondu, il est en attente
       return hasAnswered ? GamePhase.WAITING : GamePhase.ANSWER;
 
     case 'vote':
-      // Correction critique: Si l'utilisateur est la cible et n'a pas encore voté, 
+      // CORRECTION CRITIQUE: Si l'utilisateur est la cible et n'a pas encore voté, 
       // il DOIT voir l'écran de vote, pas l'écran d'attente
       if (isTarget && !hasVoted) {
         return GamePhase.VOTE;
-      } else if (hasVoted) {
-        // Si l'utilisateur a voté (qu'il soit cible ou non), il doit attendre
-        return GamePhase.WAITING;
       } else {
-        // Pour les non-cibles qui n'ont pas voté, ils sont en attente
+        // Pour les non-cibles ou ceux qui ont déjà voté, ils sont en attente
         return GamePhase.WAITING;
       }
 

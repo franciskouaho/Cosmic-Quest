@@ -1,21 +1,24 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { Answer, Question } from '../../types/gameTypes';
+import { Answer } from '@/types/gameTypes';
 import GameTimer from './GameTimer';
 
-interface VotePhaseProps {
+type VotePhaseProps = {
   answers: Answer[];
-  question: Question;
+  question: {
+    id: number | string;
+    text: string;
+  };
   onVote: (answerId: string) => void;
   timer?: {
     duration: number;
     startTime: number;
   } | null;
-  isTargetPlayer?: boolean;
-  hasVoted?: boolean;
-}
+  isTargetPlayer: boolean;
+  hasVoted: boolean;
+};
 
 const VotePhase: React.FC<VotePhaseProps> = ({ 
   answers, 
@@ -25,57 +28,26 @@ const VotePhase: React.FC<VotePhaseProps> = ({
   isTargetPlayer = false,
   hasVoted = false
 }: VotePhaseProps) => {
-  const [votableAnswers, setVotableAnswers] = useState<Answer[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // Filtrer les réponses pour ne pas afficher les propres réponses du joueur
+  const votableAnswers = answers.filter(answer => !answer.isOwnAnswer);
   
-  console.log(`🔍 VotePhase rendu: isTarget=${isTargetPlayer}, hasVoted=${hasVoted}, answers=${answers?.length || 0}`);
-  
-  useEffect(() => {
-    try {
-      if (!Array.isArray(answers)) {
-        console.error('⚠️ VotePhase: answers n\'est pas un tableau:', answers);
-        setError('Problème avec les données des réponses');
-        setVotableAnswers([]);
-        setLoading(false);
-        return;
-      }
-      
-      const filtered = answers.filter(answer => !answer.isOwnAnswer);
-      console.log(`🎮 VotePhase: ${filtered.length}/${answers.length} réponses filtrées pour le vote`);
-      
-      if (filtered.length === 0 && answers.length > 0) {
-        console.warn('⚠️ VotePhase: toutes les réponses ont été filtrées!');
-      }
-      
-      setVotableAnswers(filtered);
-      setLoading(false);
-      
-      if (filtered.length > 0) {
-        filtered.forEach((answer, i) => {
-          console.log(`🎮 Réponse ${i+1}: ID=${answer.id}, joueur=${answer.playerName}, contenu="${answer.content.substring(0, 30)}..."`);
-        });
-      }
-    } catch (error) {
-      console.error('❌ Erreur lors du filtrage des réponses:', error);
-      setError('Une erreur est survenue lors du chargement des réponses');
-      setLoading(false);
-    }
-  }, [answers]);
-
-  if (!isTargetPlayer) {
+  // Si l'utilisateur n'est pas la cible, ou a déjà voté, afficher un message d'attente
+  if (!isTargetPlayer || hasVoted) {
     return (
       <View style={styles.messageContainer}>
-        <Text style={styles.messageTitle}>En attente du vote</Text>
-        <Text style={styles.messageText}>
-          {question?.targetPlayer?.name || 'La cible'} est en train de voter pour la meilleure réponse.
+        <Text style={styles.messageTitle}>
+          {hasVoted ? "Vote enregistré !" : "En attente du vote"}
         </Text>
-        {timer && timer.duration > 0 && (
+        <Text style={styles.messageText}>
+          {hasVoted 
+            ? "Votre vote a été enregistré. Attendons que tout le monde termine." 
+            : "Attendez que la personne ciblée vote pour sa réponse préférée."}
+        </Text>
+        {timer && (
           <View style={styles.timerWrapper}>
             <GameTimer 
-              duration={timer.duration} 
-              startTime={timer.startTime} 
-              alertThreshold={10}
+              duration={timer.duration}
+              startTime={timer.startTime}
             />
           </View>
         )}
@@ -83,43 +55,8 @@ const VotePhase: React.FC<VotePhaseProps> = ({
     );
   }
 
-  if (hasVoted) {
-    return (
-      <View style={styles.messageContainer}>
-        <Text style={styles.messageTitle}>Vote enregistré!</Text>
-        <Text style={styles.messageText}>En attente des résultats...</Text>
-        {timer && <GameTimer duration={timer.duration} startTime={timer.startTime} />}
-      </View>
-    );
-  }
-
-  if (loading) {
-    return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#5D6DFF" />
-        <Text style={styles.loadingText}>Chargement des réponses...</Text>
-      </View>
-    );
-  }
-
-  if (error) {
-    return (
-      <View style={styles.messageContainer}>
-        <Text style={styles.messageTitle}>Une erreur est survenue</Text>
-        <Text style={styles.messageText}>{error}</Text>
-        <TouchableOpacity style={styles.retryButton} onPress={() => setError(null)}>
-          <Text style={styles.retryText}>Réessayer</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
-
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>C'est à vous de voter!</Text>
-      </View>
-
       {timer && (
         <View style={styles.timerContainer}>
           <GameTimer 

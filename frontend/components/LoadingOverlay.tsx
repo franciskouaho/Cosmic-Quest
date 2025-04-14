@@ -66,21 +66,26 @@ const LoadingOverlay: React.FC<LoadingOverlayProps> = ({
       {errorMessage && (
         <View style={styles.errorContainer}>
           <MaterialCommunityIcons name="alert-circle" size={24} color="#ff6b6b" />
-          <Text style={styles.errorMessage}>{errorMessage}</Text>
+          <Text style={styles.errorText}>{errorMessage}</Text>
         </View>
       )}
       
-      {(showRetry || waitTime > 10) && retryFunction && (
+      {(showRetry || waitTime > 15) && retryFunction && (
         <TouchableOpacity 
           style={styles.retryButton}
           onPress={retryFunction}
           disabled={isRetrying}
         >
-          <MaterialCommunityIcons name="refresh" size={20} color="white" />
-          <Text style={styles.retryText}>
-            {isRetrying ? 'Nouvelle tentative...' : 'Rafraîchir le jeu'}
+          <Text style={styles.retryButtonText}>
+            {isRetrying ? 'Tentative en cours...' : 'Rafraîchir'}
           </Text>
         </TouchableOpacity>
+      )}
+
+      {waitTime > 30 && (
+        <Text style={styles.tipText}>
+          Astuce: Si l'attente persiste, essayez de quitter et rejoindre la partie.
+        </Text>
       )}
     </View>
   );
@@ -116,7 +121,7 @@ const styles = StyleSheet.create({
     padding: 10,
     borderRadius: 8,
   },
-  errorMessage: {
+  errorText: {
     color: '#ff6b6b',
     marginLeft: 10,
     flex: 1,
@@ -131,11 +136,16 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     marginTop: 10,
   },
-  retryText: {
+  retryButtonText: {
     color: 'white',
-    marginLeft: 8,
     fontWeight: '600',
-  }
+  },
+  tipText: {
+    fontSize: 14,
+    color: '#b3a5d9',
+    marginTop: 20,
+    textAlign: 'center',
+  },
 });
 
 export default LoadingOverlay;

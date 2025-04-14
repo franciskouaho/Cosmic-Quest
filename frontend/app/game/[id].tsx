@@ -134,11 +134,17 @@ export default function GameScreen() {
             return hasAnswered ? GamePhase.WAITING : GamePhase.ANSWER;
 
           case 'vote':
-            // Seul le joueur cible peut voter
+            // CORRECTION: Seul le joueur cible qui n'a pas encore voté doit voir l'écran de vote
             if (isTarget && !hasVoted) {
-              return GamePhase.VOTE;
+              return GamePhase.VOTE; // Le joueur cible doit voter
+            } else if (!isTarget && !hasVoted) {
+              // CORRECTION IMPORTANTE: Les autres joueurs ne votent pas dans cette phase, uniquement la cible
+              // mais ils doivent quand même voir autre chose que l'écran d'attente
+              return GamePhase.WAITING_FOR_VOTE;
+            } else {
+              // Pour les joueurs qui ont déjà voté, ils sont en attente
+              return GamePhase.WAITING;
             }
-            return GamePhase.WAITING;
 
           case 'results':
             return GamePhase.RESULTS;
@@ -303,6 +309,90 @@ export default function GameScreen() {
       socketCleanup.cleanupEvents();
     };
   }, [id, user, router, fetchGameData]);
+
+  // Dans le composant GameScreen, modifions l'effet pour mieux gérer les blocages
+  useEffect(() => {
+    // Ne pas exécuter pendant le chargement initial
+    if (!isReady || !gameState || !id) return;
+    
+    // Compteur pour les situations d'attente prolongées
+    let waitingTime = 0;
+    let unblockAttempted = false;
+    
+    // Vérifier si nous sommes dans une situation d'attente potentiellement bloquée
+    const checkIfStuck = async () => {
+      // Si nous sommes déjà en phase de vote ou de résultats, pas besoin de vérifier
+      if ((gameState.phase !== 'waiting' && gameState.phase !== GamePhase.WAITING) || 
+          (gameState.game?.currentPhase !== 'answer')) {
+        waitingTime = 0;
+        unblockAttempted = false;
+        return;
+      }
+      
+      // On incrémente le temps d'attente
+      waitingTime += 5;
+      
+      // Après 15 secondes d'attente, vérifier si nous sommes bloqués
+      if (waitingTime >= 15) {
+        console.log(`⚠️ Situation d'attente prolongée détectée: ${waitingTime} secondes`);
+        
+        // Vérifier si nous sommes potentiellement bloqués en phase answer
+        if (gameState.game?.currentPhase === 'answer') {
+          const nonTargetPlayers = gameState.players?.filter(p => 
+            p.id !== gameState.targetPlayer?.id
+          ).length || 0;
+          
+          const answersCount = gameState.answers?.length || 0;
+          
+          // Si toutes les réponses sont disponibles mais nous sommes toujours en phase answer
+          if (answersCount >= nonTargetPlayers && nonTargetPlayers > 0) {
+            console.log(`⚠️ BLOCAGE DÉTECTÉ: Toutes les réponses (${answersCount}/${nonTargetPlayers}) sont fournies mais toujours en phase answer`);
+            
+            if (!unblockAttempted) {
+              console.log(`🔓 Tentative de déblocage du jeu...`);
+              unblockAttempted = true;
+              
+              try {
+                // Tentative de récupération avec gameDebugger
+                const unblocked = await gameDebugger.attemptToUnblock(id as string);
+                
+                if (unblocked) {
+                  console.log(`✅ Déblocage réussi!`);
+                  fetchGameData(); // Rafraîchir les données
+                  return;
+                } else {
+                  console.log(`⚠️ Première tentative de déblocage échouée, nouvelle tentative dans 5s...`);
+                  // Ne pas réinitialiser unblockAttempted pour limiter les tentatives multiples
+                  
+                  // Faire une deuxième tentative après un délai plus long
+                  setTimeout(async () => {
+                    await gameDebugger.attemptToUnblock(id as string);
+                    fetchGameData();
+                  }, 5000);
+                }
+              } catch (error) {
+                console.error(`❌ Erreur lors de la tentative de déblocage:`, error);
+              }
+            }
+          }
+        }
+        
+        // Si après 15 secondes nous sommes toujours bloqués, forcer un rafraîchissement
+        if (waitingTime >= 15) {
+          console.log(`🔄 Forçage d'un rafraîchissement après attente prolongée (${waitingTime}s)`);
+          fetchGameData();
+          waitingTime = 0;
+        }
+      }
+    };
+    
+    // Vérifier toutes les 5 secondes
+    const stuckInterval = setInterval(checkIfStuck, 5000);
+    
+    return () => {
+      clearInterval(stuckInterval);
+    };
+  }, [isReady, gameState, id, fetchGameData]);
   
   const handleSubmitAnswer = async (answer: string) => {
     // Vérifier l'ID utilisateur avant de soumettre
@@ -637,6 +727,31 @@ export default function GameScreen() {
           />
         );
           
+      case GamePhase.WAITING_FOR_VOTE:
+        // Nouvel écran pour les non-cibles pendant la phase de vote
+        return (
+          <View style={styles.waitingContainer}>
+            <Text style={styles.waitingTitle}>C'est au tour de {gameState.targetPlayer?.name} de voter !</Text>
+            <Text style={styles.waitingText}>
+              {gameState.targetPlayer?.name} est en train de choisir sa réponse préférée.
+            </Text>
+            <LoadingOverlay 
+              message="Attente du vote..."
+              showSpinner={true}
+              retryFunction={fetchGameData}
+            />
+            {gameState.timer && (
+              <View style={styles.timerContainer}>
+                <GameTimer 
+                  duration={gameState.timer.duration}
+                  startTime={gameState.timer.startTime}
+                  onComplete={() => fetchGameData()}
+                />
+              </View>
+            )}
+          </View>
+        );
+          
       default:
         return <Text>Erreur: Phase de jeu inconnue</Text>;
     }
@@ -736,6 +851,19 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
+  },
+  waitingTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#ffffff',
+    marginBottom: 10,
+    textAlign: 'center',
+  },
+  waitingText: {
+    fontSize: 16,
+    color: '#e0e0e0',
+    textAlign: 'center',
+    marginBottom: 20,
   },
   refreshButton: {
     marginTop: 20,

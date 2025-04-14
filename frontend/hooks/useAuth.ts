@@ -4,11 +4,12 @@ import api from '../config/axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LoginCredentials, RegisterCredentials, User } from '../types/authTypes';
 import UserIdManager from '../utils/userIdManager';
+import { useRouter } from 'expo-router';
 
-// Récupérer l'utilisateur actuel depuis l'API - corriger l'endpoint qui retourne 404
+// Récupérer l'utilisateur actuel depuis l'API
 const fetchCurrentUser = async (): Promise<User> => {
   try {
-    // Modification du chemin /me qui semble ne pas exister
+    // Utiliser l'endpoint correct
     const response = await api.get('/users/profile');
     return response.data.data;
   } catch (error) {
@@ -43,6 +44,7 @@ export const useUser = () => {
 export const useTokenRefresh = () => {
   return useMutation({
     mutationFn: async () => {
+      // Note: Vérifiez si cet endpoint existe réellement sur votre API
       const response = await api.post('/auth/refresh-token');
       return response.data;
     },
@@ -55,29 +57,58 @@ export const useTokenRefresh = () => {
 
 // Hook personnalisé pour la connexion
 export const useLogin = () => {
+  const router = useRouter();
+  
   return useMutation({
-    mutationFn: async (credentials: LoginCredentials) => {
-      const response = await api.post('/auth/login', credentials);
+    mutationFn: async (credentials: LoginCredentials | string) => {
+      // Si credentials est une chaîne, l'adapter au format attendu
+      const payload = typeof credentials === 'string' 
+        ? { username: credentials } 
+        : credentials;
+      
+      console.log('🔐 Tentative de connexion avec:', payload);
+      
+      // Utiliser l'endpoint correct
+      const response = await api.post('/auth/register-or-login', payload);
       return response.data.data;
     },
     onSuccess: async (data) => {
+      console.log('✅ Authentification réussie, sauvegarde des données');
       await AsyncStorage.setItem('@auth_token', data.token);
       
       if (data.user && data.user.id) {
         await UserIdManager.setUserId(data.user.id);
         await AsyncStorage.setItem('@user_data', JSON.stringify(data.user));
+        console.log(`🔑 Données utilisateur ${data.user.id} sauvegardées`);
+      } else if (data.id) {
+        await UserIdManager.setUserId(data.id);
+        await AsyncStorage.setItem('@user_data', JSON.stringify(data));
+        console.log(`🔑 Données utilisateur ${data.id} sauvegardées`);
       }
       
       queryClient.invalidateQueries({ queryKey: ['user'] });
+      
+      // Redirection vers la page d'accueil après connexion réussie
+      console.log('🚀 Redirection vers la page d\'accueil');
+      
+      // Petit délai pour s'assurer que les données sont bien sauvegardées
+      setTimeout(() => {
+        router.replace('/(tabs)/');
+      }, 100);
+    },
+    onError: (error) => {
+      console.error('❌ Erreur lors de l\'authentification:', error);
     }
   });
 };
 
-// Hook personnalisé pour l'inscription
+// Hook personnalisé pour l'inscription - utiliser aussi register-or-login
 export const useRegister = () => {
+  const router = useRouter();
+  
   return useMutation({
     mutationFn: async (credentials: RegisterCredentials) => {
-      const response = await api.post('/auth/register', credentials);
+      const response = await api.post('/auth/register-or-login', credentials);
       return response.data.data;
     },
     onSuccess: async (data) => {
@@ -86,15 +117,25 @@ export const useRegister = () => {
       if (data.user && data.user.id) {
         await UserIdManager.setUserId(data.user.id);
         await AsyncStorage.setItem('@user_data', JSON.stringify(data.user));
+      } else if (data.id) {
+        await UserIdManager.setUserId(data.id);
+        await AsyncStorage.setItem('@user_data', JSON.stringify(data));
       }
       
       queryClient.invalidateQueries({ queryKey: ['user'] });
+      
+      // Redirection vers la page d'accueil après inscription réussie
+      setTimeout(() => {
+        router.replace('/(tabs)/');
+      }, 100);
     }
   });
 };
 
 // Hook personnalisé pour la déconnexion
 export const useLogout = () => {
+  const router = useRouter();
+  
   return useMutation({
     mutationFn: async () => {
       const response = await api.post('/auth/logout');
@@ -112,6 +153,9 @@ export const useLogout = () => {
       }
       
       queryClient.setQueryData(['user'], null);
+      
+      // Rediriger vers la page de login
+      router.replace('/login');
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ['user'] });

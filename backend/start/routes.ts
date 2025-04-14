@@ -50,6 +50,7 @@ router
             router.post('/:id/answer', [GamesController, 'submitAnswer'])
             router.post('/:id/vote', [GamesController, 'submitVote'])
             router.post('/:id/next-round', [GamesController, 'nextRound'])
+            router.post('/:id/force-check-phase', [GamesController, 'forceCheckPhase'])
           })
           .prefix('/games')
 

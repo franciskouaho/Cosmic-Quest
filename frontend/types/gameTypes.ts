@@ -40,6 +40,7 @@ export enum GamePhase {
   ANSWER = 'answer',
   VOTE = 'vote',
   WAITING = 'waiting',
+  WAITING_FOR_VOTE = 'waiting_for_vote', // Nouvelle phase pour aider à distinguer l'attente spécifique au vote
   RESULTS = 'results',
 }
 

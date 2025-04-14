@@ -1,80 +1,82 @@
 import { Question } from '../types/gameTypes';
-import { GameTheme } from './questionGenerator';
 
-// Structure de cache par thème
-type QuestionCache = {
-  [theme in GameTheme]?: Question[];
-};
+/**
+ * Cache de questions par thème pour réduire les appels au serveur
+ */
+class QuestionCache {
+  private cache: Record<string, Question[]> = {};
+  private maxCacheSize: number = 30; // Nombre maximum de questions par thème
 
-class QuestionCacheManager {
-  private cache: QuestionCache = {};
-  private readonly MAX_CACHE_SIZE = 10; // Maximum de questions par thème
+  /**
+   * Vérifie si des questions mises en cache existent pour un thème
+   * @param theme - Le thème pour lequel vérifier le cache
+   * @returns true si des questions sont disponibles
+   */
+  hasCachedQuestions(theme: string): boolean {
+    return !!this.cache[theme] && this.cache[theme].length > 0;
+  }
+
+  /**
+   * Récupère une question aléatoire du cache
+   * @param theme - Le thème de la question à récupérer
+   * @returns Une question aléatoire ou null si aucune question n'est disponible
+   */
+  getRandomQuestionFromCache(theme: string): Question | null {
+    if (!this.hasCachedQuestions(theme)) return null;
+    
+    // Sélectionner une question aléatoire
+    const questions = this.cache[theme];
+    const randomIndex = Math.floor(Math.random() * questions.length);
+    
+    // Enlever la question du cache pour éviter les répétitions
+    const question = questions[randomIndex];
+    this.cache[theme] = [
+      ...questions.slice(0, randomIndex),
+      ...questions.slice(randomIndex + 1)
+    ];
+    
+    return question;
+  }
 
   /**
    * Ajoute une question au cache
    * @param question - La question à mettre en cache
    */
   addToCache(question: Question): void {
-    const theme = question.theme as GameTheme;
+    if (!question.theme) return;
+    
+    const theme = question.theme;
     
     // Initialiser le cache pour ce thème si nécessaire
     if (!this.cache[theme]) {
       this.cache[theme] = [];
     }
     
-    // Éviter les doublons en vérifiant l'ID ou le texte
-    const isDuplicate = this.cache[theme]!.some(
-      q => q.id === question.id || q.text === question.text
-    );
+    // Ne pas ajouter de questions en double
+    if (this.cache[theme].some(q => q.id === question.id)) {
+      return;
+    }
     
-    if (!isDuplicate) {
-      // Ajouter la nouvelle question
-      this.cache[theme]!.push(question);
-      
-      // Limiter la taille du cache
-      if (this.cache[theme]!.length > this.MAX_CACHE_SIZE) {
-        this.cache[theme]!.shift(); // Retirer la plus ancienne question
-      }
+    // Ajouter la question et limiter la taille du cache
+    this.cache[theme].push(question);
+    
+    // Si le cache dépasse la taille maximale, supprimer les questions les plus anciennes
+    if (this.cache[theme].length > this.maxCacheSize) {
+      this.cache[theme] = this.cache[theme].slice(-this.maxCacheSize);
     }
   }
 
   /**
-   * Récupère une question aléatoire du cache pour un thème donné
-   * @param theme - Le thème de la question
-   * @returns Une question ou null si le cache est vide pour ce thème
+   * Vide le cache pour un thème spécifique ou tout le cache
+   * @param theme - Le thème à vider (optionnel, vide tout le cache si non spécifié)
    */
-  getRandomQuestionFromCache(theme: GameTheme): Question | null {
-    const cachedQuestions = this.cache[theme] || [];
-    
-    if (cachedQuestions.length === 0) {
-      return null;
-    }
-    
-    const randomIndex = Math.floor(Math.random() * cachedQuestions.length);
-    return cachedQuestions[randomIndex];
-  }
-
-  /**
-   * Vérifier si le cache contient des questions pour un thème donné
-   * @param theme - Le thème à vérifier
-   * @returns true si le cache contient des questions pour ce thème
-   */
-  hasCachedQuestions(theme: GameTheme): boolean {
-    return Boolean(this.cache[theme] && this.cache[theme]!.length > 0);
-  }
-
-  /**
-   * Vider le cache pour un thème ou entièrement
-   * @param theme - Le thème à vider, ou undefined pour tout vider
-   */
-  clearCache(theme?: GameTheme): void {
+  clearCache(theme?: string): void {
     if (theme) {
-      this.cache[theme] = [];
+      delete this.cache[theme];
     } else {
       this.cache = {};
     }
   }
 }
 
-// Exporter une instance unique (pattern singleton)
-export default new QuestionCacheManager();
+export default new QuestionCache();
