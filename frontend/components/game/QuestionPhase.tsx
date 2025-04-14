@@ -56,10 +56,12 @@ const QuestionPhase = ({ question, targetPlayer, onSubmit, round, totalRounds, t
       </LinearGradient>
       
       {timer && (
-        <GameTimer 
-          duration={timer.duration}
-          startTime={timer.startTime}
-        />
+        <View style={styles.timerContainer}>
+          <GameTimer 
+            duration={timer.duration}
+            startTime={timer.startTime}
+          />
+        </View>
       )}
       
       <View style={styles.targetPlayerContainer}>
@@ -84,7 +86,7 @@ const QuestionPhase = ({ question, targetPlayer, onSubmit, round, totalRounds, t
           onChangeText={setAnswer}
           multiline
           maxLength={150}
-          disabled={isSubmitting}
+          editable={!isSubmitting}
         />
         
         <TouchableOpacity 
@@ -181,6 +183,10 @@ const styles = StyleSheet.create({
     color: '#ff6b6b',
     fontSize: 18,
     textAlign: 'center',
+  },
+  timerContainer: {
+    marginBottom: 10,
+    width: '100%',
   },
 });
 
