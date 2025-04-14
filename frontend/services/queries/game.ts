@@ -148,15 +148,25 @@ class GameService {
 
   // Passer au tour suivant
   async nextRound(gameId: string, retryCount = 0, maxRetries = 2) {
-    console.log(`🎮 GameService: Passage au tour suivant pour le jeu ${gameId}`);
     try {
       // Vérifier d'abord l'état actuel du jeu
       const gameState = await this.getGameState(gameId);
-      if (!['results', 'vote'].includes(gameState.game.currentPhase)) {
-        console.warn(`⚠️ Phase incorrecte pour le passage au tour suivant: ${gameState.game.currentPhase}`);
-        throw new Error(`Ce n'est pas le moment de passer au tour suivant. Phase actuelle: ${gameState.game.currentPhase}`);
+
+      // Liste des phases où le passage au tour suivant est autorisé
+      const validPhases = ['vote', 'results'];
+      if (!validPhases.includes(gameState.game.currentPhase)) {
+        console.warn(`⚠️ Phase incorrecte pour passage au tour suivant: ${gameState.game.currentPhase}`);
+        
+        // Rafraîchir une fois les données pour s'assurer d'avoir l'état le plus récent
+        const freshState = await this.getGameState(gameId);
+        
+        // Revérifier avec les données fraîches
+        if (!validPhases.includes(freshState.game.currentPhase)) {
+          throw new Error(`Le passage au tour suivant n'est possible qu'en phase de vote ou résultats`);
+        }
       }
 
+      // Continuer avec le passage au tour suivant
       const url = `/games/${gameId}/next-round`;
       console.log('🔐 API Request: POST', url);
       

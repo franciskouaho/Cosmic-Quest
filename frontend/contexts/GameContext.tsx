@@ -22,7 +22,26 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const { user } = useAuth();
+
+  const updateGameState = (gameData: any) => {
+    const currentPhase = gameData.game.currentPhase;
+    const isTargetPlayer = gameData.currentUserState?.isTargetPlayer;
+    const hasAnswered = gameData.currentUserState?.hasAnswered;
+    const hasVoted = gameData.currentUserState?.hasVoted;
+
+    // Validation des états
+    if (currentPhase === 'vote' && !isTargetPlayer && gameData.phase === GamePhase.VOTE) {
+      console.warn('⚠️ Correction: Joueur non-cible tentant d\'accéder à la phase de vote');
+      gameData.phase = GamePhase.WAITING;
+    }
+
+    setGameState(prev => ({
+      ...prev,
+      ...gameData
+    }));
+  };
 
   const loadGame = async (gameId: string) => {
     try {
@@ -76,7 +95,7 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       // Ajouter un log pour confirmer l'état de isTargetPlayer
       console.log(`🎮 État utilisateur: isTarget=${isTargetPlayer}, hasAnswered=${gameData.currentUserState?.hasAnswered}, phase=${effectivePhase}`);
 
-      setGameState({
+      updateGameState({
         phase: effectivePhase,
         currentRound: gameData.game.currentRound || 1,
         totalRounds: gameData.game.totalRounds || 5,
@@ -124,7 +143,7 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       await gameService.submitAnswer(gameId, gameState.currentQuestion.id, answer);
       
       // Mettre à jour l'état pour indiquer que l'utilisateur attend
-      setGameState(prev => prev ? { ...prev, phase: GamePhase.WAITING } : null);
+      updateGameState({ phase: GamePhase.WAITING });
       
       console.log('✅ GameContext: Réponse soumise avec succès');
     } catch (error) {
@@ -145,7 +164,7 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       await gameService.submitVote(gameId, answerId, gameState.currentQuestion.id.toString());
       
       // Mettre à jour l'état pour indiquer que l'utilisateur attend
-      setGameState(prev => prev ? { ...prev, phase: GamePhase.WAITING } : null);
+      updateGameState({ phase: GamePhase.WAITING });
       
       console.log('✅ GameContext: Vote soumis avec succès');
     } catch (error) {
@@ -158,21 +177,38 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const nextRound = async (gameId: string) => {
     try {
       console.log('🎮 GameContext: Passage au tour suivant...');
+      
+      setIsSubmitting(true);
+      
+      // Ajouter un petit délai pour s'assurer que l'état est stabilisé
+      await new Promise(resolve => setTimeout(resolve, 300));
+      
       await gameService.nextRound(gameId);
       
-      // Mettre à jour l'état pour indiquer le chargement
-      setGameState(prev => prev ? { ...prev, phase: GamePhase.LOADING } : null);
+      // Mettre à jour l'état immédiatement pour une meilleure UX
+      updateGameState({
+        phase: GamePhase.LOADING,
+      });
+
+      // Rafraîchir les données après un court délai
+      setTimeout(() => {
+        loadGame(gameId);
+      }, 500);
       
-      console.log('✅ GameContext: Tour suivant lancé avec succès');
     } catch (error) {
       console.error('❌ GameContext: Erreur lors du passage au tour suivant:', error);
-      setError('Erreur lors du passage au tour suivant');
-      throw error;
+      Alert.alert(
+        'Information',
+        'Veuillez patienter quelques secondes avant de passer au tour suivant',
+        [{ text: 'OK' }]
+      );
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   const setTimer = (timer: { duration: number; startTime: number }) => {
-    setGameState(prev => prev ? { ...prev, timer } : null);
+    updateGameState({ timer });
   };
 
   return (

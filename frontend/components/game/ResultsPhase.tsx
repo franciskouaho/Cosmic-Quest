@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -52,17 +52,19 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
     return () => clearTimeout(timer);
   }, []);
   
-  const handleNextRound = () => {
+  const handleNextRound = useCallback(() => {
     if (isButtonDisabled) return;
     
+    // Désactiver le bouton immédiatement
     setIsButtonDisabled(true);
+    
     onNextRound();
     
-    // Réactiver le bouton après 2 secondes pour éviter les clics multiples
+    // Réactiver le bouton après un délai
     setTimeout(() => {
       setIsButtonDisabled(false);
     }, 2000);
-  };
+  }, [onNextRound, isButtonDisabled]);
 
   // Obtenir le nom du joueur correspondant à chaque réponse
   const getPlayerName = (playerId: string | number) => {

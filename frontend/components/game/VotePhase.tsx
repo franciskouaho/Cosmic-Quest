@@ -23,6 +23,30 @@ const VotePhase: React.FC<VotePhaseProps> = ({
   timer,
   isTargetPlayer = false 
 }) => {
+  // Vérifie si le joueur est autorisé à voir l'interface de vote
+  if (!isTargetPlayer) {
+    console.log("⛔ Tentative d'accès à l'interface de vote par un joueur non-cible");
+    return (
+      <View style={styles.messageContainer}>
+        <Text style={styles.messageTitle}>Action non autorisée</Text>
+        <Text style={styles.messageText}>
+          Cette interface est réservée au joueur ciblé par la question.
+        </Text>
+      </View>
+    );
+  }
+
+  // Si les réponses ne sont pas encore disponibles
+  if (!answers || answers.length === 0) {
+    return (
+      <View style={styles.messageContainer}>
+        <Text style={styles.messageText}>
+          En attente des réponses des autres joueurs...
+        </Text>
+      </View>
+    );
+  }
+
   const [votableAnswers, setVotableAnswers] = useState<Answer[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -68,17 +92,6 @@ const VotePhase: React.FC<VotePhaseProps> = ({
       setError('Impossible d\'enregistrer votre vote');
     }
   };
-
-  if (!isTargetPlayer) {
-    return (
-      <View style={styles.messageContainer}>
-        <Text style={styles.messageTitle}>Action non autorisée</Text>
-        <Text style={styles.messageText}>
-          Cette interface est réservée au joueur ciblé par la question.
-        </Text>
-      </View>
-    );
-  }
 
   if (loading) {
     return (

@@ -113,34 +113,40 @@ export default function GameScreen() {
       }
 
       // Déterminer la phase effective en fonction de l'état du jeu et du joueur
-      let effectivePhase = GamePhase.WAITING;
+      const effectivePhase = (() => {
+        // Phase serveur reçue
+        const serverPhase = gameData.game.currentPhase;
+        const isTarget = gameData.currentUserState?.isTargetPlayer || false;
+        const hasAnswered = gameData.currentUserState?.hasAnswered || false;
+        const hasVoted = gameData.currentUserState?.hasVoted || false;
 
-      if (gameData.game.currentPhase === 'vote') {
-        if (isTargetPlayer) {
-          // Si l'utilisateur est la cible ET n'a pas encore voté, montrer l'interface de vote
-          effectivePhase = gameData.currentUserState?.hasVoted 
-            ? GamePhase.WAITING 
-            : GamePhase.VOTE;
-          console.log(`🎯 Phase vote - Joueur cible: ${effectivePhase}`);
-        } else {
-          effectivePhase = GamePhase.WAITING;
-          console.log('⏳ Phase vote - En attente du vote du joueur cible');
+        // Log pour debug
+        console.log(`🎮 Détermination phase - Serveur: ${serverPhase}, isTarget: ${isTarget}, hasAnswered: ${hasAnswered}, hasVoted: ${hasVoted}`);
+
+        switch (serverPhase) {
+          case 'question':
+            return GamePhase.QUESTION;
+
+          case 'answer':
+            if (isTarget) {
+              return GamePhase.WAITING;
+            }
+            return hasAnswered ? GamePhase.WAITING : GamePhase.ANSWER;
+
+          case 'vote':
+            // Seul le joueur cible peut voter
+            if (isTarget && !hasVoted) {
+              return GamePhase.VOTE;
+            }
+            return GamePhase.WAITING;
+
+          case 'results':
+            return GamePhase.RESULTS;
+
+          default:
+            return GamePhase.WAITING;
         }
-      } else if (gameData.game.currentPhase === 'answer') {
-        if (isTargetPlayer) {
-          effectivePhase = GamePhase.WAITING;
-          console.log('👀 Joueur cible en attente pendant la phase de réponse');
-        } else {
-          effectivePhase = gameData.currentUserState?.hasAnswered 
-            ? GamePhase.WAITING 
-            : GamePhase.ANSWER;
-          console.log(`📝 Phase réponse - État: ${effectivePhase}`);
-        }
-      } else if (gameData.game.currentPhase === 'results') {
-        effectivePhase = GamePhase.RESULTS;
-      } else if (gameData.game.currentPhase === 'question') {
-        effectivePhase = GamePhase.QUESTION;
-      }
+      })();
 
       // Afficher un log détaillé pour le débogage
       console.log(`🎮 Phase serveur: ${gameData.game.currentPhase}, Phase UI: ${effectivePhase}, isTarget: ${isTargetPlayer}, hasVoted: ${gameData.currentUserState?.hasVoted}`);
@@ -230,24 +236,24 @@ export default function GameScreen() {
           if (data.type === 'phase_change') {
             console.log(`🎮 Changement de phase: ${data.phase}`);
             
-            // Mettre à jour immédiatement l'état
+            // Mise à jour immédiate de l'état sans attente
             setGameState(prev => ({
               ...prev,
+              phase: data.phase === 'answer' && prev.currentUserState?.isTargetPlayer 
+                ? GamePhase.WAITING 
+                : data.phase,
               game: {
                 ...prev.game,
                 currentPhase: data.phase
               },
               timer: data.timer || prev.timer
             }));
-
-            // Seul rafraîchissement immédiat pour les changements de phase
-            fetchGameData();
-          } else if (data.type === 'new_vote' && gameState.currentUserState?.isTargetPlayer) {
-            // Pour le joueur cible, ne pas rafraîchir après son propre vote
-            return;
-          } else if (data.type === 'new_answer' || data.type === 'new_vote') {
-            // Pour les autres événements, espacer les rafraîchissements
-            setTimeout(() => fetchGameData(), 1000);
+            
+            // Rafraîchir les données après un court délai
+            setTimeout(fetchGameData, 500);
+          } else if (data.type === 'new_vote' || data.type === 'new_answer') {
+            // Rafraîchissement plus rapide pour les votes et réponses
+            setTimeout(fetchGameData, 300);
           }
         };
         
@@ -278,8 +284,8 @@ export default function GameScreen() {
       socketCleanup = cleanup;
     });
 
-    // Réduire encore la fréquence du rafraîchissement normal
-    refreshInterval = setInterval(fetchGameData, 45000); // 45 secondes
+    // Réduire l'intervalle de rafraîchissement automatique
+    refreshInterval = setInterval(fetchGameData, 15000); // 15 secondes au lieu de 45
     
     return () => {
       clearInterval(refreshInterval);
