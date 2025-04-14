@@ -216,6 +216,12 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     try {
       console.log('🎮 GameContext: Soumission du vote...');
+      setIsSubmitting(true);
+      
+      // Assurer que la connexion WebSocket est bien établie
+      await gameService.ensureSocketConnection(gameId);
+      
+      // Utiliser la méthode mise à jour qui privilégie WebSocket
       await gameService.submitVote(gameId, answerId, gameState.currentQuestion.id.toString());
       
       setGameState(prevState => ({
@@ -224,13 +230,18 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           ...prevState.currentUserState,
           hasVoted: true,
         },
+        phase: GamePhase.WAITING,
       }));
       
+      showToast("Vote enregistré avec succès", "success");
       console.log('✅ GameContext: Vote soumis avec succès');
     } catch (error) {
       console.error('❌ GameContext: Erreur lors de la soumission du vote:', error);
       setError('Erreur lors de la soumission du vote');
+      showToast("Impossible d'enregistrer votre vote. Veuillez réessayer.", "error");
       throw error;
+    } finally {
+      setIsSubmitting(false);
     }
   };
 

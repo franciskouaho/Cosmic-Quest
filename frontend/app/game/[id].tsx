@@ -483,6 +483,10 @@ export default function GameScreen() {
     
     try {
       console.log("🎮 Tentative de vote pour la réponse ID:", answerId);
+      setIsSubmitting(true);
+      
+      // Assurer que la connexion WebSocket est bien établie
+      await gameService.ensureSocketConnection(id as string);
       
       await gameService.submitVote(id as string, answerId, gameState.currentQuestion.id.toString());
       
@@ -491,10 +495,16 @@ export default function GameScreen() {
       setGameState(prev => ({
         ...prev,
         phase: GamePhase.WAITING,
+        currentUserState: {
+          ...prev.currentUserState,
+          hasVoted: true
+        }
       }));
     } catch (error) {
       console.error("❌ Erreur lors du vote:", error);
       Alert.alert("Erreur", "Impossible d'enregistrer votre vote. Veuillez réessayer.");
+    } finally {
+      setIsSubmitting(false);
     }
   };
   

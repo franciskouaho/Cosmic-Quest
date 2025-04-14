@@ -204,19 +204,86 @@ class GameService {
   async submitVote(gameId: string, answerId: string, questionId: string) {
     console.log(`🎮 GameService: Vote pour la réponse ${answerId} dans le jeu ${gameId}`);
     try {
+      // Récupérer l'ID utilisateur pour le débogage
+      const userId = await UserIdManager.getUserId();
+      console.log(`👤 Soumission de vote par utilisateur ${userId}`);
+      
+      // Obtenir une instance du socket
+      const socket = await SocketService.getInstanceAsync();
+      
+      // Créer une promesse pour attendre la confirmation du serveur
+      return new Promise((resolve, reject) => {
+        // Définir un timeout pour la confirmation WebSocket
+        const timeoutId = setTimeout(() => {
+          console.error('⏱️ Timeout WebSocket atteint, le vote a échoué');
+          
+          // En cas d'échec WebSocket, essayer en fallback via HTTP
+          console.log('🔄 Tentative de fallback via HTTP');
+          try {
+            const url = `/games/${gameId}/vote`;
+            console.log('🔐 API Request (fallback): POST', url);
+            
+            api.post(url, {
+              answer_id: answerId,
+              question_id: questionId
+            }).then(response => {
+              console.log('✅ GameService: Vote soumis avec succès via HTTP (fallback)');
+              resolve(response.data);
+            }).catch(httpError => {
+              console.error('❌ Même le fallback HTTP a échoué:', httpError);
+              reject(new Error('Impossible de soumettre votre vote. Veuillez réessayer.'));
+            });
+          } catch (fallbackError) {
+            reject(fallbackError);
+          }
+        }, 5000);
+        
+        // Écouter l'événement de confirmation
+        const handleConfirmation = (data) => {
+          if (data.questionId === questionId) {
+            console.log('✅ Confirmation WebSocket reçue pour le vote');
+            clearTimeout(timeoutId);
+            socket.off('vote:confirmation', handleConfirmation);
+            resolve({ success: true });
+          }
+        };
+        
+        // S'abonner à l'événement de confirmation
+        socket.on('vote:confirmation', handleConfirmation);
+        
+        // Envoyer le vote via WebSocket
+        socket.emit('game:submit_vote', {
+          gameId,
+          answerId,
+          questionId
+        }, (ackData) => {
+          if (ackData && ackData.success) {
+            console.log('✅ Accusé de réception WebSocket reçu pour le vote');
+            clearTimeout(timeoutId);
+            socket.off('vote:confirmation', handleConfirmation);
+            resolve({ success: true });
+          } else if (ackData && ackData.error) {
+            console.error(`❌ Erreur lors de la soumission du vote WebSocket: ${ackData.error}`);
+            clearTimeout(timeoutId);
+            socket.off('vote:confirmation', handleConfirmation);
+            reject(new Error(ackData.error));
+          }
+        });
+      });
+    } catch (error) {
+      console.error('❌ GameService: Erreur lors de la soumission du vote:', error);
+      
+      // En dernier recours, essayer via HTTP
       const url = `/games/${gameId}/vote`;
-      console.log('🔐 API Request: POST', url);
+      console.log('🔐 API Request (dernier recours): POST', url);
       
       const response = await api.post(url, {
         answer_id: answerId,
         question_id: questionId
       });
       
-      console.log('✅ GameService: Vote soumis avec succès');
+      console.log('✅ GameService: Vote soumis avec succès via HTTP (dernier recours)');
       return response.data;
-    } catch (error) {
-      console.error('❌ GameService: Erreur lors de la soumission du vote:', error);
-      throw error;
     }
   }
 

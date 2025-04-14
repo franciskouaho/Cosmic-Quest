@@ -245,10 +245,101 @@ export const testTargetPlayerScenario = async (gameId: string) => {
   }
 };
 
+/**
+ * Outils de diagnostic pour les situations de joueur ciblé
+ * @param gameId ID de la partie
+ */
+export const diagTargetPlayerStatus = async (gameId: string) => {
+  try {
+    const socket = await SocketService.getInstanceAsync();
+    console.log(`🔍 Diagnostic joueur ciblé pour le jeu ${gameId}...`);
+    
+    const userId = await UserIdManager.getUserId();
+    
+    console.log(`👤 ID utilisateur connecté: ${userId || 'non disponible'}`);
+    
+    if (socket.gameState?.currentQuestion?.targetPlayer) {
+      const targetId = String(socket.gameState.currentQuestion.targetPlayer.id);
+      console.log(`🎯 Joueur ciblé dans la question: ${targetId}`);
+      
+      const isTarget = userId && targetId === String(userId);
+      console.log(`👉 Ce client ${isTarget ? 'EST' : 'N\'EST PAS'} le joueur ciblé`);
+    } else {
+      console.log('❌ Aucune information de joueur ciblé disponible');
+    }
+    
+    return socket.gameState?.currentUserState?.isTargetPlayer || false;
+  } catch (error) {
+    console.error('❌ Erreur lors du diagnostic de joueur ciblé:', error);
+    return false;
+  }
+};
+
+/**
+ * Soumettre un vote via WebSocket directement
+ * @param gameId ID de la partie
+ * @param answerId ID de la réponse choisie
+ * @param questionId ID de la question
+ * @returns Une promesse résolue si le vote a été soumis avec succès
+ */
+export const submitVoteViaSocket = async (gameId: string, answerId: string, questionId: string): Promise<boolean> => {
+  try {
+    console.log(`🗳️ Tentative de vote WebSocket - jeu: ${gameId}, réponse: ${answerId}`);
+    
+    const socket = await SocketService.getInstanceAsync();
+    
+    // Créer une promesse pour attendre la confirmation du serveur
+    return new Promise((resolve, reject) => {
+      // Définir un timeout pour la confirmation WebSocket
+      const timeoutId = setTimeout(() => {
+        console.error('⏱️ Timeout WebSocket atteint, le vote a échoué');
+        reject(new Error('Le serveur a mis trop de temps à répondre. Veuillez réessayer.'));
+      }, 5000);
+      
+      // Écouter l'événement de confirmation
+      const handleConfirmation = (data) => {
+        if (data.questionId === questionId) {
+          console.log('✅ Confirmation WebSocket reçue pour le vote');
+          clearTimeout(timeoutId);
+          socket.off('vote:confirmation', handleConfirmation);
+          resolve(true);
+        }
+      };
+      
+      // S'abonner à l'événement de confirmation
+      socket.on('vote:confirmation', handleConfirmation);
+      
+      // Envoyer le vote via WebSocket
+      socket.emit('game:submit_vote', {
+        gameId,
+        answerId,
+        questionId
+      }, (ackData) => {
+        if (ackData && ackData.success) {
+          console.log('✅ Accusé de réception WebSocket reçu pour le vote');
+          clearTimeout(timeoutId);
+          socket.off('vote:confirmation', handleConfirmation);
+          resolve(true);
+        } else if (ackData && ackData.error) {
+          console.error(`❌ Erreur lors de la soumission du vote WebSocket: ${ackData.error}`);
+          clearTimeout(timeoutId);
+          socket.off('vote:confirmation', handleConfirmation);
+          reject(new Error(ackData.error));
+        }
+      });
+    });
+  } catch (error) {
+    console.error('❌ Erreur lors de la soumission du vote via WebSocket:', error);
+    throw error;
+  }
+};
+
 export default {
   testSocketConnection,
   checkSocketStatus,
   checkSocketConnection,
   monitorGameEvents,
   testTargetPlayerScenario,
+  diagTargetPlayerStatus,
+  submitVoteViaSocket,
 };

@@ -981,9 +981,10 @@ export default class GamesController {
   }
 
   /**
-   * Méthode privée pour calculer et mettre à jour les scores
+   * Méthode publique pour calculer et mettre à jour les scores
+   * Rendue publique pour être utilisée par le service WebSocket
    */
-  private async calculateAndUpdateScores(questionId: number, game: Game) {
+  public async calculateAndUpdateScores(questionId: number, game: Game) {
     // Récupérer toutes les réponses avec leurs votes
     const answers = await Answer.query().where('question_id', questionId).preload('votes')
 

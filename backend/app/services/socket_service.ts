@@ -326,6 +326,215 @@ export class SocketService {
           }
         })
 
+        // Nouveau gestionnaire pour la soumission de votes
+        socket.on('game:submit_vote', async (data, callback) => {
+          try {
+            console.log(`🗳️ [WebSocket] Réception d'un vote via WebSocket:`, data)
+
+            // Extraire les données
+            const { gameId, answerId, questionId } = data
+
+            // Vérifier que toutes les données nécessaires sont présentes
+            if (!gameId || !answerId || !questionId) {
+              console.error(`❌ [WebSocket] Données manquantes pour la soumission de vote`)
+              if (typeof callback === 'function') {
+                callback({
+                  success: false,
+                  error: 'Données incomplètes pour la soumission du vote',
+                })
+              }
+              return
+            }
+
+            // Récupérer l'ID utilisateur depuis les informations de session
+            const userId = socket.handshake.auth?.userId || socket.handshake.headers?.userId
+
+            if (!userId) {
+              console.error(`❌ [WebSocket] ID utilisateur manquant pour la soumission de vote`)
+              if (typeof callback === 'function') {
+                callback({
+                  success: false,
+                  error: 'ID utilisateur manquant',
+                })
+              }
+              return
+            }
+
+            // Importer dynamiquement les modèles pour éviter les dépendances circulaires
+            const Game = (await import('#models/game')).default
+            const Question = (await import('#models/question')).default
+            const Answer = (await import('#models/answer')).default
+            const Vote = (await import('#models/vote')).default
+
+            // Vérifier que le jeu existe
+            const game = await Game.find(gameId)
+            if (!game) {
+              console.error(`❌ [WebSocket] Jeu non trouvé: ${gameId}`)
+              if (typeof callback === 'function') {
+                callback({
+                  success: false,
+                  error: 'Jeu non trouvé',
+                })
+              }
+              return
+            }
+
+            // Vérifier que la question existe
+            const question = await Question.query()
+              .where('id', questionId)
+              .where('game_id', gameId)
+              .first()
+
+            if (!question) {
+              console.error(`❌ [WebSocket] Question non trouvée: ${questionId}`)
+              if (typeof callback === 'function') {
+                callback({
+                  success: false,
+                  error: 'Question non trouvée',
+                })
+              }
+              return
+            }
+
+            // Vérifier que la réponse existe
+            const answer = await Answer.query()
+              .where('id', answerId)
+              .where('question_id', question.id)
+              .first()
+
+            if (!answer) {
+              console.error(`❌ [WebSocket] Réponse non trouvée: ${answerId}`)
+              if (typeof callback === 'function') {
+                callback({
+                  success: false,
+                  error: 'Réponse non trouvée',
+                })
+              }
+              return
+            }
+
+            // Vérifier que l'utilisateur ne vote pas pour sa propre réponse
+            if (answer.userId === Number(userId)) {
+              console.error(
+                `❌ [WebSocket] L'utilisateur ${userId} a tenté de voter pour sa propre réponse`
+              )
+              if (typeof callback === 'function') {
+                callback({
+                  success: false,
+                  error: 'Vous ne pouvez pas voter pour votre propre réponse',
+                })
+              }
+              return
+            }
+
+            // Vérifier que l'utilisateur n'a pas déjà voté
+            const existingVote = await Vote.query()
+              .where('question_id', question.id)
+              .where('voter_id', userId)
+              .first()
+
+            if (existingVote) {
+              console.error(
+                `❌ [WebSocket] L'utilisateur ${userId} a déjà voté pour cette question`
+              )
+              if (typeof callback === 'function') {
+                callback({
+                  success: false,
+                  error: 'Vous avez déjà voté pour cette question',
+                })
+              }
+              return
+            }
+
+            try {
+              // Créer le vote
+              const vote = await Vote.create({
+                questionId: Number(questionId),
+                voterId: Number(userId),
+                answerId: Number(answerId),
+              })
+
+              console.log(`✅ [WebSocket] Vote créé avec succès: ID=${vote.id}`)
+
+              // Incrémenter le compteur de votes sur la réponse
+              answer.votesCount = (answer.votesCount || 0) + 1
+              await answer.save()
+
+              // Envoyer une confirmation directe à l'émetteur
+              if (typeof callback === 'function') {
+                callback({
+                  success: true,
+                  voteId: vote.id,
+                })
+              }
+
+              // Notifier tous les joueurs du nouveau vote
+              this.io.to(`game:${gameId}`).emit('game:update', {
+                type: 'new_vote',
+                vote: {
+                  voterId: userId,
+                  answerId: answerId,
+                },
+              })
+
+              // Envoyer également une confirmation spécifique
+              socket.emit('vote:confirmation', {
+                success: true,
+                questionId,
+                voteId: vote.id,
+              })
+
+              // Importer le contrôleur de jeu pour vérifier la progression de phase
+              const GameController = (await import('#controllers/ws/game_controller')).default
+              const controller = new GameController()
+
+              // Vérifier si tous les joueurs qui peuvent voter l'ont fait
+              const room = await (await import('#models/room')).default.find(game.roomId)
+              const players = await room.related('players').query()
+              const targetPlayer = players.find((p) => p.id === question.targetPlayerId)
+
+              if (targetPlayer) {
+                // Dans une partie standard, seule la cible vote
+                // Si c'est le joueur cible qui a voté, c'est suffisant pour passer à la phase suivante
+                if (Number(userId) === targetPlayer.id) {
+                  console.log(`✅ [WebSocket] Le joueur ciblé a voté, passage en phase résultats`)
+
+                  // Passer à la phase de résultats
+                  game.currentPhase = 'results'
+                  await game.save()
+
+                  // Calculer les points et mettre à jour les scores
+                  await controller.calculateAndUpdateScores(question.id, game)
+
+                  // Notifier tous les joueurs du changement de phase
+                  this.io.to(`game:${gameId}`).emit('game:update', {
+                    type: 'phase_change',
+                    phase: 'results',
+                    scores: game.scores,
+                  })
+                }
+              }
+            } catch (voteError) {
+              console.error(`❌ [WebSocket] Erreur lors de la création du vote:`, voteError)
+
+              if (typeof callback === 'function') {
+                callback({
+                  success: false,
+                  error: 'Erreur lors de la création du vote: ' + voteError.message,
+                })
+              }
+            }
+          } catch (error) {
+            console.error(`❌ [WebSocket] Erreur lors de la soumission de vote:`, error)
+            if (typeof callback === 'function') {
+              callback({
+                success: false,
+                error: 'Erreur lors de la soumission du vote',
+              })
+            }
+          }
+        })
+
         // Événement pour tester la connexion
         socket.on('ping', (callback) => {
           if (typeof callback === 'function') {
