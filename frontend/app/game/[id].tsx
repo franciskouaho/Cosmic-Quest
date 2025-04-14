@@ -206,9 +206,7 @@ export default function GameScreen() {
     fetchGameData();
     
     let refreshInterval: NodeJS.Timeout;
-    let recoveryInterval: NodeJS.Timeout;
     
-    // Initialisation asynchrone du socket
     const initSocket = async () => {
       try {
         // S'assurer que l'ID utilisateur est défini dans api avant tout
@@ -232,7 +230,7 @@ export default function GameScreen() {
           if (data.type === 'phase_change') {
             console.log(`🎮 Changement de phase: ${data.phase}`);
             
-            // Mettre à jour immédiatement l'état sans attendre
+            // Mettre à jour immédiatement l'état
             setGameState(prev => ({
               ...prev,
               game: {
@@ -242,11 +240,14 @@ export default function GameScreen() {
               timer: data.timer || prev.timer
             }));
 
-            // Ne rafraîchir qu'une seule fois après un changement de phase
-            setTimeout(() => fetchGameData(), 200);
-          } else if (data.type === 'new_answer' || data.type === 'new_vote') {
-            // Pour ces événements, mettre à jour uniquement les données nécessaires
+            // Seul rafraîchissement immédiat pour les changements de phase
             fetchGameData();
+          } else if (data.type === 'new_vote' && gameState.currentUserState?.isTargetPlayer) {
+            // Pour le joueur cible, ne pas rafraîchir après son propre vote
+            return;
+          } else if (data.type === 'new_answer' || data.type === 'new_vote') {
+            // Pour les autres événements, espacer les rafraîchissements
+            setTimeout(() => fetchGameData(), 1000);
           }
         };
         
@@ -277,25 +278,11 @@ export default function GameScreen() {
       socketCleanup = cleanup;
     });
 
-    // Modifier l'intervalle de récupération
-    recoveryInterval = setInterval(() => {
-      const currentTime = Date.now();
-      const isStuck = gameState.phase === GamePhase.WAITING && 
-                     gameState.timer && 
-                     currentTime > gameState.timer.startTime + (gameState.timer.duration * 1000) + 2000;
-      
-      if (isStuck) {
-        console.log('⚠️ Phase bloquée détectée - rafraîchissement unique');
-        fetchGameData();
-      }
-    }, 10000); // Augmenter l'intervalle à 10 secondes
-    
-    // Réduire la fréquence du rafraîchissement normal
-    refreshInterval = setInterval(fetchGameData, 30000); // Augmenter à 30 secondes
+    // Réduire encore la fréquence du rafraîchissement normal
+    refreshInterval = setInterval(fetchGameData, 45000); // 45 secondes
     
     return () => {
       clearInterval(refreshInterval);
-      clearInterval(recoveryInterval);
       
       if (id) {
         try {

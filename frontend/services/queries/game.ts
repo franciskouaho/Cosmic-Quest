@@ -150,6 +150,13 @@ class GameService {
   async nextRound(gameId: string, retryCount = 0, maxRetries = 2) {
     console.log(`🎮 GameService: Passage au tour suivant pour le jeu ${gameId}`);
     try {
+      // Vérifier d'abord l'état actuel du jeu
+      const gameState = await this.getGameState(gameId);
+      if (!['results', 'vote'].includes(gameState.game.currentPhase)) {
+        console.warn(`⚠️ Phase incorrecte pour le passage au tour suivant: ${gameState.game.currentPhase}`);
+        throw new Error(`Ce n'est pas le moment de passer au tour suivant. Phase actuelle: ${gameState.game.currentPhase}`);
+      }
+
       const url = `/games/${gameId}/next-round`;
       console.log('🔐 API Request: POST', url);
       

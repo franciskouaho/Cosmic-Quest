@@ -52,29 +52,26 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
       // Déterminer la phase actuelle
       const isTargetPlayer = Boolean(gameData.currentUserState?.isTargetPlayer);
-      let effectivePhase = GamePhase.WAITING;
+      const effectivePhase = (() => {
+        // Forcer la phase WAITING pour le joueur cible pendant la phase ANSWER
+        if (gameData.game.currentPhase === 'answer' && isTargetPlayer) {
+          return GamePhase.WAITING;
+        }
 
-      if (gameData.game.currentPhase === 'question') {
-        effectivePhase = GamePhase.QUESTION;
-      } else if (gameData.game.currentPhase === 'answer') {
-        // IMPORTANT: Forcer la phase d'attente si l'utilisateur est la cible
-        if (isTargetPlayer) {
-          console.log('👉 Utilisateur identifié comme cible - forçage de la phase WAITING');
-          effectivePhase = GamePhase.WAITING;
-        } else if (gameData.currentUserState?.hasAnswered) {
-          effectivePhase = GamePhase.WAITING;
-        } else {
-          effectivePhase = GamePhase.ANSWER;
+        // Pour tous les autres cas, suivre la logique normale
+        switch (gameData.game.currentPhase) {
+          case 'question':
+            return GamePhase.QUESTION;
+          case 'answer':
+            return gameData.currentUserState?.hasAnswered ? GamePhase.WAITING : GamePhase.ANSWER;
+          case 'vote':
+            return isTargetPlayer && !gameData.currentUserState?.hasVoted ? GamePhase.VOTE : GamePhase.WAITING;
+          case 'results':
+            return GamePhase.RESULTS;
+          default:
+            return GamePhase.WAITING;
         }
-      } else if (gameData.game.currentPhase === 'vote') {
-        if (gameData.currentUserState?.hasVoted) {
-          effectivePhase = GamePhase.WAITING;
-        } else {
-          effectivePhase = GamePhase.VOTE;
-        }
-      } else if (gameData.game.currentPhase === 'results') {
-        effectivePhase = GamePhase.RESULTS;
-      }
+      })();
 
       // Ajouter un log pour confirmer l'état de isTargetPlayer
       console.log(`🎮 État utilisateur: isTarget=${isTargetPlayer}, hasAnswered=${gameData.currentUserState?.hasAnswered}, phase=${effectivePhase}`);
