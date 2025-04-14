@@ -654,17 +654,29 @@ export default class GamesController {
         })
       }
 
-      // Assouplir la vérification de phase pour permettre plus de flexibilité
-      // Permettre le passage au tour suivant depuis les phases 'results' ou 'vote'
+      // CORRECTION: Vérifier plus précisément l'état actuel
+      const currentQuestion = await Question.query()
+        .where('game_id', gameId)
+        .where('round_number', game.currentRound)
+        .first()
+
+      const hasVotes = await Vote.query()
+        .where('question_id', currentQuestion?.id)
+        .count('* as count')
+        .first()
+
+      // Vérifier que nous sommes dans une phase valide ET qu'il y a eu des votes
       const validPhases = ['results', 'vote']
-      if (!validPhases.includes(game.currentPhase)) {
-        console.error(
-          `❌ [nextRound] Phase incorrecte: ${game.currentPhase}, attendu une des phases: ${validPhases.join(', ')}`
-        )
+      if (
+        !validPhases.includes(game.currentPhase) ||
+        (game.currentPhase === 'vote' && (!hasVotes || hasVotes.$extras.count === '0'))
+      ) {
         return response.badRequest({
-          error:
-            "Ce n'est pas le moment de passer au tour suivant. La phase actuelle doit être 'résultats' ou 'vote'.",
-          phase: game.currentPhase,
+          error: 'Veuillez attendre la fin des votes avant de passer au tour suivant',
+          details: {
+            currentPhase: game.currentPhase,
+            hasVotes: hasVotes ? Number(hasVotes.$extras.count) > 0 : false,
+          },
         })
       }
 

@@ -14,6 +14,7 @@ interface VotePhaseProps {
     startTime: number;
   } | null;
   isTargetPlayer?: boolean;
+  hasVoted?: boolean;
 }
 
 const VotePhase: React.FC<VotePhaseProps> = ({ 
@@ -21,35 +22,14 @@ const VotePhase: React.FC<VotePhaseProps> = ({
   question, 
   onVote, 
   timer,
-  isTargetPlayer = false 
-}) => {
-  // Vérifie si le joueur est autorisé à voir l'interface de vote
-  if (!isTargetPlayer) {
-    console.log("⛔ Tentative d'accès à l'interface de vote par un joueur non-cible");
-    return (
-      <View style={styles.messageContainer}>
-        <Text style={styles.messageTitle}>Action non autorisée</Text>
-        <Text style={styles.messageText}>
-          Cette interface est réservée au joueur ciblé par la question.
-        </Text>
-      </View>
-    );
-  }
-
-  // Si les réponses ne sont pas encore disponibles
-  if (!answers || answers.length === 0) {
-    return (
-      <View style={styles.messageContainer}>
-        <Text style={styles.messageText}>
-          En attente des réponses des autres joueurs...
-        </Text>
-      </View>
-    );
-  }
-
+  isTargetPlayer = false,
+  hasVoted = false
+}: VotePhaseProps) => {
   const [votableAnswers, setVotableAnswers] = useState<Answer[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  
+  console.log(`🔍 VotePhase rendu: isTarget=${isTargetPlayer}, hasVoted=${hasVoted}, answers=${answers?.length || 0}`);
   
   useEffect(() => {
     try {
@@ -82,16 +62,36 @@ const VotePhase: React.FC<VotePhaseProps> = ({
       setLoading(false);
     }
   }, [answers]);
-  
-  const handleVote = (answerId: string) => {
-    try {
-      console.log(`🎮 Vote pour la réponse ID: ${answerId}`);
-      onVote(answerId);
-    } catch (error) {
-      console.error('❌ Erreur lors du vote:', error);
-      setError('Impossible d\'enregistrer votre vote');
-    }
-  };
+
+  if (!isTargetPlayer) {
+    return (
+      <View style={styles.messageContainer}>
+        <Text style={styles.messageTitle}>En attente du vote</Text>
+        <Text style={styles.messageText}>
+          {question?.targetPlayer?.name || 'La cible'} est en train de voter pour la meilleure réponse.
+        </Text>
+        {timer && timer.duration > 0 && (
+          <View style={styles.timerWrapper}>
+            <GameTimer 
+              duration={timer.duration} 
+              startTime={timer.startTime} 
+              alertThreshold={10}
+            />
+          </View>
+        )}
+      </View>
+    );
+  }
+
+  if (hasVoted) {
+    return (
+      <View style={styles.messageContainer}>
+        <Text style={styles.messageTitle}>Vote enregistré!</Text>
+        <Text style={styles.messageText}>En attente des résultats...</Text>
+        {timer && <GameTimer duration={timer.duration} startTime={timer.startTime} />}
+      </View>
+    );
+  }
 
   if (loading) {
     return (
@@ -152,7 +152,7 @@ const VotePhase: React.FC<VotePhaseProps> = ({
             <TouchableOpacity 
               key={answer.id.toString()}
               style={styles.answerCard}
-              onPress={() => handleVote(answer.id.toString())}
+              onPress={() => onVote(answer.id.toString())}
             >
               <LinearGradient
                 colors={['rgba(255, 255, 255, 0.1)', 'rgba(255, 255, 255, 0.05)']}
@@ -316,6 +316,10 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontWeight: 'bold',
     textAlign: 'center',
+  },
+  timerWrapper: {
+    width: '100%',
+    marginTop: 20,
   },
 });
 

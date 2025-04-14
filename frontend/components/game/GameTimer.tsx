@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, memo } from 'react';
 import { View, Text, StyleSheet, Animated } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
@@ -10,7 +10,7 @@ interface GameTimerProps {
   alertThreshold?: number; // Seuil en secondes pour l'alerte (défaut 5s)
 }
 
-const GameTimer: React.FC<GameTimerProps> = ({ 
+const GameTimer: React.FC<GameTimerProps> = memo(({ 
   duration, 
   startTime, 
   onComplete,
@@ -18,9 +18,8 @@ const GameTimer: React.FC<GameTimerProps> = ({
 }) => {
   const [timeLeft, setTimeLeft] = useState(calculateTimeLeft());
   const [isFinished, setIsFinished] = useState(false);
-  const [isAlertMode, setIsAlertMode] = useState(false);
-  const pulseAnim = useRef(new Animated.Value(1)).current;
   const timerId = useRef<NodeJS.Timeout | null>(null);
+  const lastStartTime = useRef(startTime);
   
   function calculateTimeLeft() {
     const elapsed = (Date.now() - startTime) / 1000;
@@ -35,15 +34,14 @@ const GameTimer: React.FC<GameTimerProps> = ({
     }
   };
 
-  // Réinitialiser le timer quand startTime ou duration changent
+  // Réinitialiser le timer si startTime change
   useEffect(() => {
-    cleanupTimer();
-    setTimeLeft(calculateTimeLeft());
-    setIsFinished(false);
-    setIsAlertMode(false);
-
-    return cleanupTimer;
-  }, [startTime, duration]);
+    if (lastStartTime.current !== startTime) {
+      lastStartTime.current = startTime;
+      setTimeLeft(calculateTimeLeft());
+      setIsFinished(false);
+    }
+  }, [startTime]);
 
   // Gérer le compte à rebours
   useEffect(() => {
@@ -54,11 +52,6 @@ const GameTimer: React.FC<GameTimerProps> = ({
       }
       return;
     }
-    
-    // Activer le mode alerte lorsque le temps restant est inférieur au seuil
-    if (timeLeft <= alertThreshold && !isAlertMode) {
-      setIsAlertMode(true);
-    }
 
     timerId.current = setTimeout(() => {
       const newTimeLeft = calculateTimeLeft();
@@ -68,35 +61,7 @@ const GameTimer: React.FC<GameTimerProps> = ({
     return () => {
       if (timerId.current) clearTimeout(timerId.current);
     };
-  }, [timeLeft, onComplete, alertThreshold, isAlertMode, isFinished]);
-
-  // Animation de pulsation pour le mode alerte
-  useEffect(() => {
-    if (isAlertMode && !isFinished) {
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(pulseAnim, {
-            toValue: 1.1,
-            duration: 300,
-            useNativeDriver: true
-          }),
-          Animated.timing(pulseAnim, {
-            toValue: 1,
-            duration: 300,
-            useNativeDriver: true
-          })
-        ]),
-        { iterations: -1 }
-      ).start();
-    } else {
-      pulseAnim.setValue(1);
-      pulseAnim.stopAnimation();
-    }
-
-    return () => {
-      pulseAnim.stopAnimation();
-    };
-  }, [isAlertMode, isFinished, pulseAnim]);
+  }, [timeLeft, onComplete, alertThreshold, isFinished]);
 
   // Calculer la progression pour la barre de progression
   const progress = Math.min(100, Math.max(0, (timeLeft / duration) * 100));
@@ -111,32 +76,30 @@ const GameTimer: React.FC<GameTimerProps> = ({
 
   return (
     <View style={styles.timerContainer}>
-      <LinearGradient
-        colors={progressColor}
-        style={[
-          styles.progressBar,
-          { width: `${progress}%` }
-        ]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 0 }}
-      />
-      <Animated.View 
-        style={[
-          styles.timeDisplay,
-          { transform: [{ scale: isAlertMode ? pulseAnim : 1 }] }
-        ]}
-      >
-        <Feather name="clock" size={16} color="white" style={styles.clockIcon} />
-        <Text style={[
-          styles.timeText,
-          isAlertMode && styles.alertText
-        ]}>
-          {timeLeft}s
-        </Text>
-      </Animated.View>
+      {timeLeft > 0 && (
+        <>
+          <LinearGradient
+            colors={progressColor}
+            style={[
+              styles.progressBar,
+              { width: `${progress}%` }
+            ]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+          />
+          <View style={styles.timeDisplay}>
+            <Text style={[
+              styles.timeText,
+              timeLeft <= alertThreshold && styles.alertText
+            ]}>
+              {timeLeft}s
+            </Text>
+          </View>
+        </>
+      )}
     </View>
   );
-};
+});
 
 const styles = StyleSheet.create({
   timerContainer: {

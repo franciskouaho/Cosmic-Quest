@@ -4,6 +4,7 @@ import gameService from '../services/queries/game';
 import SocketService from '../services/socketService';
 import { useAuth } from './AuthContext';
 import { Alert } from 'react-native';
+import Toast from '@/components/common/Toast';
 
 type GameContextType = {
   gameState: GameState | null;
@@ -18,6 +19,86 @@ type GameContextType = {
 
 const GameContext = createContext<GameContextType | undefined>(undefined);
 
+const determineEffectivePhase = (
+  serverPhase: string, 
+  isTarget: boolean, 
+  hasAnswered: boolean, 
+  hasVoted: boolean
+): GamePhase => {
+  console.log('🎮 Détermination phase:', { serverPhase, isTarget, hasAnswered, hasVoted });
+
+  switch (serverPhase) {
+    case 'question':
+      return GamePhase.QUESTION;
+      
+    case 'answer':
+      if (isTarget) {
+        // Si l'utilisateur est la cible pendant la phase de réponse, il doit attendre
+        return GamePhase.WAITING;  
+      }
+      return hasAnswered ? GamePhase.WAITING : GamePhase.ANSWER;
+
+    case 'vote':
+      // Correction critique: Si l'utilisateur est la cible et n'a pas encore voté, 
+      // il DOIT voir l'écran de vote, pas l'écran d'attente
+      if (isTarget && !hasVoted) {
+        return GamePhase.VOTE;
+      } else if (hasVoted) {
+        // Si l'utilisateur a voté (qu'il soit cible ou non), il doit attendre
+        return GamePhase.WAITING;
+      } else {
+        // Pour les non-cibles qui n'ont pas voté, ils sont en attente
+        return GamePhase.WAITING;
+      }
+
+    case 'results':
+      return GamePhase.RESULTS;
+
+    default:
+      return GamePhase.WAITING;
+  }
+};
+
+// Mise à jour du reducer pour mieux gérer les changements de phase
+function gameStateReducer(state: GameState, action: GameAction): GameState {
+  switch (action.type) {
+    case 'UPDATE_PHASE': {
+      // Déterminer la phase effective avant de mettre à jour l'état
+      const phase = determineEffectivePhase(
+        action.serverPhase,
+        state.currentUserState?.isTargetPlayer || false,
+        state.currentUserState?.hasAnswered || false,
+        state.currentUserState?.hasVoted || false
+      );
+      
+      // Log plus détaillé pour le débogage
+      console.log(`🔄 Mise à jour de phase: ${state.phase} → ${phase} (serveur: ${action.serverPhase})`);
+      console.log(`👤 État utilisateur: isTarget=${state.currentUserState?.isTargetPlayer}, hasAnswered=${state.currentUserState?.hasAnswered}, hasVoted=${state.currentUserState?.hasVoted}`);
+      
+      // Ne pas réinitialiser le timer si déjà présent pour la même phase
+      const shouldUpdateTimer = action.timer && 
+        (state.phase !== phase || !state.timer || 
+        state.timer.startTime !== action.timer.startTime);
+
+      return {
+        ...state,
+        phase,
+        currentPhase: action.serverPhase,
+        timer: shouldUpdateTimer ? action.timer : state.timer,
+        currentUserState: {
+          ...state.currentUserState,
+          // Ne réinitialiser ces états que lors du passage à la phase résultats
+          hasAnswered: action.serverPhase === 'results' ? false : state.currentUserState?.hasAnswered || false,
+          hasVoted: action.serverPhase === 'results' ? false : state.currentUserState?.hasVoted || false,
+        }
+      };
+    }
+      
+    default:
+      return state;
+  }
+}
+
 export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -25,22 +106,14 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [isSubmitting, setIsSubmitting] = useState(false);
   const { user } = useAuth();
 
-  const updateGameState = (gameData: any) => {
-    const currentPhase = gameData.game.currentPhase;
-    const isTargetPlayer = gameData.currentUserState?.isTargetPlayer;
-    const hasAnswered = gameData.currentUserState?.hasAnswered;
-    const hasVoted = gameData.currentUserState?.hasVoted;
+  const [toast, setToast] = useState<{
+    visible: boolean;
+    message: string;
+    type: 'success' | 'error' | 'warning' | 'info';
+  }>({ visible: false, message: '', type: 'info' });
 
-    // Validation des états
-    if (currentPhase === 'vote' && !isTargetPlayer && gameData.phase === GamePhase.VOTE) {
-      console.warn('⚠️ Correction: Joueur non-cible tentant d\'accéder à la phase de vote');
-      gameData.phase = GamePhase.WAITING;
-    }
-
-    setGameState(prev => ({
-      ...prev,
-      ...gameData
-    }));
+  const showToast = (message: string, type: 'success' | 'error' | 'warning' | 'info' = 'info') => {
+    setToast({ visible: true, message, type });
   };
 
   const loadGame = async (gameId: string) => {
@@ -48,10 +121,17 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setIsLoading(true);
       setError(null);
 
-      console.log(`🎮 GameContext: Chargement du jeu ${gameId}...`);
+      console.log(`🎮 Chargement du jeu ${gameId}...`);
       const gameData = await gameService.getGameState(gameId);
 
-      // Formater les données du jeu pour le frontend
+      // Ajouter validation de phase
+      if (gameData.game.currentPhase === 'answer' && gameData.currentUserState?.isTargetPlayer) {
+        console.log('👀 Utilisateur est la cible pendant la phase de réponse');
+      }
+
+      // Ne pas réinitialiser hasAnswered/hasVoted si toujours dans la même phase
+      const shouldResetState = gameData.game.currentPhase !== gameState?.game?.currentPhase;
+
       const targetPlayer = gameData.currentQuestion?.targetPlayer 
         ? {
           id: gameData.currentQuestion.targetPlayer.id.toString(),
@@ -69,34 +149,8 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
         : null;
 
-      // Déterminer la phase actuelle
-      const isTargetPlayer = Boolean(gameData.currentUserState?.isTargetPlayer);
-      const effectivePhase = (() => {
-        // Forcer la phase WAITING pour le joueur cible pendant la phase ANSWER
-        if (gameData.game.currentPhase === 'answer' && isTargetPlayer) {
-          return GamePhase.WAITING;
-        }
-
-        // Pour tous les autres cas, suivre la logique normale
-        switch (gameData.game.currentPhase) {
-          case 'question':
-            return GamePhase.QUESTION;
-          case 'answer':
-            return gameData.currentUserState?.hasAnswered ? GamePhase.WAITING : GamePhase.ANSWER;
-          case 'vote':
-            return isTargetPlayer && !gameData.currentUserState?.hasVoted ? GamePhase.VOTE : GamePhase.WAITING;
-          case 'results':
-            return GamePhase.RESULTS;
-          default:
-            return GamePhase.WAITING;
-        }
-      })();
-
-      // Ajouter un log pour confirmer l'état de isTargetPlayer
-      console.log(`🎮 État utilisateur: isTarget=${isTargetPlayer}, hasAnswered=${gameData.currentUserState?.hasAnswered}, phase=${effectivePhase}`);
-
-      updateGameState({
-        phase: effectivePhase,
+      const updatedGameState = {
+        ...gameState,
         currentRound: gameData.game.currentRound || 1,
         totalRounds: gameData.game.totalRounds || 5,
         targetPlayer: targetPlayer,
@@ -107,11 +161,15 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         theme: gameData.game.gameMode || 'standard',
         timer: gameData.timer || null,
         currentUserState: {
-          hasAnswered: gameData.currentUserState?.hasAnswered || false,
-          hasVoted: gameData.currentUserState?.hasVoted || false,
-          isTargetPlayer: isTargetPlayer,
-        }
-      });
+          ...gameData.currentUserState,
+          hasAnswered: shouldResetState ? false : (gameState?.currentUserState?.hasAnswered || false),
+          hasVoted: shouldResetState ? false : (gameState?.currentUserState?.hasVoted || false),
+          isTargetPlayer: Boolean(gameData.currentUserState?.isTargetPlayer),
+        },
+        game: gameData.game,
+      };
+
+      setGameState(updatedGameState);
 
       console.log('✅ GameContext: Jeu chargé avec succès');
 
@@ -125,16 +183,13 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const submitAnswer = async (gameId: string, answer: string) => {
     if (!gameState?.currentQuestion?.id) {
-      setError('Question non disponible');
-      Alert.alert('Erreur', 'Impossible de soumettre votre réponse: question non disponible');
+      showToast("Question non disponible", "error");
       return;
     }
     
     // Double vérification avec message de débogage
     if (gameState.currentUserState?.isTargetPlayer) {
-      console.error('⛔ GameContext: Tentative de réponse bloquée - utilisateur est la cible');
-      setError('Action non autorisée');
-      Alert.alert('Impossible', 'Vous êtes la cible de cette question et ne pouvez pas y répondre');
+      showToast("Vous êtes la cible de cette question et ne pouvez pas y répondre", "warning");
       return;
     }
     
@@ -143,12 +198,19 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       await gameService.submitAnswer(gameId, gameState.currentQuestion.id, answer);
       
       // Mettre à jour l'état pour indiquer que l'utilisateur attend
-      updateGameState({ phase: GamePhase.WAITING });
+      setGameState(prevState => ({
+        ...prevState,
+        currentUserState: {
+          ...prevState.currentUserState,
+          hasAnswered: true,
+        },
+      }));
       
+      showToast("Réponse soumise avec succès", "success");
       console.log('✅ GameContext: Réponse soumise avec succès');
     } catch (error) {
       console.error('❌ GameContext: Erreur lors de la soumission de la réponse:', error);
-      setError('Erreur lors de la soumission de la réponse');
+      showToast("Impossible de soumettre votre réponse", "error");
       throw error;
     }
   };
@@ -164,7 +226,13 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       await gameService.submitVote(gameId, answerId, gameState.currentQuestion.id.toString());
       
       // Mettre à jour l'état pour indiquer que l'utilisateur attend
-      updateGameState({ phase: GamePhase.WAITING });
+      setGameState(prevState => ({
+        ...prevState,
+        currentUserState: {
+          ...prevState.currentUserState,
+          hasVoted: true,
+        },
+      }));
       
       console.log('✅ GameContext: Vote soumis avec succès');
     } catch (error) {
@@ -175,6 +243,12 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   };
 
   const nextRound = async (gameId: string) => {
+    const validPhases = ['results', 'vote'];
+    if (!validPhases.includes(gameState?.phase || '')) {
+      showToast("Impossible de passer au tour suivant dans cette phase", "warning");
+      return;
+    }
+
     try {
       console.log('🎮 GameContext: Passage au tour suivant...');
       
@@ -186,9 +260,10 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       await gameService.nextRound(gameId);
       
       // Mettre à jour l'état immédiatement pour une meilleure UX
-      updateGameState({
+      setGameState(prevState => ({
+        ...prevState,
         phase: GamePhase.LOADING,
-      });
+      }));
 
       // Rafraîchir les données après un court délai
       setTimeout(() => {
@@ -208,7 +283,10 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   };
 
   const setTimer = (timer: { duration: number; startTime: number }) => {
-    updateGameState({ timer });
+    setGameState(prevState => ({
+      ...prevState,
+      timer,
+    }));
   };
 
   return (
@@ -225,6 +303,13 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       }}
     >
       {children}
+      {toast.visible && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onHide={() => setToast(prev => ({ ...prev, visible: false }))}
+        />
+      )}
     </GameContext.Provider>
   );
 };

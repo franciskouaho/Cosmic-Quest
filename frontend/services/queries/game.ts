@@ -147,44 +147,30 @@ class GameService {
   }
 
   // Passer au tour suivant
-  async nextRound(gameId: string, retryCount = 0, maxRetries = 2) {
+  async nextRound(gameId: string, retryCount = 0, maxRetries = 3) {
     try {
-      // Vérifier d'abord l'état actuel du jeu
       const gameState = await this.getGameState(gameId);
-
-      // Liste des phases où le passage au tour suivant est autorisé
-      const validPhases = ['vote', 'results'];
-      if (!validPhases.includes(gameState.game.currentPhase)) {
+      
+      if (gameState.game.currentPhase !== 'vote' && gameState.game.currentPhase !== 'results') {
         console.warn(`⚠️ Phase incorrecte pour passage au tour suivant: ${gameState.game.currentPhase}`);
         
-        // Rafraîchir une fois les données pour s'assurer d'avoir l'état le plus récent
+        await new Promise(resolve => setTimeout(resolve, 1000));
         const freshState = await this.getGameState(gameId);
         
-        // Revérifier avec les données fraîches
-        if (!validPhases.includes(freshState.game.currentPhase)) {
-          throw new Error(`Le passage au tour suivant n'est possible qu'en phase de vote ou résultats`);
+        if (freshState.game.currentPhase !== 'vote' && freshState.game.currentPhase !== 'results') {
+          throw new Error("Veuillez attendre la fin des votes avant de passer au tour suivant");
         }
       }
 
-      // Continuer avec le passage au tour suivant
       const url = `/games/${gameId}/next-round`;
-      console.log('🔐 API Request: POST', url);
-      
       const response = await api.post(url);
       
-      console.log('✅ GameService: Passage au tour suivant réussi');
       return response.data;
     } catch (error) {
-      console.error('❌ GameService: Erreur lors du passage au tour suivant:', error);
-      
-      // Si nous n'avons pas atteint le nombre maximum de tentatives, réessayer
       if (retryCount < maxRetries) {
-        console.log(`🔄 GameService: Tentative #${retryCount + 1}/${maxRetries} pour passer au tour suivant ${gameId}`);
-        // Attendre un peu avant de réessayer
         await new Promise(resolve => setTimeout(resolve, 1000 * (retryCount + 1)));
         return this.nextRound(gameId, retryCount + 1, maxRetries);
       }
-      
       throw error;
     }
   }

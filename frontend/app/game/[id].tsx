@@ -5,7 +5,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import QuestionPhase from '@/components/game/QuestionPhase';
 import AnswerPhase from '@/components/game/AnswerPhase';
-import VotePhase from '@/components/game/VotePhase';
+import VotePhase from '@/components/game/VotePhase';  // S'assurer que l'import est correct
 import ResultsPhase from '@/components/game/ResultsPhase';
 import LoadingOverlay from '@/components/common/LoadingOverlay';
 import { useAuth } from '@/contexts/AuthContext';
@@ -469,10 +469,35 @@ export default function GameScreen() {
   };
 
   const renderGamePhase = () => {
+    // S'assurer que nous avons un état de jeu valide
+    if (!gameState || !gameState.phase) {
+      return <LoadingOverlay message="Chargement de la partie..." />;
+    }
+
+    // Pour le débogage : afficher des informations sur la phase actuelle
+    console.log(`🎮 Rendu de la phase: ${gameState.phase} (serveur: ${gameState.game?.currentPhase})`);
+    console.log(`👤 État joueur: isTarget=${gameState.currentUserState?.isTargetPlayer}, hasVoted=${gameState.currentUserState?.hasVoted}`);
+
+    // Ne pas autoriser de changement d'interface pendant la phase resultats
+    if (gameState.phase === GamePhase.RESULTS) {
+      return (
+        <ResultsPhase 
+          answers={gameState.answers}
+          scores={gameState.scores}
+          players={gameState.players}
+          question={gameState.currentQuestion}
+          targetPlayer={gameState.targetPlayer}
+          onNextRound={handleNextRound}
+          isLastRound={gameState.currentRound >= gameState.totalRounds}
+          timer={gameState.timer}
+        />
+      );
+    }
+
     switch (gameState.phase) {
       case GamePhase.LOADING:
         return <LoadingOverlay message="Préparation de la partie" />;
-        
+          
       case GamePhase.QUESTION:
         if (!gameState.targetPlayer || !gameState.currentQuestion) {
           return <LoadingOverlay message="Chargement des données de jeu..." />;
@@ -568,7 +593,7 @@ export default function GameScreen() {
             isTargetPlayer={isTarget}
           />
         );
-        
+          
       case GamePhase.WAITING:
         return (
           <View style={styles.waitingContainer}>
@@ -582,76 +607,24 @@ export default function GameScreen() {
                 <GameTimer 
                   duration={gameState.timer.duration}
                   startTime={gameState.timer.startTime}
-                  onComplete={() => {
-                    fetchGameData();
-                  }}
+                  onComplete={() => fetchGameData()}
                 />
               </View>
             )}
           </View>
         );
-        
+          
       case GamePhase.VOTE:
         if (!gameState.currentQuestion) {
           return <LoadingOverlay message="Chargement des données de vote..." />;
         }
         
-        const isTargetPlayer = gameState.targetPlayer && user ? 
-          (gameState.targetPlayer.id === user.id.toString()) : 
-          Boolean(gameState.currentUserState?.isTargetPlayer);
+        // CORRECTION: S'assurer que le composant VotePhase reçoit les bonnes props
+        const isTargetPlayer = Boolean(gameState.currentUserState?.isTargetPlayer);
         const hasVoted = Boolean(gameState.currentUserState?.hasVoted);
         
-        gameDebugger.analyzeVotingState(gameState, user?.id);
-        
-        if (!isTargetPlayer) {
-          console.log(`🔍 Phase VOTE - Utilisateur ${user?.id} n'est pas la cible (${gameState.targetPlayer?.id})`);
-          
-          if (hasVoted) {
-            return (
-              <View style={styles.messageContainer}>
-                <Text style={styles.messageTitle}>Vote enregistré</Text>
-                <Text style={styles.messageText}>
-                  Votre vote a été enregistré avec succès. Attendez que le joueur ciblé fasse son choix.
-                </Text>
-                {gameState.timer && (
-                  <View style={styles.timerContainer}>
-                    <GameTimer 
-                      duration={gameState.timer.duration}
-                      startTime={gameState.timer.startTime}
-                      onComplete={() => fetchGameData()}
-                    />
-                  </View>
-                )}
-              </View>
-            );
-          }
-          
-          return (
-            <View style={styles.messageContainer}>
-              <Text style={styles.messageTitle}>Phase de vote</Text>
-              <Text style={styles.messageText}>
-                {gameState.targetPlayer?.name} est en train de voter pour la meilleure réponse.
-                Veuillez patienter...
-              </Text>
-              {gameState.timer && (
-                <View style={styles.timerContainer}>
-                  <GameTimer 
-                    duration={gameState.timer.duration}
-                    startTime={gameState.timer.startTime}
-                  />
-                </View>
-              )}
-              <TouchableOpacity 
-                style={styles.refreshButton}
-                onPress={fetchGameData}
-              >
-                <Text style={styles.refreshButtonText}>Actualiser</Text>
-              </TouchableOpacity>
-            </View>
-          );
-        }
-        
-        console.log(`🎯 Phase VOTE - Utilisateur ${user?.id} EST la cible. Affichage interface de vote.`);
+        // Log critique pour débogage
+        console.log(`🎯 Phase VOTE - Utilisateur ${user?.id} ${isTargetPlayer ? 'EST' : "n'est pas"} la cible. hasVoted=${hasVoted}`);
         
         return (
           <VotePhase 
@@ -659,29 +632,35 @@ export default function GameScreen() {
             question={gameState.currentQuestion}
             onVote={handleVote}
             timer={gameState.timer}
-            isTargetPlayer={true}
+            isTargetPlayer={isTargetPlayer}
+            hasVoted={hasVoted}
           />
         );
-        
-      case GamePhase.RESULTS:
-        if (!gameState.targetPlayer || !gameState.currentQuestion) {
-          return <LoadingOverlay message="Chargement des résultats..." />;
-        }
-        return (
-          <ResultsPhase 
-            answers={gameState.answers}
-            scores={gameState.scores}
-            players={gameState.players}
-            question={gameState.currentQuestion}
-            targetPlayer={gameState.targetPlayer}
-            onNextRound={handleNextRound}
-            isLastRound={gameState.currentRound >= gameState.totalRounds}
-            timer={gameState.timer}
-          />
-        );
-        
+          
       default:
         return <Text>Erreur: Phase de jeu inconnue</Text>;
+    }
+  };
+
+  const loadGame = async (gameId: string) => {
+    try {
+      const gameData = await gameService.getGameState(gameId);
+      
+      if (gameData.game.currentPhase === 'results') {
+        // Forcer l'affichage des résultats pour tous les joueurs
+        setGameState(prev => ({
+          ...prev,
+          ...gameData,
+          phase: GamePhase.RESULTS,
+        }));
+      } else {
+        setGameState(prev => ({
+          ...prev,
+          ...gameData,
+        }));
+      }
+    } catch (error) {
+      console.error('Erreur lors du chargement:', error);
     }
   };
 
