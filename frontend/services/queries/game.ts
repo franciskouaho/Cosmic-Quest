@@ -142,21 +142,25 @@ class GameService {
   }
 
   /**
-   * Soumettre une réponse à une question avec synchronisation WebSocket
+   * Soumettre une réponse à une question uniquement via WebSocket
    */
   async submitAnswer(gameId: string, questionId: string, content: string) {
     console.log(`🎮 Soumission de réponse pour le jeu ${gameId}, question ${questionId}`);
     try {
-      // 1. Essayer d'abord la soumission via WebSocket pour meilleure réactivité
+      // Récupérer l'ID utilisateur pour le débogage
+      const userId = await UserIdManager.getUserId();
+      console.log(`👤 Soumission de réponse par utilisateur ${userId}`);
+      
+      // Obtenir une instance du socket
       const socket = await SocketService.getInstanceAsync();
       
       // Créer une promesse pour attendre la confirmation du serveur
-      const socketPromise = new Promise<boolean>((resolve, reject) => {
-        // Définir un timeout de 3 secondes pour la confirmation WebSocket
+      return new Promise((resolve, reject) => {
+        // Définir un timeout plus long (5 secondes) pour la confirmation WebSocket
         const timeoutId = setTimeout(() => {
-          console.log('⏱️ Timeout WebSocket atteint, passage au mode API');
-          resolve(false); // Résoudre avec false pour indiquer qu'il faut utiliser l'API REST
-        }, 3000);
+          console.error('⏱️ Timeout WebSocket atteint, la soumission a échoué');
+          reject(new Error('Le serveur a mis trop de temps à répondre. Veuillez réessayer.'));
+        }, 5000);
         
         // Écouter l'événement de confirmation
         const handleConfirmation = (data) => {
@@ -164,7 +168,7 @@ class GameService {
             console.log('✅ Confirmation WebSocket reçue pour la réponse');
             clearTimeout(timeoutId);
             socket.off('answer:confirmation', handleConfirmation);
-            resolve(true);
+            resolve({ success: true });
           }
         };
         
@@ -181,36 +185,15 @@ class GameService {
             console.log('✅ Accusé de réception WebSocket reçu pour la réponse');
             clearTimeout(timeoutId);
             socket.off('answer:confirmation', handleConfirmation);
-            resolve(true);
+            resolve({ success: true });
           } else if (ackData && ackData.error) {
             console.error(`❌ Erreur lors de la soumission WebSocket: ${ackData.error}`);
-            if (ackData.code === 'TARGET_PLAYER_CANNOT_ANSWER') {
-              reject(new Error('Vous êtes la cible de cette question et ne pouvez pas y répondre'));
-            } else {
-              resolve(false); // Essayer via API REST
-            }
+            clearTimeout(timeoutId);
+            socket.off('answer:confirmation', handleConfirmation);
+            reject(new Error(ackData.error));
           }
         });
       });
-      
-      // Attendre la confirmation WebSocket
-      const socketSuccess = await socketPromise;
-      
-      // Si WebSocket a réussi, on peut s'arrêter là
-      if (socketSuccess) {
-        console.log('✅ Réponse envoyée avec succès via WebSocket');
-        return { success: true };
-      }
-      
-      // 2. En cas d'échec WebSocket, utiliser l'API REST comme fallback
-      console.log('ℹ️ Tentative de soumission via API REST');
-      const response = await api.post(`/games/${gameId}/answer`, {
-        question_id: questionId,
-        content
-      });
-      
-      console.log('✅ Réponse envoyée avec succès via API REST');
-      return response.data;
     } catch (error) {
       console.error('❌ Erreur lors de la soumission de la réponse:', error);
       throw error;

@@ -252,51 +252,69 @@ export class SocketService {
               return
             }
 
-            // Créer la réponse
-            const answer = await Answer.create({
-              questionId,
-              userId,
-              content,
-              votesCount: 0,
-              isSelected: false,
-            })
+            try {
+              // Créer la réponse avec un objet bien formé
+              const answer = await Answer.create({
+                questionId: Number(questionId),
+                userId: Number(userId),
+                content: String(content).trim(),
+                votesCount: 0,
+                isSelected: false,
+              })
 
-            console.log(`✅ [WebSocket] Réponse créée avec succès: ID=${answer.id}`)
+              console.log(`✅ [WebSocket] Réponse créée avec succès: ID=${answer.id}`)
 
-            // Envoyer une confirmation directe à l'émetteur
-            if (typeof callback === 'function') {
-              callback({
+              // Envoyer une confirmation directe à l'émetteur
+              if (typeof callback === 'function') {
+                callback({
+                  success: true,
+                  answerId: answer.id,
+                })
+              }
+
+              // Récupérer les informations utilisateur
+              const User = (await import('#models/user')).default
+              const user = await User.find(userId)
+
+              // Notifier tous les joueurs de la nouvelle réponse
+              this.io.to(`game:${gameId}`).emit('game:update', {
+                type: 'new_answer',
+                answer: {
+                  id: answer.id,
+                  content: answer.content,
+                  playerId: userId,
+                  playerName: user ? user.displayName || user.username : 'Joueur',
+                },
+              })
+
+              // Envoyer également une confirmation spécifique
+              socket.emit('answer:confirmation', {
                 success: true,
+                questionId,
                 answerId: answer.id,
               })
+
+              // Vérifier si toutes les réponses ont été soumises pour avancer la phase
+              const GameController = (await import('#controllers/ws/game_controller')).default
+              const controller = new GameController()
+              await controller.checkAndProgressPhase(gameId, questionId)
+            } catch (createError) {
+              console.error(`❌ [WebSocket] Erreur lors de la création de la réponse:`, createError)
+
+              // Log plus détaillé pour mieux comprendre le problème
+              console.error(`🔎 Détails de l'erreur:`, {
+                message: createError.message,
+                stack: createError.stack,
+                data: { questionId, userId, content },
+              })
+
+              if (typeof callback === 'function') {
+                callback({
+                  success: false,
+                  error: 'Erreur lors de la création de la réponse: ' + createError.message,
+                })
+              }
             }
-
-            // Récupérer les informations utilisateur
-            const User = (await import('#models/user')).default
-            const user = await User.find(userId)
-
-            // Notifier tous les joueurs de la nouvelle réponse
-            this.io.to(`game:${gameId}`).emit('game:update', {
-              type: 'new_answer',
-              answer: {
-                id: answer.id,
-                content: answer.content,
-                playerId: userId,
-                playerName: user ? user.displayName || user.username : 'Joueur',
-              },
-            })
-
-            // Envoyer également une confirmation spécifique
-            socket.emit('answer:confirmation', {
-              success: true,
-              questionId,
-              answerId: answer.id,
-            })
-
-            // Vérifier si toutes les réponses ont été soumises pour avancer la phase
-            const GameController = (await import('#controllers/ws/game_controller')).default
-            const controller = new GameController()
-            await controller.checkAndProgressPhase(gameId, questionId)
           } catch (error) {
             console.error(`❌ [WebSocket] Erreur lors de la soumission de réponse:`, error)
             if (typeof callback === 'function') {

@@ -419,10 +419,12 @@ export default function GameScreen() {
     
     try {
       console.log("🎮 Tentative de soumission de réponse...");
-      
       setIsSubmitting(true);
       
-      // Utiliser la méthode améliorée qui tente d'abord via WebSocket
+      // Assurer que la connexion WebSocket est bien établie
+      await gameService.ensureSocketConnection(id as string);
+      
+      // Utiliser uniquement WebSocket pour soumettre la réponse
       await gameService.submitAnswer(id as string, gameState.currentQuestion.id, answer);
       
       Alert.alert("Réponse envoyée", "En attente des autres joueurs...");
@@ -436,24 +438,40 @@ export default function GameScreen() {
         }
       }));
       
-      // Légère attente avant de rafraîchir l'état
-      setTimeout(() => {
-        fetchGameData();
-      }, 1000);
     } catch (error) {
       console.error("❌ Erreur lors de la soumission de la réponse:", error);
       
+      // Analyse détaillée de l'erreur
       let errorMessage = "Impossible d'envoyer votre réponse. Veuillez réessayer.";
-      if (error.message && typeof error.message === 'string' && error.message.includes("Ce n'est pas le moment")) {
-        errorMessage = "Le délai de réponse est écoulé. Veuillez attendre la prochaine question.";
-        fetchGameData();
-      } else if (error.message && typeof error.message === 'string' && error.message.includes("cible de cette question")) {
-        errorMessage = "Vous êtes la cible de cette question et ne pouvez pas y répondre.";
+      
+      if (error.message) {
+        if (error.message.includes("cible de cette question")) {
+          errorMessage = "Vous êtes la cible de cette question et ne pouvez pas y répondre.";
+        } else if (error.message.includes("déjà répondu")) { 
+          errorMessage = "Vous avez déjà répondu à cette question.";
+          
+          // Mettre à jour l'état pour refléter que l'utilisateur a déjà répondu
+          setGameState(prev => ({
+            ...prev,
+            phase: GamePhase.WAITING,
+            currentUserState: {
+              ...prev.currentUserState,
+              hasAnswered: true
+            }
+          }));
+        } else {
+          errorMessage = error.message;
+        }
       }
       
       Alert.alert("Erreur", errorMessage);
     } finally {
       setIsSubmitting(false);
+      
+      // Rafraîchir les données après un court délai
+      setTimeout(() => {
+        fetchGameData();
+      }, 1500);
     }
   };
   

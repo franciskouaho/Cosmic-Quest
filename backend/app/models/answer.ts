@@ -28,6 +28,9 @@ export default class Answer extends BaseModel {
   @column({ columnName: 'votes_count' })
   declare votesCount: number
 
+  @column()
+  declare isSelected: boolean
+
   @hasMany(() => Vote)
   declare votes: HasMany<typeof Vote>
 
