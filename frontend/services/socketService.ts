@@ -4,6 +4,26 @@ import NetInfo from '@react-native-community/netinfo';
 import { SOCKET_URL } from '@/config/axios';
 import UserIdManager from '@/utils/userIdManager';
 
+// Types pour le diagnostic
+interface DiagnosticResult {
+  initialized: boolean;
+  connected: boolean;
+  pending: boolean;
+  socketId?: string;
+  rooms?: string[];
+  url?: string;
+  activeChannels: {
+    rooms: string[];
+    games: string[];
+  };
+  connectionDetails: {
+    transport?: string;
+    protocol?: number;
+    reconnecting?: boolean;
+    reconnectAttempts?: number;
+  };
+}
+
 export default class SocketService {
   private static instance: Socket | null = null;
   private static isInitializing: boolean = false;
@@ -519,5 +539,30 @@ export default class SocketService {
       console.error(`❌ Erreur lors de la vérification de la connexion WebSocket:`, error);
       // Ne pas propager l'erreur pour éviter de bloquer le processus de chargement
     }
+  }
+
+  /**
+   * Diagnostique l'état actuel de la connexion Socket.IO
+   */
+  public static diagnose(): DiagnosticResult {
+    const socket = SocketService.instance;
+    
+    return {
+      initialized: !!socket,
+      connected: !!socket?.connected,
+      pending: SocketService.isInitializing,
+      socketId: socket?.id,
+      url: socket?.io?.uri,
+      activeChannels: {
+        rooms: Array.from(SocketService.activeRooms),
+        games: Array.from(SocketService.activeGames)
+      },
+      connectionDetails: {
+        transport: socket?.io?.engine?.transport?.name,
+        protocol: socket?.io?.engine?.protocol,
+        reconnecting: SocketService.reconnectAttempts > 0,
+        reconnectAttempts: SocketService.reconnectAttempts
+      }
+    };
   }
 }
