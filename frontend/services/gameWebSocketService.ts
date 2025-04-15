@@ -3,14 +3,16 @@ import SocketService from './socketService';
 import UserIdManager from '@/utils/userIdManager';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { WebSocketResponse } from '@/types/gameTypes';
+import { PhaseManager } from '../utils/phaseManager';
 
 class GameWebSocketService {
   private pendingRequests: Map<string, { promise: Promise<any>, timestamp: number }> = new Map();
   private gameStateCache: Map<string, { state: any, timestamp: number }> = new Map();
   private joinedGames: Set<string> = new Set();
   private pendingJoinRequests: Map<string, Promise<void>> = new Map();
-  private readonly CACHE_TTL = 5000; // 5 secondes
-  private readonly REQUEST_TIMEOUT = 8000; // 8 secondes
+  private readonly CACHE_TTL = 3000; // 3 secondes
+  private readonly REQUEST_TIMEOUT = 5000; // 5 secondes
+  private readonly RECONNECT_DELAY = 1000; // 1 seconde
 
   /**
    * S'assure que la connexion Socket est établie et que l'utilisateur a rejoint le canal du jeu
@@ -496,42 +498,9 @@ class GameWebSocketService {
       
       return new Promise<boolean>(async (resolve) => {
         // Définir un timeout plus court (3 secondes)
-        const timeoutId = setTimeout(async () => {
-          console.warn(`⚠️ [GameWebSocket] Timeout initial détecté lors de la soumission de réponse, tentative de retry...`);
-          
-          // Essayer une seconde fois directement
-          try {
-            // S'assurer que le socket est toujours connecté
-            if (!socket.connected) {
-              console.log(`🔄 [GameWebSocket] Socket déconnecté, tentative de reconnexion...`);
-              await this.reconnect();
-              await new Promise(resolve => setTimeout(resolve, 500));
-            }
-            
-            // Nouvelle tentative
-            const secondAttemptTimeoutId = setTimeout(() => {
-              console.error(`❌ [GameWebSocket] Second timeout détecté, échec de la soumission de réponse`);
-              resolve(false);
-            }, 4000);
-            
-            socket.emit('game:submit_answer', { 
-              gameId, questionId, content, userId,
-              retry: true, // Marquer comme tentative de retry
-              timestamp: Date.now()
-            }, (response: WebSocketResponse) => {
-              clearTimeout(secondAttemptTimeoutId);
-              if (response && response.success) {
-                console.log(`✅ [GameWebSocket] Réponse soumise avec succès après retry`);
-                resolve(true);
-              } else {
-                console.error(`❌ [GameWebSocket] Échec après retry:`, response?.error || 'Erreur inconnue');
-                resolve(false);
-              }
-            });
-          } catch (retryError) {
-            console.error(`❌ [GameWebSocket] Erreur lors du retry:`, retryError);
-            resolve(false);
-          }
+        const timeoutId = setTimeout(() => {
+          console.warn('⚠️ Premier timeout détecté, tentative de récupération...');
+          this.attemptRecovery(gameId);
         }, 3000);
         
         // Première tentative
@@ -552,6 +521,19 @@ class GameWebSocketService {
     } catch (error) {
       console.error(`❌ [GameWebSocket] Erreur lors de la soumission de la réponse:`, error);
       return false;
+    }
+  }
+
+  /**
+   * Ajoute une méthode de récupération
+   */
+  private async attemptRecovery(gameId: string) {
+    try {
+      await this.reconnect();
+      await new Promise(resolve => setTimeout(resolve, 500));
+      await this.ensureSocketConnection(gameId);
+    } catch (error) {
+      console.error('❌ Échec de la récupération:', error);
     }
   }
 
@@ -790,6 +772,26 @@ class GameWebSocketService {
     this.pendingJoinRequests.delete(gameId);
     
     console.log(`🧹 [GameWebSocket] Ressources nettoyées pour le jeu ${gameId}`);
+  }
+
+  /**
+   * Gère les mises à jour du jeu
+   */
+  async handleGameUpdate(gameId: string, data: any) {
+    try {
+      if (data.type === 'phase_change') {
+        const currentPhase = await this.getCurrentPhase(gameId);
+        
+        if (!PhaseManager.validatePhaseTransition(currentPhase, data.phase)) {
+          console.warn(`⚠️ Transition de phase invalide: ${currentPhase} -> ${data.phase}`);
+          // Forcer une récupération complète de l'état
+          await this.getGameState(gameId);
+          return;
+        }
+      }
+    } catch (error) {
+      console.error('❌ Erreur handleGameUpdate:', error);
+    }
   }
 }
 

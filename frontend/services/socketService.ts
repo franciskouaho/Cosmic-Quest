@@ -24,13 +24,27 @@ class SocketService {
   private isConnecting: boolean = false;
   private reconnectTimers: NodeJS.Timeout[] = [];
   private reconnectAttempts: number = 0;
-  private maxReconnectAttempts: number = 10;
+  private maxReconnectAttempts: number = 5; // Réduire de 10 à 5
+  private reconnectDelay: number = 1000;
   private currentRoom: string | null = null;
   private currentGame: string | null = null;
   private lastError: string | null = null;
   private joinRoomAttempts: Record<string, number> = {}; // Pour suivre les tentatives de rejoindre une salle
   private joinRoomMaxAttempts: number = 3;
   private customServerUrl: string | null = null; // Pour supporter différentes URL de serveur
+
+  init() {
+    this.io = new Server({
+      pingTimeout: 5000, // Réduit de 10s à 5s
+      pingInterval: 10000, // Réduit de 15s à 10s
+      connectTimeout: 8000, // Réduit de 15s à 8s
+      
+      reconnection: true,
+      reconnectionAttempts: 3,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 3000
+    });
+  }
 
   /**
    * Initialise la connexion Socket.IO et gère la reconnexion
@@ -177,12 +191,12 @@ class SocketService {
         });
 
         // Gestionnaire de déconnexion
-        this.socket.on('disconnect', (reason) => {
+        this.socket.on('disconnect', async (reason) => {
           console.log('🔴 Socket.IO déconnecté. Raison:', reason);
 
           // Tenter de se reconnecter si la déconnexion était due à une erreur réseau
           if (reason === 'io server disconnect' || reason === 'transport close' || reason === 'transport error') {
-            this.scheduleReconnect();
+            await this.reconnectWithRetry();
           }
         });
 
@@ -195,6 +209,23 @@ class SocketService {
       this.isConnecting = false;
       console.error('❌ Erreur lors de l\'initialisation de Socket.IO:', error);
       throw error;
+    }
+  }
+
+  /**
+   * Nouvelle méthode de reconnexion avec retry
+   */
+  private async reconnectWithRetry(): Promise<void> {
+    let attempts = 0;
+    while (attempts < this.maxReconnectAttempts) {
+      try {
+        await this.getInstanceAsync(true);
+        console.log('✅ Reconnexion réussie après', attempts + 1, 'tentatives');
+        return;
+      } catch (error) {
+        attempts++;
+        await new Promise(resolve => setTimeout(resolve, this.reconnectDelay * attempts));
+      }
     }
   }
 

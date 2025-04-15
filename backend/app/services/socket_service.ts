@@ -20,9 +20,12 @@ export class SocketService {
         },
         transports: ['websocket', 'polling'],
         allowEIO3: true,
-        pingTimeout: 20000,
-        pingInterval: 25000,
-        connectTimeout: 30000,
+        pingTimeout: 10000, // Réduire de 20000 à 10000
+        pingInterval: 15000, // Réduire de 25000 à 15000
+        connectTimeout: 15000, // Réduire de 30000 à 15000
+        retries: 3,
+        reconnectionDelayMax: 5000,
+        reconnectionDelay: 1000,
         maxHttpBufferSize: 1e8, // 100 MB
       })
 
@@ -471,6 +474,13 @@ export class SocketService {
         socket.on('error', (error) => {
           console.error(`🚨 Erreur WebSocket pour ${socket.id}:`, error)
         })
+      })
+
+      // Ajouter une gestion d'erreur plus robuste
+      this.io.on('connect_error', (error) => {
+        console.error('❌ Erreur de connexion Socket.IO:', error)
+        // Tenter une reconnexion immédiate
+        this.io?.connect()
       })
 
       const port = env.get('PORT')

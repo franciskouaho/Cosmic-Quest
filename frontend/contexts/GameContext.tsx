@@ -5,6 +5,7 @@ import SocketService from '../services/socketService';
 import { useAuth } from './AuthContext';
 import { Alert } from 'react-native';
 import Toast from '@/components/common/Toast';
+import { PhaseManager } from '../utils/phaseManager';
 
 type GameContextType = {
   gameState: GameState | null;
@@ -144,6 +145,14 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
         : null;
 
+      // Utiliser PhaseManager pour déterminer la phase effective
+      const effectivePhase = PhaseManager.determineEffectivePhase(
+        gameData.game.currentPhase,
+        gameData.currentUserState?.isTargetPlayer || false,
+        gameData.currentUserState?.hasAnswered || false,
+        gameData.currentUserState?.hasVoted || false
+      );
+
       const updatedGameState = {
         ...gameState,
         currentRound: gameData.game.currentRound || 1,
@@ -162,6 +171,7 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           isTargetPlayer: Boolean(gameData.currentUserState?.isTargetPlayer),
         },
         game: gameData.game,
+        phase: effectivePhase,
       };
 
       setGameState(updatedGameState);
