@@ -376,25 +376,48 @@ class GameService {
       const userId = await UserIdManager.getUserId();
       console.log(`👤 GameService: Soumission de vote par utilisateur ${userId}`);
       
+      // Vérifier d'abord la phase actuelle du jeu
+      const gameState = await this.getGameState(gameId, 0, 1, true);
+      
+      if (gameState.game.currentPhase !== 'vote') {
+        console.warn(`⚠️ Tentative de vote dans une phase incorrecte: ${gameState.game.currentPhase}`);
+        
+        // Si le jeu est déjà en phase results, nous devons retourner immédiatement
+        if (gameState.game.currentPhase === 'results') {
+          console.log('🔄 Le jeu est déjà passé à la phase results, vote ignoré');
+          return false;
+        }
+      }
+      
       // Utiliser directement HTTP REST pour une fiabilité maximale
       console.log('🌐 Envoi du vote via HTTP REST...');
       
       // Ajouter des logs supplémentaires pour le debugging
       console.log(`📝 Données du vote: answerId=${answerId}, questionId=${questionId}, userId=${userId}`);
       
+      // Augmenter la priorité de la requête
       const response = await api.post(`/games/${gameId}/vote`, {
         answer_id: answerId,
         question_id: questionId,
         voter_id: userId,
+        prevent_auto_progress: true // Pour empêcher la progression automatique
       }, {
-        timeout: 10000  // Augmenter encore le timeout pour s'assurer que la requête aboutit
+        timeout: 12000,  // Timeout augmenté 
+        headers: {
+          'X-Priority': 'high',
+          'X-Vote-Request': 'true'
+        }
       });
       
       if (response.data?.status === 'success') {
         console.log('✅ Vote soumis avec succès via HTTP');
         
+        // Forcer une mise à jour immédiate de l'état local
+        this.gameStateCache.delete(gameId);
+        
         // Forcer une mise à jour de l'état du jeu après le vote
-        setTimeout(() => this.getGameState(gameId, 0, 1, true), 500);
+        setTimeout(() => this.getGameState(gameId, 0, 1, true), 300);
+        setTimeout(() => this.getGameState(gameId, 0, 1, true), 1000);
         
         return true;
       } else {
@@ -416,20 +439,50 @@ class GameService {
             answer_id: answerId,
             question_id: questionId,
             voter_id: userId,
+            is_retry: true,       // Indiquer qu'il s'agit d'une tentative de récupération
+            prevent_auto_progress: true  // Empêcher la progression automatique
           }, {
             timeout: 15000,
             headers: {
-              'X-Retry-Attempt': 'true'
+              'X-Retry-Attempt': 'true',
+              'X-Priority': 'critical'
             }
           });
           
           if (retryResponse.data?.status === 'success') {
             console.log('✅ Vote soumis avec succès après nouvelle tentative');
+            
+            // Forcer deux rafraîchissements à intervalles différents
+            this.gameStateCache.delete(gameId);
+            setTimeout(() => this.getGameState(gameId, 0, 1, true), 500);
+            setTimeout(() => this.getGameState(gameId, 0, 1, true), 1500);
+            
             return true;
           }
         } catch (retryError) {
           console.error('❌ Échec de la seconde tentative:', retryError);
         }
+      }
+      
+      // En dernier recours, essayer une approche plus directe
+      try {
+        console.log('🔧 Tentative de solution de dernier recours...');
+        
+        // Essayer avec des paramètres simplifiés et un autre endpoint
+        const fallbackResponse = await api.post(`/games/${gameId}/vote_fallback`, {
+          answer_id: answerId,
+          question_id: questionId,
+          voter_id: await UserIdManager.getUserId()
+        }, {
+          timeout: 20000
+        });
+        
+        if (fallbackResponse.data?.success) {
+          console.log('✅ Vote enregistré via solution de dernier recours');
+          return true;
+        }
+      } catch (lastResortError) {
+        console.error('❌ Échec de la solution de dernier recours:', lastResortError);
       }
       
       throw error;

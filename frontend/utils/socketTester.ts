@@ -136,28 +136,15 @@ export const testVoteSubmission = async (
   console.log(`🧪 Test de soumission de vote - Game: ${gameId}, Answer: ${answerId}`);
   
   try {
-    // Récupérer l'ID utilisateur
-    const userId = await UserIdManager.getUserId();
+    // Utiliser directement le service de jeu qui intègre déjà tous les mécanismes de reprise
+    const gameService = (await import('@/services/queries/game')).default;
     
-    // Utiliser directement HTTP REST pour fiabilité maximale
-    console.log('🌐 Envoi du vote via HTTP REST...');
-    
-    const response = await axios.post(`${API_URL}/games/${gameId}/vote`, {
-      answer_id: answerId,
-      question_id: questionId,
-      voter_id: userId,
-    }, {
-      timeout: 8000  // Timeout augmenté pour assurer la réception
-    });
-    
-    if (response.data?.status === 'success') {
-      console.log('✅ Vote soumis avec succès via HTTP');
-      return true;
-    } else {
-      console.error('❌ Réponse du serveur inattendue:', response.data);
-      throw new Error(response.data?.error || 'Échec de la soumission via HTTP');
-    }
-    
+    // Demander au service de soumettre le vote
+    return await gameService.submitVote(
+      String(gameId),
+      String(answerId),
+      String(questionId)
+    );
   } catch (error) {
     console.error('❌ Erreur lors du test de soumission de vote:', error);
     
