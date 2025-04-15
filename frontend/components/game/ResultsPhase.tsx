@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { Answer, Player, Question } from '../../types/gameTypes';
+import { Answer, Player, Question } from '@/types/gameTypes';
 import GameWebSocketService from '@/services/gameWebSocketService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -263,7 +263,7 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
         
         <View style={styles.allAnswersSection}>
           <Text style={styles.sectionTitle}>Toutes les réponses</Text>
-          {answers.length > 0 ? (
+          {answers && answers.length > 0 ? (
             answers.map((answer) => (
               <View 
                 key={answer.id} 
@@ -276,7 +276,7 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
                   <Text style={styles.playerName}>{getPlayerName(answer.playerId)}</Text>
                 </View>
                 <Text style={styles.answerText}>{answer.content}</Text>
-                {answer.votesCount > 0 && (
+                { answer.votesCount > 0 && (
                   <View style={styles.voteCountContainer}>
                     <MaterialCommunityIcons name="thumb-up" size={16} color="#b3a5d9" />
                     <Text style={styles.voteCount}>{answer.votesCount}</Text>

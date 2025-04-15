@@ -4,7 +4,6 @@ import { StatusBar } from 'expo-status-bar';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import QuestionPhase from '@/components/game/QuestionPhase';
-import AnswerPhase from '@/components/game/AnswerPhase';
 import VotePhase from '@/components/game/VotePhase';
 import ResultsPhase from '@/components/game/ResultsPhase';
 import LoadingOverlay from '@/components/common/LoadingOverlay';
@@ -672,7 +671,7 @@ export default function GameScreen() {
       case GamePhase.QUESTION:
         if (gameState.currentUserState?.isTargetPlayer) {
           return (
-            <View style={styles.messageContainer}>
+            <View style={styles.waitingContainer}>
               <Text style={styles.messageTitle}>Cette question vous concerne !</Text>
               <Text style={styles.messageText}>
                 Vous ne pouvez pas répondre car la question parle de vous. 
@@ -690,10 +689,6 @@ export default function GameScreen() {
           );
         }
 
-        if (!gameState.targetPlayer || !gameState.currentQuestion) {
-          return <LoadingOverlay message="Chargement des données de jeu..." />;
-        }
-        
         return (
           <QuestionPhase 
             question={gameState.currentQuestion}
@@ -702,62 +697,8 @@ export default function GameScreen() {
             round={gameState.currentRound}
             totalRounds={gameState.totalRounds}
             timer={gameState.timer}
-          />
-        );
-
-      case GamePhase.ANSWER:
-        // Si l'utilisateur a déjà répondu, afficher l'écran d'attente
-        if (gameState.currentUserState?.hasAnswered) {
-          return (
-            <View style={styles.waitingContainer}>
-              <Text style={styles.messageTitle}>Réponse envoyée !</Text>
-              <Text style={styles.messageText}>En attente des autres joueurs...</Text>
-              {gameState.timer && (
-                <View style={styles.timerContainer}>
-                  <GameTimer 
-                    duration={gameState.timer.duration}
-                    startTime={gameState.timer.startTime}
-                  />
-                </View>
-              )}
-              <LoadingOverlay 
-                message="Attente des autres joueurs..."
-                showSpinner={true}
-                retryFunction={fetchGameData}
-              />
-            </View>
-          );
-        }
-
-        // Si c'est la cible, bloqué 
-        if (gameState.currentUserState?.isTargetPlayer) {
-          return (
-            <View style={styles.messageContainer}>
-              <Text style={styles.messageTitle}>Cette question vous concerne !</Text>
-              <Text style={styles.messageText}>
-                Vous ne pouvez pas répondre car la question parle de vous.
-                Attendez que les autres joueurs répondent.
-              </Text>
-              {gameState.timer && (
-                <View style={styles.timerContainer}>
-                  <GameTimer 
-                    duration={gameState.timer.duration}
-                    startTime={gameState.timer.startTime}
-                  />
-                </View>
-              )}
-            </View>
-          );
-        }
-
-        // Sinon afficher le formulaire de réponse pour les autres joueurs
-        return (
-          <AnswerPhase 
-            question={gameState.currentQuestion}
-            onSubmit={handleSubmitAnswer}
-            timer={gameState.timer}
             isSubmitting={isSubmitting}
-            isTargetPlayer={gameState.currentUserState?.isTargetPlayer}
+            hasAnswered={gameState.currentUserState?.hasAnswered}
           />
         );
           
