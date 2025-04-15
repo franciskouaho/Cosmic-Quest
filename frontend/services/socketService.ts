@@ -751,50 +751,38 @@ class SocketService {
       console.log(`🎮 SocketService: Demande de passage au tour suivant pour ${gameId} (force=${force})`);
       
       const socket = await this.getInstanceAsync();
-
-      // Envoyer l'événement de passage au tour suivant avec confirmation
+      
       return new Promise<boolean>((resolve, reject) => {
-        let responded = false;
+        const maxRetries = 3;
+        let currentRetry = 0;
 
-        // Fonction pour vérifier la progression de phase
-        const checkPhaseChange = async () => {
-          try {
-            const gameState = await this.emit('game:get_state', { gameId });
-            return gameState.game.currentPhase !== 'results';
-          } catch {
-            return false;
-          }
-        };
-
-        socket.emit('game:next_round', { gameId, forceAdvance: force }, async (response: any) => {
-          if (responded) return;
-          responded = true;
-
-          if (response && response.success) {
-            // Vérifier le changement effectif de phase
-            let phaseChanged = false;
-            for (let i = 0; i < 3; i++) {
-              await new Promise(resolve => setTimeout(resolve, 500));
-              phaseChanged = await checkPhaseChange();
-              if (phaseChanged) break;
+        const attemptNextRound = () => {
+          let responded = false;
+          const timeoutId = setTimeout(() => {
+            if (!responded) {
+              if (currentRetry < maxRetries - 1) {
+                currentRetry++;
+                console.log(`🔄 Nouvelle tentative ${currentRetry}/${maxRetries}...`);
+                attemptNextRound();
+              } else {
+                reject(new Error('Timeout lors du passage au tour suivant'));
+              }
             }
+          }, 8000);
 
-            if (phaseChanged) {
-              console.log(`✅ SocketService: Passage au tour suivant confirmé`);
+          socket.emit('game:next_round', { gameId, forceAdvance: force }, (response: any) => {
+            responded = true;
+            clearTimeout(timeoutId);
+            
+            if (response && response.success) {
               resolve(true);
             } else {
-              reject(new Error('Phase non mise à jour après plusieurs tentatives'));
+              reject(new Error(response?.error || 'Échec du passage au tour suivant'));
             }
-          } else {
-            reject(new Error(response?.error || 'Échec du passage au tour suivant'));
-          }
-        });
+          });
+        };
 
-        setTimeout(() => {
-          if (!responded) {
-            reject(new Error('Pas de réponse du serveur pour le passage au tour suivant'));
-          }
-        }, 5000);
+        attemptNextRound();
       });
     } catch (error) {
       console.error(`❌ SocketService: Erreur lors du passage au tour suivant:`, error);

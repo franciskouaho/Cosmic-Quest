@@ -1,6 +1,9 @@
+import axios from 'axios';
 import SocketService from '@/services/socketService';
-import { SOCKET_URL } from '@/config/axios';
+import { SOCKET_URL, API_URL } from '@/config/axios';
 import UserIdManager from './userIdManager';
+import GameWebSocketService from '@/services/gameWebSocketService';
+import { Alert } from 'react-native';
 
 /**
  * Utilitaire pour tester la connexion WebSocket
@@ -33,865 +36,247 @@ export const testSocketConnection = async () => {
       console.log('✅ Réponse ping (callback) reçue:', response);
     });
     
-    // Tester la tentative de rejoindre une salle test
-    console.log('🚪 Test de jointure à une salle test...');
-    await SocketService.joinRoom('test-room');
-    
-    // Ajouter un écouteur temporaire pour confirmer la jointure
-    socket.on('room:joined', (data) => {
-      console.log('✅ Confirmation de jointure à la salle:', data);
-      
-      // Après confirmation, tester le départ
-      console.log('🚪 Test de départ de la salle test...');
-      SocketService.leaveRoom('test-room');
-    });
-    
-    // Ajouter un écouteur temporaire pour confirmer le départ
-    socket.on('room:left', (data) => {
-      console.log('✅ Confirmation de départ de la salle:', data);
-    });
-    
-    // Écouter les événements de jeu pour le débogage
-    socket.on('game:update', (data) => {
-      console.log('🎮 Événement game:update reçu:', data);
-      
-      // Amélioration de la validation pour le statut de joueur ciblé
-      if (data.type === 'phase_change' && data.phase === 'vote') {
-        console.log('🧪 Test de validation du joueur ciblé...');
-        
-        try {
-          // Vérification plus robuste
-          const currentQuestion = socket?.gameState?.currentQuestion;
-          const currentUser = socket?.userData?.id;
-          
-          if (currentQuestion && currentUser) {
-            // S'assurer que les IDs sont des chaînes pour comparaison
-            const targetId = String(currentQuestion.targetPlayer?.id || '');
-            const userId = String(currentUser);
-            
-            const isTarget = targetId === userId;
-            console.log(`🎯 Statut de joueur ciblé: ${isTarget ? 'OUI' : 'NON'} (targetId: ${targetId}, userId: ${userId})`);
-            
-            if (isTarget) {
-              console.log('⚠️ Détection de joueur ciblé: cet utilisateur est la cible et devrait avoir une interface spéciale');
-            }
-          } else {
-            console.log('⚠️ Données incomplètes pour la vérification du joueur ciblé');
-          }
-        } catch (validationError) {
-          console.error('❌ Erreur lors de la validation du joueur ciblé:', validationError);
-        }
-      }
-    });
-
-    // Écouter les événements de phase
-    socket.on('phase_change', (data) => {
-      console.log('🔄 Événement phase_change reçu:', data);
-    });
-    
     // Nettoyer les écouteurs après 5 secondes
     setTimeout(() => {
       if (socket.connected) {
         socket.off('pong');
-        socket.off('room:joined');
-        socket.off('room:left');
-        // Ne pas supprimer les écouteurs de débogage du jeu pour suivre la partie
-        console.log('🧹 Nettoyage des écouteurs de test terminé');
+        console.log('🧹 Écouteurs nettoyés');
       }
     }, 5000);
     
     return true;
   } catch (error) {
-    console.error('❌ Test échoué:', error);
+    console.error('❌ Erreur lors du test de connexion WebSocket:', error);
     return false;
   }
 };
 
 /**
- * Vérifier l'état de la connexion WebSocket
- * @returns Un objet contenant l'état actuel de la connexion
- */
-export const checkSocketStatus = async () => {
-  try {
-    // Obtenir le diagnostic complet du service
-    const diagnostic = SocketService.diagnose();
-    
-    // Si déconnecté, tenter une initialisation à la volée
-    if (diagnostic.status !== 'connected') {
-      console.log('🔌 Socket non connecté, tentative d\'initialisation...');
-      try {
-        const socket = await SocketService.getInstanceAsync();
-        const isConnected = socket.connected; // Utiliser la propriété connected directement
-        return {
-          isConnected,
-          socketId: socket.id || null,
-          transport: socket.io?.engine?.transport?.name || null,
-          url: SOCKET_URL,
-          reconnection: true
-        };
-      } catch (initError) {
-        console.error('❌ Échec de l\'initialisation du socket:', initError);
-      }
-    }
-    
-    return {
-      isConnected: diagnostic.details.connected,
-      socketId: diagnostic.details.socketId,
-      transport: diagnostic.details.transport,
-      url: SOCKET_URL,
-      ...diagnostic.details
-    };
-  } catch (error) {
-    console.error('❌ Erreur lors de la vérification du statut socket:', error);
-    return {
-      isConnected: false,
-      error: error.message,
-      url: SOCKET_URL,
-    };
-  }
-};
-
-/**
- * Vérifier l'état de la connexion WebSocket
- * @returns Un objet contenant l'état actuel de la connexion
- */
-export const checkSocketConnection = async (): Promise<{ 
-  connected: boolean; 
-  socketId: string | null;
-  activeRooms: string[];
-  activeGames: string[];
-}> => {
-  try {
-    // Utiliser la méthode asynchrone pour obtenir une instance valide
-    const socket = await SocketService.getInstanceAsync();
-    const diagnostic = SocketService.diagnose();
-    
-    console.log(`🔍 Diagnostic WebSocket effectué - connecté: ${socket.connected}`);
-    
-    return {
-      connected: socket.connected,
-      socketId: socket.id,
-      activeRooms: diagnostic.activeChannels.rooms,
-      activeGames: diagnostic.activeChannels.games,
-    };
-  } catch (error) {
-    console.error('❌ Erreur lors de la vérification de la connexion WebSocket:', error);
-    return {
-      connected: false,
-      socketId: null,
-      activeRooms: [],
-      activeGames: [],
-    };
-  }
-};
-
-/**
- * Diagnostic avancé des événements de jeu
- * Utile pour le débogage des parties en cours
- * @param gameId ID de la partie à surveiller
- */
-export const monitorGameEvents = async (gameId) => {
-  try {
-    const socket = await SocketService.getInstanceAsync();
-    console.log(`🔍 Démarrage du monitoring pour le jeu ${gameId}...`);
-    
-    // Rejoindre le canal de la partie
-    await SocketService.joinRoom(`game:${gameId}`);
-    
-    // Écouter les événements de mise à jour de la partie
-    socket.on('game:update', (data) => {
-      console.log(`📊 [Jeu ${gameId}] Mise à jour:`, data);
-    });
-    
-    // Écouter les événements d'erreur
-    socket.on('error', (error) => {
-      console.error(`❌ [Jeu ${gameId}] Erreur:`, error);
-    });
-    
-    console.log(`✅ Monitoring actif pour le jeu ${gameId}`);
-    return true;
-  } catch (error) {
-    console.error('❌ Échec du monitoring:', error);
-    return false;
-  }
-};
-
-/**
- * Outils de diagnostic pour les situations de joueur ciblé
- * @param gameId ID de la partie
- */
-export const testTargetPlayerScenario = async (gameId: string) => {
-  try {
-    const socket = await SocketService.getInstanceAsync();
-    console.log(`🔍 Démarrage du test de scénario 'joueur ciblé' pour le jeu ${gameId}...`);
-    
-    // Écouter spécifiquement les mises à jour qui contiennent des informations sur le joueur ciblé
-    socket.on('game:update', (data) => {
-      if (data.question && data.question.targetPlayer) {
-        console.log(`🎯 Joueur ciblé détecté: ${data.question.targetPlayer.displayName || data.question.targetPlayer.username} (ID: ${data.question.targetPlayer.id})`);
-        
-        // Vérifier si le joueur actuel est la cible
-        if (socket.userData && socket.userData.id === data.question.targetPlayer.id) {
-          console.log('⚠️ VOUS êtes le joueur ciblé pour cette question!');
-          console.log('✅ Comportement attendu: Vous ne devriez PAS pouvoir répondre à cette question.');
-        }
-      }
-    });
-    
-    console.log(`✅ Test de scénario 'joueur ciblé' activé pour le jeu ${gameId}`);
-    return true;
-  } catch (error) {
-    console.error('❌ Échec du test de scénario:', error);
-    return false;
-  }
-};
-
-/**
- * Outils de diagnostic pour les situations de joueur ciblé
- * @param gameId ID de la partie
- */
-export const diagTargetPlayerStatus = async (gameId: string) => {
-  try {
-    const socket = await SocketService.getInstanceAsync();
-    console.log(`🔍 Diagnostic joueur ciblé pour le jeu ${gameId}...`);
-    
-    const userId = await UserIdManager.getUserId();
-    
-    console.log(`👤 ID utilisateur connecté: ${userId || 'non disponible'}`);
-    
-    if (socket.gameState?.currentQuestion?.targetPlayer) {
-      const targetId = String(socket.gameState.currentQuestion.targetPlayer.id);
-      console.log(`🎯 Joueur ciblé dans la question: ${targetId}`);
-      
-      const isTarget = userId && targetId === String(userId);
-      console.log(`👉 Ce client ${isTarget ? 'EST' : 'N\'EST PAS'} le joueur ciblé`);
-    } else {
-      console.log('❌ Aucune information de joueur ciblé disponible');
-    }
-    
-    return socket.gameState?.currentUserState?.isTargetPlayer || false;
-  } catch (error) {
-    console.error('❌ Erreur lors du diagnostic de joueur ciblé:', error);
-    return false;
-  }
-};
-
-/**
- * Soumettre un vote via WebSocket directement
- * @param gameId ID de la partie
- * @param answerId ID de la réponse choisie
- * @param questionId ID de la question
- * @returns Une promesse résolue si le vote a été soumis avec succès
- */
-export const submitVoteViaSocket = async (gameId: string, answerId: string, questionId: string): Promise<boolean> => {
-  try {
-    console.log(`🗳️ Tentative de vote WebSocket - jeu: ${gameId}, réponse: ${answerId}`);
-    
-    // Utiliser la méthode officielle du SocketService
-    return await SocketService.submitVote({
-      gameId,
-      answerId,
-      questionId
-    });
-  } catch (error) {
-    console.error('❌ Erreur lors de la soumission du vote via WebSocket:', error);
-    throw error;
-  }
-};
-
-/**
- * Soumettre une réponse via WebSocket directement
+ * Teste la soumission d'une réponse via WebSocket, avec repli vers HTTP en cas d'échec
  * @param gameId ID de la partie
  * @param questionId ID de la question
  * @param content Contenu de la réponse
- * @returns Une promesse résolue si la réponse a été soumise avec succès
+ * @returns {Promise<boolean>} true si la soumission a réussi, false sinon
  */
-export const submitAnswerViaSocket = async (
-  gameId: string, 
-  questionId: string, 
+export const testAnswerSubmission = async (
+  gameId: string | number,
+  questionId: string | number,
   content: string
 ): Promise<boolean> => {
+  console.log(`🧪 Test de soumission de réponse - Game: ${gameId}, Question: ${questionId}`);
+  
   try {
-    console.log(`📝 Tentative de réponse WebSocket - jeu: ${gameId}, question: ${questionId}`);
+    // D'abord essayer via WebSocket
+    console.log('🔌 Tentative via WebSocket...');
     
-    // Utiliser la méthode officielle du SocketService
-    return await SocketService.submitAnswer({
-      gameId,
-      questionId,
-      content
-    });
-  } catch (error) {
-    console.error('❌ Erreur lors de la soumission de la réponse via WebSocket:', error);
-    throw error;
-  }
-};
-
-/**
- * Outils de diagnostic pour les situations de joueur ciblé
- * @param gameId ID de la partie
- */
-export const diagnoseTargetPlayer = async (gameId: string) => {
-  try {
-    const socket = await SocketService.getInstanceAsync();
-    console.log(`🔍 Diagnostic de joueur ciblé pour jeu ${gameId}...`);
-
-    if (!socket.connected) {
-      console.error('❌ Socket non connecté, diagnostic impossible');
-      return { success: false, error: 'Socket non connecté' };
-    }
-
-    // Récupérer l'état actuel du jeu
-    const gameState = socket.gameState;
-    const userData = socket.userData;
-
-    if (!gameState || !userData) {
-      console.error('❌ Données insuffisantes pour le diagnostic');
-      return { 
-        success: false, 
-        error: 'Données insuffisantes',
-        gameStateAvailable: !!gameState,
-        userDataAvailable: !!userData 
-      };
-    }
-
-    const currentQuestion = gameState?.currentQuestion;
-    const userId = userData.id;
-    
-    console.log('📊 État du jeu:', {
-      currentPhase: gameState.currentPhase,
-      hasCurrentQuestion: !!currentQuestion,
-      questionId: currentQuestion?.id,
-      hasTargetPlayer: !!currentQuestion?.targetPlayer,
-      targetPlayerId: currentQuestion?.targetPlayer?.id,
-      currentUserId: userId
-    });
-
-    // Vérifier si l'utilisateur est la cible
-    const isTarget = currentQuestion?.targetPlayer?.id === userId;
-    
-    return {
-      success: true,
-      isTarget,
-      currentPhase: gameState.currentPhase,
-      userId,
-      targetId: currentQuestion?.targetPlayer?.id,
-      questionId: currentQuestion?.id
-    };
-  } catch (error) {
-    console.error('❌ Erreur durant le diagnostic du joueur ciblé:', error);
-    return { success: false, error: error.message };
-  }
-};
-
-/**
- * Tester la soumission d'une réponse via WebSocket
- * @param gameId ID de la partie
- * @param questionId ID de la question
- * @param content Contenu de la réponse
- */
-export const testSubmitAnswerViaSocket = async (gameId: string, questionId: string, content: string) => {
-  try {
-    const socket = await SocketService.getInstanceAsync();
-    console.log(`🧪 Test de soumission de réponse via WebSocket - jeu: ${gameId}, question: ${questionId}`);
-    
-    return new Promise((resolve, reject) => {
-      // Configurer un timeout
-      const timeoutId = setTimeout(() => {
-        socket.off('answer:confirmation');
-        reject(new Error('Timeout: Pas de réponse du serveur après 5 secondes'));
-      }, 5000);
-      
-      // Écouter l'événement de confirmation
-      socket.once('answer:confirmation', (data) => {
-        clearTimeout(timeoutId);
-        console.log('✅ Confirmation de réponse reçue:', data);
-        resolve({ success: true, data });
-      });
-      
-      // Envoyer la réponse
-      socket.emit('game:submit_answer', {
-        gameId,
-        questionId,
+    try {
+      const result = await GameWebSocketService.submitAnswer(
+        String(gameId),
+        String(questionId),
         content
-      }, (ackData) => {
-        // Ceci est le callback d'acquittement immédiat
-        console.log('📨 Acquittement immédiat reçu:', ackData);
-        if (ackData && !ackData.success) {
-          clearTimeout(timeoutId);
-          socket.off('answer:confirmation');
-          reject(new Error(`Erreur lors de la soumission: ${ackData.error || 'Inconnue'}`));
-        }
-      });
-    });
-  } catch (error) {
-    console.error('❌ Erreur lors du test de soumission:', error);
-    throw error;
-  }
-};
-
-/**
- * Tester la soumission d'un vote via WebSocket
- */
-export const testSubmitVoteViaSocket = async (gameId: string, answerId: string, questionId: string) => {
-  try {
-    const socket = await SocketService.getInstanceAsync();
-    console.log(`🧪 Test de soumission de vote via WebSocket - jeu: ${gameId}, réponse: ${answerId}`);
-    
-    return new Promise((resolve, reject) => {
-      // Configurer un timeout
-      const timeoutId = setTimeout(() => {
-        socket.off('vote:confirmation');
-        reject(new Error('Timeout: Pas de réponse du serveur après 5 secondes'));
-      }, 5000);
+      );
       
-      // Écouter l'événement de confirmation
-      socket.once('vote:confirmation', (data) => {
-        clearTimeout(timeoutId);
-        console.log('✅ Confirmation de vote reçue:', data);
-        resolve({ success: true, data });
-      });
-      
-      // Envoyer le vote
-      socket.emit('game:submit_vote', {
-        gameId,
-        answerId,
-        questionId
-      }, (ackData) => {
-        // Ceci est le callback d'acquittement immédiat
-        console.log('📨 Acquittement immédiat reçu:', ackData);
-        if (ackData && !ackData.success) {
-          clearTimeout(timeoutId);
-          socket.off('vote:confirmation');
-          reject(new Error(`Erreur lors du vote: ${ackData.error || 'Inconnue'}`));
-        }
-      });
-    });
-  } catch (error) {
-    console.error('❌ Erreur lors du test de vote:', error);
-    throw error;
-  }
-};
-
-/**
- * Simuler une notification de vote cible pour tester le comportement de l'UI
- * @param gameId ID de la partie
- * @param targetUserId ID de l'utilisateur ciblé (laisser vide pour utiliser l'ID actuel)
- */
-export const simulateTargetVoteNotification = async (gameId: string, targetUserId?: string) => {
-  try {
-    const socket = await SocketService.getInstanceAsync();
-    const userId = targetUserId || await UserIdManager.getUserId();
-    
-    if (!userId) {
-      console.error('❌ ID utilisateur non disponible');
-      return { success: false, error: 'ID utilisateur non disponible' };
+      if (result) {
+        console.log('✅ Réponse soumise avec succès via WebSocket');
+        return true;
+      }
+    } catch (wsError) {
+      console.warn('⚠️ Échec de la soumission via WebSocket, tentative via HTTP:', wsError);
     }
     
-    console.log(`🔄 Simulation d'une notification de vote pour l'utilisateur ${userId}`);
-    
-    // Écouter l'événement pendant 5 secondes pour vérifier s'il est bien traité
-    const timeoutPromise = new Promise((resolve) => {
-      const timeout = setTimeout(() => {
-        console.log('⏱️ Fin de la période d\'observation');
-        resolve({ success: true, observed: false });
-        socket.off('game:update');
-      }, 5000);
-      
-      socket.on('game:update', (data) => {
-        if (data.type === 'target_player_vote' || 
-            (data.type === 'phase_change' && data.phase === 'vote')) {
-          console.log('✅ Événement observé:', data.type);
-          clearTimeout(timeout);
-          socket.off('game:update');
-          resolve({ success: true, observed: true, data });
-        }
-      });
-    });
-    
-    // Émettre un faux événement pour simuler la notification
-    socket.emit('test:simulate_event', {
-      type: 'target_player_vote',
-      gameId,
-      targetUserId: userId,
-      event: {
-        type: 'target_player_vote',
-        phase: 'vote',
-        message: 'C\'est à votre tour de voter! (test)',
-        targetPlayerId: userId,
-        timer: {
-          duration: 20,
-          startTime: Date.now()
-        }
-      }
-    });
-    
-    console.log('📤 Demande de simulation envoyée');
-    
-    const result = await timeoutPromise;
-    return result;
-  } catch (error) {
-    console.error('❌ Erreur lors de la simulation:', error);
-    return { success: false, error: error.message };
-  }
-};
-
-/**
- * Tester la transition automatique vers la phase de vote
- * @param gameId ID de la partie
- */
-export const testAutoVoteTransition = async (gameId: string): Promise<boolean> => {
-  try {
-    const socket = await SocketService.getInstanceAsync();
-    console.log(`🧪 Test de transition automatique vers la phase de vote - jeu: ${gameId}`);
-    
-    // Récupérer l'ID utilisateur actuel pour vérification
+    // Si WebSocket échoue, utiliser HTTP comme solution de repli
+    console.log('🌐 Tentative via HTTP...');
     const userId = await UserIdManager.getUserId();
-    console.log(`👤 Utilisateur actuel: ${userId || 'non défini'}`);
     
-    // Configurer des écouteurs pour observer les événements pendant 5 secondes
-    let targetVoteReceived = false;
-    let phaseChangeReceived = false;
-    
-    return new Promise((resolve) => {
-      // Écouteur pour l'événement spécifique ciblant le joueur à voter
-      const handleTargetVote = (data) => {
-        if (data.type === 'target_player_vote') {
-          console.log('✅ Événement target_player_vote reçu:', data);
-          targetVoteReceived = true;
-          
-          // Vérifier si l'utilisateur actuel est bien la cible
-          const isTarget = userId && String(userId) === String(data.targetPlayerId);
-          console.log(`👤 L'utilisateur actuel ${isTarget ? 'EST' : "n'est PAS"} la cible du vote`);
-        }
-      };
-      
-      // Écouteur pour le changement de phase général
-      const handlePhaseChange = (data) => {
-        if (data.type === 'phase_change' && data.phase === 'vote') {
-          console.log('✅ Événement phase_change vers vote reçu:', data);
-          phaseChangeReceived = true;
-        }
-      };
-      
-      socket.on('game:update', handleTargetVote);
-      socket.on('game:update', handlePhaseChange);
-      
-      // Configurer un timeout pour nettoyer les écouteurs après 5 secondes
-      setTimeout(() => {
-        socket.off('game:update', handleTargetVote);
-        socket.off('game:update', handlePhaseChange);
-        
-        console.log('📊 Résultat du test:');
-        console.log(`- Événement target_player_vote: ${targetVoteReceived ? 'Reçu ✓' : 'Non reçu ✗'}`);
-        console.log(`- Événement phase_change vote: ${phaseChangeReceived ? 'Reçu ✓' : 'Non reçu ✗'}`);
-        
-        resolve(targetVoteReceived || phaseChangeReceived);
-      }, 5000);
-      
-      // Émettre une requête pour forcer la vérification de la phase
-      socket.emit('game:force_check', { gameId });
-      console.log('📤 Demande de vérification forcée envoyée');
-    });
-  } catch (error) {
-    console.error('❌ Erreur lors du test de transition automatique:', error);
-    return false;
-  }
-};
-
-/**
- * Tester l'envoi de réponse
- */
-export const testAnswerSubmission = async (gameId: string, questionId: string, content: string): Promise<boolean> => {
-  try {
-    console.log(`🧪 Test de soumission de réponse - jeu: ${gameId}, question: ${questionId}`);
-    
-    // Utiliser directement la méthode statique du service
-    const result = await SocketService.submitAnswer({
-      gameId,
-      questionId,
-      content
+    const response = await axios.post(`${API_URL}/games/${gameId}/answer`, {
+      question_id: questionId,
+      content: content,
+      user_id: userId,
+    }, {
+      headers: {
+        'X-Retry-Mode': 'true',  // Indiquer qu'il s'agit d'une tentative de récupération
+      },
+      timeout: 5000  // Timeout de 5 secondes
     });
     
-    console.log(`✅ Test réussi: réponse soumise avec succès`);
-    return true;
-  } catch (error) {
-    console.error(`❌ Test échoué: erreur lors de la soumission de réponse:`, error);
-    return false;
-  }
-};
-
-/**
- * Vérifier le statut des méthodes critiques du service WebSocket
- */
-export const diagnoseSocketMethods = async () => {
-  try {
-    const socket = await SocketService.getInstanceAsync();
-    
-    // Vérifier si les méthodes critiques sont bien définies
-    const diagnosis = {
-      connected: socket.connected,
-      methods: {
-        submitAnswer: typeof SocketService.submitAnswer === 'function',
-        submitVote: typeof SocketService.submitVote === 'function',
-        getInstanceAsync: typeof SocketService.getInstanceAsync === 'function',
-        joinGameChannel: typeof SocketService.joinGameChannel === 'function',
-      }
-    };
-    
-    console.log('🔍 Diagnostic des méthodes Socket:', diagnosis);
-    return diagnosis;
-  } catch (error) {
-    console.error('❌ Erreur lors du diagnostic des méthodes Socket:', error);
-    return { error: error.message };
-  }
-};
-
-/**
- * Vérifie l'état de la connexion socket et affiche des informations de diagnostic
- */
-export const diagnosticSocket = async () => {
-  try {
-    console.log('🔌 Diagnostic de connexion Socket.IO en cours...');
-    const socket = await SocketService.getInstanceAsync();
-    
-    console.log('📊 État de la connexion:');
-    console.log(`- Connecté: ${socket.connected}`);
-    console.log(`- ID socket: ${socket.id || 'non disponible'}`);
-    
-    // Vérifier l'utilisateur actuel
-    const userId = await UserIdManager.getUserId();
-    console.log(`- ID utilisateur actuel: ${userId}`);
-    
-    return {
-      connected: socket.connected,
-      socketId: socket.id,
-      userId
-    };
-  } catch (error) {
-    console.error('❌ Erreur lors du diagnostic socket:', error);
-    return {
-      connected: false,
-      error: error.message
-    };
-  }
-};
-
-/**
- * Teste la latence des événements WebSocket
- */
-export const testWebSocketLatency = async (): Promise<{ 
-  success: boolean; 
-  averageLatency?: number;
-  results?: number[];
-  errors?: number;
-}> => {
-  try {
-    console.log('🏓 Test de latence WebSocket démarré...');
-    
-    // Obtenir une instance de socket
-    const socket = await SocketService.getInstanceAsync();
-    
-    if (!socket.connected) {
-      console.error('❌ Socket non connecté, test impossible');
-      return { success: false, errors: 1 };
-    }
-    
-    // Effectuer 5 tests de ping-pong
-    const results: number[] = [];
-    let errors = 0;
-    
-    for (let i = 0; i < 5; i++) {
-      try {
-        const startTime = Date.now();
-        
-        // Créer une promesse qui sera résolue quand on reçoit la réponse
-        const pingResult = await new Promise<number>((resolve, reject) => {
-          // Timeout de 3 secondes
-          const timeoutId = setTimeout(() => {
-            reject(new Error('Timeout lors du test de latence'));
-          }, 3000);
-          
-          socket.emit('ping', (response: any) => {
-            clearTimeout(timeoutId);
-            const latency = Date.now() - startTime;
-            resolve(latency);
-          });
-        });
-        
-        results.push(pingResult);
-        console.log(`✅ Test #${i+1}: ${pingResult}ms`);
-        
-        // Courte pause entre les tests
-        await new Promise(resolve => setTimeout(resolve, 500));
-      } catch (error) {
-        console.error(`❌ Erreur lors du test #${i+1}:`, error);
-        errors++;
-      }
-    }
-    
-    if (results.length === 0) {
-      return { success: false, errors };
-    }
-    
-    // Calculer la latence moyenne
-    const averageLatency = results.reduce((acc, val) => acc + val, 0) / results.length;
-    console.log(`📊 Latence moyenne: ${averageLatency.toFixed(2)}ms`);
-    
-    return {
-      success: true,
-      averageLatency,
-      results,
-      errors
-    };
-  } catch (error) {
-    console.error('❌ Erreur lors du test de latence:', error);
-    return { success: false, errors: 1 };
-  }
-};
-
-/**
- * Optimise la connexion WebSocket en forçant une reconnexion propre
- */
-export const optimizeWebSocketConnection = async (): Promise<boolean> => {
-  try {
-    console.log('🔄 Optimisation de la connexion WebSocket...');
-    
-    // Fermer proprement la connexion existante
-    const socket = await SocketService.getInstanceAsync();
-    
-    if (socket.connected) {
-      console.log('🔌 Déconnexion de la socket existante...');
-      socket.disconnect();
-      
-      // Attendre un court instant
-      await new Promise(resolve => setTimeout(resolve, 500));
-    }
-    
-    // Forcer l'initialisation d'une nouvelle connexion
-    console.log('🔌 Établissement d\'une nouvelle connexion...');
-    const newSocket = await SocketService.getInstanceAsync(true);
-    
-    // Attendre que la connexion soit établie
-    const connectionPromise = new Promise<boolean>((resolve) => {
-      if (newSocket.connected) {
-        resolve(true);
-        return;
-      }
-      
-      const timeout = setTimeout(() => {
-        resolve(false);
-      }, 5000);
-      
-      newSocket.once('connect', () => {
-        clearTimeout(timeout);
-        resolve(true);
-      });
-    });
-    
-    const isConnected = await connectionPromise;
-    
-    if (isConnected) {
-      console.log('✅ Connexion WebSocket optimisée avec succès');
-      
-      // Tester la latence de la nouvelle connexion
-      const latencyTest = await testWebSocketLatency();
-      
-      if (latencyTest.success) {
-        console.log(`📊 Latence après optimisation: ${latencyTest.averageLatency?.toFixed(2)}ms`);
-      }
-      
+    if (response.data?.status === 'success') {
+      console.log('✅ Réponse soumise avec succès via HTTP (solution de repli)');
       return true;
     } else {
-      console.error('❌ Échec de l\'optimisation de la connexion WebSocket');
+      console.error('❌ Échec de la soumission via HTTP:', response.data);
+      return false;
+    }
+    
+  } catch (error) {
+    console.error('❌ Erreur lors du test de soumission de réponse:', error);
+    
+    // Afficher une alerte utilisateur en cas d'échec complet
+    Alert.alert(
+      'Erreur de communication',
+      'Impossible de soumettre votre réponse. Veuillez vérifier votre connexion et réessayer.',
+      [{ text: 'OK' }]
+    );
+    
+    return false;
+  }
+};
+
+/**
+ * Teste la soumission d'un vote via HTTP REST directement
+ * @param gameId ID de la partie
+ * @param answerId ID de la réponse
+ * @param questionId ID de la question
+ * @returns {Promise<boolean>} true si la soumission a réussi, false sinon
+ */
+export const testVoteSubmission = async (
+  gameId: string | number,
+  answerId: string | number,
+  questionId: string | number
+): Promise<boolean> => {
+  console.log(`🧪 Test de soumission de vote - Game: ${gameId}, Answer: ${answerId}`);
+  
+  try {
+    // Récupérer l'ID utilisateur
+    const userId = await UserIdManager.getUserId();
+    
+    // Utiliser directement HTTP REST pour fiabilité maximale
+    console.log('🌐 Envoi du vote via HTTP REST...');
+    
+    const response = await axios.post(`${API_URL}/games/${gameId}/vote`, {
+      answer_id: answerId,
+      question_id: questionId,
+      voter_id: userId,
+    }, {
+      timeout: 8000  // Timeout augmenté pour assurer la réception
+    });
+    
+    if (response.data?.status === 'success') {
+      console.log('✅ Vote soumis avec succès via HTTP');
+      return true;
+    } else {
+      console.error('❌ Réponse du serveur inattendue:', response.data);
+      throw new Error(response.data?.error || 'Échec de la soumission via HTTP');
+    }
+    
+  } catch (error) {
+    console.error('❌ Erreur lors du test de soumission de vote:', error);
+    
+    // Afficher une alerte utilisateur en cas d'échec complet
+    Alert.alert(
+      'Erreur de communication',
+      'Impossible de soumettre votre vote. Veuillez vérifier votre connexion et réessayer.',
+      [{ text: 'OK' }]
+    );
+    
+    return false;
+  }
+};
+
+/**
+ * Optimise la connexion WebSocket en cas de problème
+ * Cette fonction est utilisée par errorHandler.ts
+ * @returns {Promise<boolean>} true si l'optimisation a réussi, false sinon
+ */
+export const optimizeWebSocketConnection = async (): Promise<boolean> => {
+  console.log('🔧 Tentative d\'optimisation de la connexion WebSocket...');
+  
+  try {
+    // Fermer et réinitialiser la connexion actuelle
+    await SocketService.disconnect();
+    
+    // Attendre un court délai
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    // Établir une nouvelle connexion
+    const socket = await SocketService.getInstanceAsync(true);
+    
+    // Vérifier si la nouvelle connexion est établie
+    if (socket && socket.connected) {
+      console.log('✅ Connexion WebSocket optimisée avec succès');
+      return true;
+    } else {
+      console.log('⚠️ Échec de l\'optimisation de la connexion WebSocket');
       return false;
     }
   } catch (error) {
-    console.error('❌ Erreur lors de l\'optimisation de la connexion:', error);
+    console.error('❌ Erreur lors de l\'optimisation de la connexion WebSocket:', error);
     return false;
   }
 };
 
 /**
- * Vérifie et optimise la connexion au jeu WebSocket
- * @param gameId ID du jeu
+ * Vérifie l'état de santé global des WebSockets et tente des réparations si nécessaire
+ * @returns Objet avec le diagnostic et les actions effectuées
  */
-export const ensureGameConnectionQuality = async (gameId: string): Promise<boolean> => {
+export const diagnoseAndRepairWebSockets = async () => {
+  console.log('🩺 Diagnostic WebSocket en cours...');
+  
+  const diagnostics = {
+    initialSocketConnected: false,
+    reconnectionAttempted: false,
+    reconnectionSuccess: false,
+    finalSocketConnected: false,
+    latency: -1,
+    repaired: false
+  };
+  
   try {
-    console.log(`🔍 Vérification de la qualité de connexion pour le jeu ${gameId}...`);
+    // Vérifier l'état initial de la connexion
+    const initialSocket = SocketService.getInstance();
+    diagnostics.initialSocketConnected = initialSocket?.connected || false;
     
-    // Importer GameWebSocketService directement
-    const GameWebSocketService = (await import('@/services/gameWebSocketService')).default;
-    
-    // Vérifier d'abord si la connexion est déjà établie
-    const isConnected = await GameWebSocketService.ensureSocketConnection(gameId);
-    
-    if (!isConnected) {
-      console.log('⚠️ Connexion non établie, tentative d\'optimisation...');
+    if (!diagnostics.initialSocketConnected) {
+      // Tenter une reconnexion
+      console.log('🔄 Tentative de reconnexion WebSocket...');
+      diagnostics.reconnectionAttempted = true;
       
-      // Forcer une reconnexion
-      const reconnected = await GameWebSocketService.reconnect();
+      // Mesurer le temps de réponse
+      const startTime = Date.now();
       
-      if (!reconnected) {
-        console.error('❌ Échec de la reconnexion');
-        return false;
+      try {
+        const newSocket = await SocketService.getInstanceAsync(true);
+        const endTime = Date.now();
+        diagnostics.latency = endTime - startTime;
+        diagnostics.reconnectionSuccess = newSocket?.connected || false;
+        diagnostics.finalSocketConnected = newSocket?.connected || false;
+        
+        // Si la reconnexion a réussi
+        if (diagnostics.reconnectionSuccess) {
+          console.log(`✅ Reconnexion WebSocket réussie (latence: ${diagnostics.latency}ms)`);
+          diagnostics.repaired = true;
+        }
+      } catch (reconnectError) {
+        console.error('❌ Échec de la reconnexion WebSocket:', reconnectError);
+      }
+    } else {
+      console.log('✅ Connexion WebSocket déjà établie');
+      
+      // Mesurer la latence avec un ping/pong
+      const startTime = Date.now();
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const timeoutId = setTimeout(() => reject(new Error('Timeout')), 3000);
+          initialSocket.emit('ping', () => {
+            clearTimeout(timeoutId);
+            diagnostics.latency = Date.now() - startTime;
+            resolve();
+          });
+        });
+        console.log(`📊 Latence WebSocket: ${diagnostics.latency}ms`);
+      } catch (pingError) {
+        console.warn('⚠️ Erreur lors de la mesure de latence:', pingError);
       }
       
-      // Attendre un court instant
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
-      // Essayer de rejoindre le canal à nouveau
-      const joined = await GameWebSocketService.ensureSocketConnection(gameId);
-      
-      if (!joined) {
-        console.error('❌ Échec de la jointure au canal du jeu après reconnexion');
-        return false;
-      }
+      diagnostics.finalSocketConnected = initialSocket.connected;
     }
     
-    // Tester la latence pour vérifier la qualité de la connexion
-    const latencyTest = await testWebSocketLatency();
+    return diagnostics;
     
-    if (!latencyTest.success || (latencyTest.averageLatency && latencyTest.averageLatency > 500)) {
-      console.warn(`⚠️ Latence élevée détectée (${latencyTest.averageLatency}ms), tentative d'optimisation...`);
-      
-      // Tenter une optimisation complète
-      const optimized = await optimizeWebSocketConnection();
-      
-      if (!optimized) {
-        console.error('❌ Échec de l\'optimisation');
-        return false;
-      }
-      
-      // Rejoindre le canal à nouveau
-      await GameWebSocketService.ensureSocketConnection(gameId);
-    }
-    
-    console.log('✅ Connexion au jeu optimisée et vérifiée');
-    return true;
   } catch (error) {
-    console.error('❌ Erreur lors de la vérification/optimisation de la connexion au jeu:', error);
-    return false;
+    console.error('❌ Erreur lors du diagnostic WebSocket:', error);
+    return {
+      ...diagnostics,
+      error: error.message
+    };
   }
-};
-
-export default {
-  testSocketConnection,
-  checkSocketStatus,
-  checkSocketConnection,
-  monitorGameEvents,
-  testTargetPlayerScenario,
-  diagTargetPlayerStatus,
-  submitVoteViaSocket,
-  submitAnswerViaSocket,
-  diagnoseTargetPlayer,
-  testSubmitAnswerViaSocket,
-  testSubmitVoteViaSocket,
-  simulateTargetVoteNotification,
-  testAutoVoteTransition,
-  testAnswerSubmission,
-  diagnoseSocketMethods,
-  diagnosticSocket,
-  testWebSocketLatency,
-  optimizeWebSocketConnection,
-  ensureGameConnectionQuality,
 };

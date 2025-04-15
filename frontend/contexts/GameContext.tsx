@@ -1,4 +1,4 @@
-import React, { createContext, useState, useContext, ReactNode, useEffect } from 'react';
+import React, { createContext, useState, useContext, ReactNode, useEffect, useCallback } from 'react';
 import { GamePhase, GameState } from '../types/gameTypes';
 import gameService from '../services/queries/game';
 import SocketService from '../services/socketService';
@@ -6,6 +6,7 @@ import { useAuth } from './AuthContext';
 import { Alert } from 'react-native';
 import Toast from '@/components/common/Toast';
 import { PhaseManager } from '../utils/phaseManager';
+import HostChecker from '../utils/hostChecker';
 
 type GameContextType = {
   gameState: GameState | null;
@@ -199,30 +200,44 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       showToast("Question non disponible", "error");
       return;
     }
-    
-    if (gameState.currentUserState?.isTargetPlayer) {
-      showToast("Vous êtes la cible de cette question et ne pouvez pas y répondre", "warning");
-      return;
-    }
-    
+
+    setIsSubmitting(true);
+    let success = false;
+
     try {
       console.log('🎮 GameContext: Soumission de réponse...');
-      await gameService.submitAnswer(gameId, gameState.currentQuestion.id, answer);
       
-      setGameState(prevState => ({
-        ...prevState,
-        currentUserState: {
-          ...prevState.currentUserState,
-          hasAnswered: true,
-        },
-      }));
-      
-      showToast("Réponse soumise avec succès", "success");
-      console.log('✅ GameContext: Réponse soumise avec succès');
+      // Vérifier que l'utilisateur peut répondre
+      if (gameState.currentUserState?.isTargetPlayer) {
+        showToast("Vous êtes la cible, vous ne pouvez pas répondre", "error");
+        return;
+      }
+
+      await gameService.ensureSocketConnection(gameId);
+      success = await gameService.submitAnswer(
+        gameId,
+        gameState.currentQuestion.id,
+        answer
+      );
+
+      if (success) {
+        setGameState(prev => ({
+          ...prev,
+          currentUserState: {
+            ...prev.currentUserState,
+            hasAnswered: true
+          }
+        }));
+        showToast("Réponse soumise avec succès", "success");
+        
+        // Forcer un rafraîchissement après un court délai
+        setTimeout(() => fetchGameData(), 500);
+      }
     } catch (error) {
-      console.error('❌ GameContext: Erreur lors de la soumission de la réponse:', error);
-      showToast("Impossible de soumettre votre réponse", "error");
-      throw error;
+      console.error('❌ GameContext: Erreur lors de la soumission:', error);
+      showToast("Impossible de soumettre votre réponse. Réessayez.", "error");
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -236,13 +251,10 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       console.log('🎮 GameContext: Soumission du vote...');
       setIsSubmitting(true);
       
-      // Assurer que la connexion WebSocket est bien établie avant de soumettre le vote
-      await gameService.ensureSocketConnection(gameId);
+      // Ajouter un feedback utilisateur immédiat
+      showToast("Envoi de votre vote en cours...", "info");
       
-      // Attendre un bref moment pour que la connexion WebSocket soit stable
-      await new Promise(resolve => setTimeout(resolve, 300));
-      
-      // Utiliser la méthode mise à jour qui privilégie WebSocket
+      // Utiliser directement la méthode de service qui utilise HTTP REST
       await gameService.submitVote(gameId, answerId, gameState.currentQuestion.id.toString());
       
       setGameState(prev => ({
@@ -256,10 +268,41 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       
       showToast("Vote enregistré avec succès", "success");
       console.log('✅ GameContext: Vote soumis avec succès');
+      
+      // Rafraîchir l'état du jeu pour confirmer le vote
+      setTimeout(() => fetchGameData(), 1000);
     } catch (error) {
       console.error('❌ GameContext: Erreur lors de la soumission du vote:', error);
       setError('Erreur lors de la soumission du vote');
       showToast("Impossible d'enregistrer votre vote. Veuillez réessayer.", "error");
+      
+      // Essayer une dernier fois avec testVoteSubmission comme solution de secours
+      try {
+        console.log('🔄 GameContext: Tentative de secours avec testVoteSubmission...');
+        const { testVoteSubmission } = await import('@/utils/socketTester');
+        const result = await testVoteSubmission(gameId, answerId, gameState.currentQuestion.id.toString());
+        
+        if (result) {
+          setGameState(prev => ({
+            ...prev,
+            currentUserState: {
+              ...prev.currentUserState,
+              hasVoted: true,
+            },
+            phase: GamePhase.WAITING,
+          }));
+          
+          showToast("Vote enregistré avec succès", "success");
+          console.log('✅ GameContext: Vote soumis avec succès via solution de secours');
+          
+          // Rafraîchir l'état du jeu pour confirmer le vote
+          setTimeout(() => fetchGameData(), 1000);
+          return;
+        }
+      } catch (fallbackError) {
+        console.error('❌ GameContext: Échec de la solution de secours:', fallbackError);
+      }
+      
       throw error;
     } finally {
       setIsSubmitting(false);
@@ -273,74 +316,41 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       return;
     }
 
-    try {
-      console.log('🎮 GameContext: Passage au tour suivant...');
+    const handleNextRound = useCallback(() => {
+      if (isSubmitting) return;
       
       setIsSubmitting(true);
       
-      // Assurer que la connexion WebSocket est établie
-      await gameService.ensureSocketConnection(gameId);
-      
-      // Court délai pour stabiliser la connexion
-      await new Promise(resolve => setTimeout(resolve, 300));
-      
-      // Vérifier si l'utilisateur est l'hôte de la partie
-      const isHost = user?.id && gameState?.game?.roomId ? 
-        await gameService.isUserRoomHost(gameState.game.roomId, user.id) : false;
-      
-      if (isHost) {
-        console.log('👑 L\'utilisateur est l\'hôte de la partie');
-      }
-      
-      // Utiliser la méthode WebSocket pour le passage au tour suivant
       try {
-        // Premier essai normal
-        await SocketService.nextRound(gameId, false);
-        console.log('✅ Passage au tour suivant via WebSocket réussi');
-      } catch (socketError) {
-        console.warn('⚠️ Échec du passage via WebSocket:', socketError.message);
-
-        // Si l'utilisateur est l'hôte et qu'on a une erreur d'autorisation, réessayer avec force=true
-        if (isHost && socketError.message && socketError.message.includes("l'hôte")) {
-          try {
-            console.log('🔄 Nouvel essai forcé en tant qu\'hôte');
-            await SocketService.nextRound(gameId, true);
-            console.log('✅ Passage forcé au tour suivant réussi');
-          } catch (forceError) {
-            // En dernier recours, utiliser l'API REST
-            await gameService.nextRound(gameId);
-          }
-        } else {
-          // API REST en fallback si échec
-          await gameService.nextRound(gameId);
-        }
+        console.log("🎮 Tentative de passage au tour suivant...");
+        
+        // Raccourcir le timeout et ajouter une notification d'erreur plus claire
+        Promise.race([
+          gameService.nextRound(gameId as string),
+          new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Timeout lors du passage au tour suivant')), 8000)
+          )
+        ]).then(() => {
+          console.log("✅ Passage au tour suivant initié avec succès");
+          // Forcer la mise à jour de l'état après un court délai
+          setTimeout(() => fetchGameData(), 1000);
+        }).catch((error) => {
+          console.error("❌ Erreur lors du passage au tour suivant:", error);
+          Alert.alert(
+            "Erreur",
+            "Le passage au tour suivant a échoué. Veuillez réessayer.",
+            [{ text: "OK" }]
+          );
+        }).finally(() => {
+          setIsSubmitting(false);
+        });
+      } catch (error) {
+        console.error("❌ Erreur lors du passage au tour suivant:", error);
+        setIsSubmitting(false);
       }
-      
-      setGameState(prevState => ({
-        ...prevState,
-        phase: GamePhase.LOADING,
-      }));
-
-      setTimeout(() => {
-        loadGame(gameId);
-      }, 800);
-      
-    } catch (error) {
-      console.error('❌ GameContext: Erreur lors du passage au tour suivant:', error);
-      
-      // Message d'erreur personnalisé
-      let errorMessage = "Impossible de passer au tour suivant";
-      
-      if (error.message && error.message.includes("attendre la fin des votes")) {
-        errorMessage = "Veuillez attendre que tous les votes soient enregistrés";
-      } else if (error.message && error.message.includes("l'hôte")) {
-        errorMessage = "Seul l'hôte de la partie peut effectuer cette action";
-      }
-      
-      showToast(errorMessage, "error");
-    } finally {
-      setIsSubmitting(false);
-    }
+    }, [gameId, isSubmitting, fetchGameData]);
+    
+    handleNextRound();
   };
 
   const setTimer = (timer: { duration: number; startTime: number }) => {

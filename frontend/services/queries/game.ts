@@ -102,7 +102,7 @@ class GameService {
             }
           }
           
-          // Validation de la phase reçue
+          // Validation de la phase reçue avec plus de tolérance
           if (gameData && gameData.game && gameData.game.currentPhase) {
             const currentPhase = gameData.game.currentPhase;
             
@@ -111,22 +111,26 @@ class GameService {
               gameData.game.currentPhase = 'question'; // Fallback à la phase par défaut
             }
             
-            // Mise à jour du cache avec validation
+            // Mise à jour du cache avec validation plus souple
             if (this.gameStateCache.has(gameId)) {
               const previousState = this.gameStateCache.get(gameId).state;
               const previousPhase = previousState.game.currentPhase;
               
-              if (!this.isValidTransition(previousPhase, currentPhase)) {
-                console.warn(`⚠️ Transition de phase invalide: ${previousPhase} -> ${currentPhase}`);
+              if (previousPhase === currentPhase) {
+                // Même phase, pas d'avertissement
+                console.log(`ℹ️ Phase maintenue: ${currentPhase}`);
+              } else if (!this.isValidTransition(previousPhase, currentPhase)) {
+                console.warn(`⚠️ Transition de phase non standard: ${previousPhase} -> ${currentPhase}`);
+                // On accepte quand même la transition mais on la log
               }
             }
+
+            // Mettre en cache l'état
+            this.gameStateCache.set(gameId, {
+              state: gameData,
+              timestamp: Date.now()
+            });
           }
-          
-          // Mettre en cache l'état du jeu récupéré
-          this.gameStateCache.set(gameId, {
-            state: gameData,
-            timestamp: Date.now()
-          });
           
           // Stocker également dans AsyncStorage pour une persistance plus longue
           this.persistGameState(gameId, gameData);
@@ -138,7 +142,7 @@ class GameService {
           // Incrémenter le compteur d'échecs du WebSocket
           this.socketFailCounter++;
           
-          // Si on a dépassé le nombre maximum d'échecs, désactiver temporairement le WebSocket
+          // Si on a dépassé le nombre maximum de échecs, désactiver temporairement le WebSocket
           if (this.socketFailCounter >= this.MAX_SOCKET_FAILS) {
             console.warn(`⚠️ Trop d'échecs WebSocket (${this.socketFailCounter}). WebSocket temporairement désactivé.`);
             this.socketEnabled = false;
@@ -215,7 +219,7 @@ class GameService {
         }));
       }
       
-      // Validation de la phase reçue
+      // Validation de la phase reçue avec plus de tolérance
       if (gameData && gameData.game && gameData.game.currentPhase) {
         const currentPhase = gameData.game.currentPhase;
         
@@ -224,15 +228,25 @@ class GameService {
           gameData.game.currentPhase = 'question'; // Fallback à la phase par défaut
         }
         
-        // Mise à jour du cache avec validation
+        // Mise à jour du cache avec validation plus souple
         if (this.gameStateCache.has(gameId)) {
           const previousState = this.gameStateCache.get(gameId).state;
           const previousPhase = previousState.game.currentPhase;
           
-          if (!this.isValidTransition(previousPhase, currentPhase)) {
-            console.warn(`⚠️ Transition de phase invalide: ${previousPhase} -> ${currentPhase}`);
+          if (previousPhase === currentPhase) {
+            // Même phase, pas d'avertissement
+            console.log(`ℹ️ Phase maintenue: ${currentPhase}`);
+          } else if (!this.isValidTransition(previousPhase, currentPhase)) {
+            console.warn(`⚠️ Transition de phase non standard: ${previousPhase} -> ${currentPhase}`);
+            // On accepte quand même la transition mais on la log
           }
         }
+
+        // Mettre en cache l'état
+        this.gameStateCache.set(gameId, {
+          state: gameData,
+          timestamp: Date.now()
+        });
       }
       
       // Mettre en cache l'état du jeu récupéré via REST API
@@ -317,62 +331,107 @@ class GameService {
   }
 
   /**
-   * Force l'utilisation du WebSocket pour la prochaine requête
-   */
-  async resetWebSocketConnection(): Promise<boolean> {
-    try {
-      console.log('🔄 GameService: Réinitialisation de la connexion WebSocket');
-      
-      // Réinitialiser le compteur d'échecs
-      this.socketFailCounter = 0;
-      this.socketEnabled = true;
-      
-      // Tenter une reconnexion WebSocket
-      return await GameWebSocketService.reconnect();
-    } catch (error) {
-      console.error('❌ Erreur lors de la réinitialisation de la connexion WebSocket:', error);
-      return false;
-    }
-  }
-
-  /**
-   * Soumettre une réponse à une question uniquement via WebSocket
+   * Soumettre une réponse à une question directement via HTTP REST
    */
   async submitAnswer(gameId: string, questionId: string, content: string) {
     console.log(`🎮 GameService: Soumission de réponse pour le jeu ${gameId}, question ${questionId}`);
     
     try {
-      // Récupérer l'ID utilisateur pour le débogage
+      // Récupérer l'ID utilisateur
       const userId = await UserIdManager.getUserId();
       console.log(`👤 GameService: Soumission de réponse par utilisateur ${userId}`);
       
-      // S'assurer que la connexion WebSocket est active
-      await GameWebSocketService.ensureSocketConnection(gameId);
+      // Utiliser directement HTTP REST pour une fiabilité maximale
+      console.log('🌐 Envoi de la réponse via HTTP REST...');
       
-      // Utiliser notre nouvelle méthode WebSocket
-      return await GameWebSocketService.submitAnswer(gameId, questionId, content);
+      const response = await api.post(`/games/${gameId}/answer`, {
+        question_id: questionId,
+        content: content,
+        user_id: userId,
+      }, {
+        timeout: 8000  // Augmenter le timeout pour assurer la réception
+      });
+      
+      if (response.data?.status === 'success') {
+        console.log('✅ Réponse soumise avec succès via HTTP');
+        return true;
+      } else {
+        console.error('❌ Réponse du serveur inattendue:', response.data);
+        throw new Error(response.data?.error || 'Échec de la soumission via HTTP');
+      }
     } catch (error) {
       console.error('❌ GameService: Erreur lors de la soumission de la réponse:', error);
       throw error;
     }
   }
 
-  // Soumettre un vote pour une réponse
+  /**
+   * Soumettre un vote pour une réponse directement via HTTP REST
+   */
   async submitVote(gameId: string, answerId: string, questionId: string) {
     console.log(`🎮 GameService: Vote pour la réponse ${answerId} dans le jeu ${gameId}`);
     
     try {
-      // Récupérer l'ID utilisateur pour le débogage
+      // Récupérer l'ID utilisateur
       const userId = await UserIdManager.getUserId();
       console.log(`👤 GameService: Soumission de vote par utilisateur ${userId}`);
       
-      // S'assurer que la connexion WebSocket est active
-      await GameWebSocketService.ensureSocketConnection(gameId);
+      // Utiliser directement HTTP REST pour une fiabilité maximale
+      console.log('🌐 Envoi du vote via HTTP REST...');
       
-      // Utiliser notre nouvelle méthode WebSocket
-      return await GameWebSocketService.submitVote(gameId, answerId, questionId);
+      // Ajouter des logs supplémentaires pour le debugging
+      console.log(`📝 Données du vote: answerId=${answerId}, questionId=${questionId}, userId=${userId}`);
+      
+      const response = await api.post(`/games/${gameId}/vote`, {
+        answer_id: answerId,
+        question_id: questionId,
+        voter_id: userId,
+      }, {
+        timeout: 10000  // Augmenter encore le timeout pour s'assurer que la requête aboutit
+      });
+      
+      if (response.data?.status === 'success') {
+        console.log('✅ Vote soumis avec succès via HTTP');
+        
+        // Forcer une mise à jour de l'état du jeu après le vote
+        setTimeout(() => this.getGameState(gameId, 0, 1, true), 500);
+        
+        return true;
+      } else {
+        console.error('❌ Réponse du serveur inattendue:', response.data);
+        throw new Error(response.data?.error || 'Échec de la soumission via HTTP');
+      }
     } catch (error) {
       console.error('❌ GameService: Erreur lors de la soumission du vote:', error);
+      
+      // Essayer une fois de plus avec un délai si l'erreur semble être un problème réseau
+      if (error.message && (error.message.includes('timeout') || error.message.includes('network'))) {
+        console.log('🔄 Tentative supplémentaire après erreur réseau...');
+        
+        try {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          
+          const userId = await UserIdManager.getUserId();
+          const retryResponse = await api.post(`/games/${gameId}/vote`, {
+            answer_id: answerId,
+            question_id: questionId,
+            voter_id: userId,
+          }, {
+            timeout: 15000,
+            headers: {
+              'X-Retry-Attempt': 'true'
+            }
+          });
+          
+          if (retryResponse.data?.status === 'success') {
+            console.log('✅ Vote soumis avec succès après nouvelle tentative');
+            return true;
+          }
+        } catch (retryError) {
+          console.error('❌ Échec de la seconde tentative:', retryError);
+        }
+      }
+      
       throw error;
     }
   }

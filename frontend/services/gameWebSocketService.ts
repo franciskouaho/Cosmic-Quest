@@ -13,6 +13,8 @@ class GameWebSocketService {
   private readonly CACHE_TTL = 3000; // 3 secondes
   private readonly REQUEST_TIMEOUT = 5000; // 5 secondes
   private readonly RECONNECT_DELAY = 1000; // 1 seconde
+  private cacheTimeout = 2000; // 2 secondes de cache
+  private cacheData: Map<string, { data: any, timestamp: number }> = new Map();
 
   /**
    * S'assure que la connexion Socket est établie et que l'utilisateur a rejoint le canal du jeu
@@ -169,56 +171,36 @@ class GameWebSocketService {
    * Avec cache et gestion intelligente des requêtes multiples
    */
   async getGameState(gameId: string): Promise<any> {
-    console.log(`🔌 [GameWebSocket] Récupération de l'état du jeu ${gameId} via WebSocket...`);
-    
-    // Vérifier si on a déjà une requête en cours pour ce jeu
-    if (this.pendingRequests.has(gameId)) {
-      const pendingRequest = this.pendingRequests.get(gameId);
-      const timeSinceRequest = Date.now() - pendingRequest.timestamp;
-      
-      // Si la requête est récente, utiliser le cache pour éviter la surcharge
-      if (timeSinceRequest < this.REQUEST_TIMEOUT / 2) {
-        console.log(`🔄 [GameWebSocket] Une requête est déjà en cours pour ${gameId}, utilisation du cache...`);
-        
-        try {
-          return await pendingRequest.promise;
-        } catch (error) {
-          // Si l'ancienne requête échoue, on continue avec une nouvelle après un court délai
-          console.warn(`⚠️ [GameWebSocket] La requête en cache a échoué, attente avant nouvelle tentative...`);
-          await new Promise(resolve => setTimeout(resolve, 500));
-        }
-      }
-    }
-    
-    // Vérifier le cache pour éviter les requêtes inutiles
-    const cachedData = this.gameStateCache.get(gameId);
-    if (cachedData && (Date.now() - cachedData.timestamp < this.CACHE_TTL)) {
-      console.log(`🗄️ [GameWebSocket] Utilisation du cache pour ${gameId}`);
-      return cachedData.state;
-    }
-    
     try {
+      // Vérifier le cache
+      const cached = this.cacheData.get(gameId);
+      const now = Date.now();
+      
+      if (cached && (now - cached.timestamp < this.cacheTimeout)) {
+        console.log(`🗄️ [GameWebSocket] Utilisation du cache pour ${gameId}`);
+        return cached.data;
+      }
+
       // S'assurer que la connexion socket est établie et que l'utilisateur a rejoint le canal du jeu
       await this.ensureSocketConnection(gameId);
-      
-      // Créer une promesse pour la requête avec un délai réduit et une meilleure gestion des erreurs
-      const requestPromise = new Promise<any>((resolve, reject) => {
-        // Utiliser Promise.race pour gérer le timeout plus proprement
-        const socketPromise = (async () => {
-          try {
-            const socket = await SocketService.getInstanceAsync();
-            const userId = await UserIdManager.getUserId();
-            
+
+      const promise = new Promise<any>((resolve, reject) => {
+        const timeoutId = setTimeout(() => {
+          reject(new Error('Timeout de la requête WebSocket'));
+        }, 5000);
+
+        SocketService.getInstanceAsync().then((socket) => {
+          UserIdManager.getUserId().then((userId) => {
             console.log(`🔍 [GameWebSocket] Envoi de la requête get_state - Game: ${gameId}, User: ${userId}`);
             
             socket.emit('game:get_state', { gameId, userId }, (response: any) => {
+              clearTimeout(timeoutId);
               if (response && response.success) {
-                // Mettre en cache les données reçues
-                this.gameStateCache.set(gameId, {
-                  state: response.data,
+                // Mettre en cache
+                this.cacheData.set(gameId, {
+                  data: response.data,
                   timestamp: Date.now()
                 });
-                
                 console.log(`✅ [GameWebSocket] État du jeu ${gameId} récupéré avec succès`);
                 resolve(response.data);
               } else {
@@ -226,66 +208,18 @@ class GameWebSocketService {
                 reject(new Error(response?.error || 'Erreur lors de la récupération de l\'état du jeu'));
               }
             });
-          } catch (error) {
-            reject(error);
-          }
-        })();
-        
-        // Promesse de timeout qui se résout après le délai imparti
-        const timeoutPromise = new Promise<never>((_, reject) => {
-          setTimeout(() => {
-            reject(new Error('Timeout lors de la récupération de l\'état du jeu'));
-          }, this.REQUEST_TIMEOUT - 500); // Réduire légèrement pour éviter les conditions limite
-        });
-        
-        // Utiliser Promise.race pour prendre la première promesse qui se résout/rejette
-        Promise.race([socketPromise, timeoutPromise]).catch(reject);
+          }).catch(reject);
+        }).catch(reject);
       });
-      
-      // Enregistrer cette promesse comme requête en cours
-      this.pendingRequests.set(gameId, { 
-        promise: requestPromise,
-        timestamp: Date.now()
-      });
-      
-      try {
-        // Attendre le résultat avec un timeout supplémentaire de sécurité
-        const result = await Promise.race([
-          requestPromise,
-          new Promise<never>((_, reject) => 
-            setTimeout(() => reject(new Error('Timeout global dépassé')), this.REQUEST_TIMEOUT)
-          )
-        ]);
-        
-        return result;
-      } catch (error) {
-        // En cas d'erreur WebSocket, essayer de récupérer depuis le stockage persistant
-        console.error(`❌ [GameWebSocket] Erreur lors de la récupération de l'état du jeu ${gameId}:`, error);
-        
-        try {
-          const persistedState = await this.loadPersistedGameState(gameId);
-          if (persistedState) {
-            console.log(`💾 [GameWebSocket] État récupéré depuis le stockage persistant pour ${gameId}`);
-            return persistedState;
-          }
-        } catch (storageError) {
-          console.warn(`⚠️ [GameWebSocket] Erreur lors de la récupération depuis le stockage:`, storageError);
-        }
-        
-        console.warn(`⚠️ [GameWebSocket] Tentative de fallback API pour ${gameId}`);
-        throw error; // Laisser le service de niveau supérieur gérer le fallback
-      } finally {
-        // Nettoyer la requête en cours après un délai pour éviter les conditions de course
-        setTimeout(() => {
-          this.pendingRequests.delete(gameId);
-        }, 500);
-      }
+
+      const result = await promise;
+      return result;
     } catch (error) {
       console.error(`❌ [GameWebSocket] Erreur lors de la récupération via WebSocket:`, error);
       throw error;
     }
   }
-  
+
   /**
    * Persiste l'état du jeu dans AsyncStorage
    */
@@ -481,60 +415,50 @@ class GameWebSocketService {
    * Soumet une réponse à une question via WebSocket
    */
   async submitAnswer(gameId: string, questionId: string, content: string): Promise<boolean> {
-    try {
-      console.log(`📝 [GameWebSocket] Tentative de soumission de réponse pour la question ${questionId}`);
-      
-      // S'assurer que la connexion est établie
-      const connectionReady = await this.ensureSocketConnection(gameId);
-      if (!connectionReady) {
-        console.warn(`⚠️ [GameWebSocket] Connexion non établie, tentative de reconnexion...`);
-        await this.reconnect();
-        // Attendre un peu pour que la reconnexion prenne effet
-        await new Promise(resolve => setTimeout(resolve, 500));
-      }
-      
-      const socket = await SocketService.getInstanceAsync();
-      const userId = await UserIdManager.getUserId();
-      
-      return new Promise<boolean>(async (resolve) => {
-        // Définir un timeout plus court (3 secondes)
-        const timeoutId = setTimeout(() => {
-          console.warn('⚠️ Premier timeout détecté, tentative de récupération...');
-          this.attemptRecovery(gameId);
-        }, 3000);
-        
-        // Première tentative
-        socket.emit('game:submit_answer', { 
-          gameId, questionId, content, userId,
-          timestamp: Date.now()
-        }, (response: WebSocketResponse) => {
-          clearTimeout(timeoutId);
-          if (response && response.success) {
-            console.log(`✅ [GameWebSocket] Réponse soumise avec succès pour la question ${questionId}`);
-            resolve(true);
-          } else {
-            console.error(`❌ [GameWebSocket] Erreur lors de la soumission de la réponse:`, response?.error || 'Erreur inconnue');
-            resolve(false);
-          }
-        });
-      });
-    } catch (error) {
-      console.error(`❌ [GameWebSocket] Erreur lors de la soumission de la réponse:`, error);
-      return false;
-    }
-  }
+    const maxRetries = 3;
+    let attempt = 0;
 
-  /**
-   * Ajoute une méthode de récupération
-   */
-  private async attemptRecovery(gameId: string) {
-    try {
-      await this.reconnect();
-      await new Promise(resolve => setTimeout(resolve, 500));
-      await this.ensureSocketConnection(gameId);
-    } catch (error) {
-      console.error('❌ Échec de la récupération:', error);
+    while (attempt < maxRetries) {
+      try {
+        console.log(`📝 [GameWebSocket] Tentative de soumission ${attempt + 1}/${maxRetries}`);
+        
+        // S'assurer que la connexion est établie
+        await this.ensureSocketConnection(gameId);
+        const socket = await SocketService.getInstanceAsync();
+        const userId = await UserIdManager.getUserId();
+        
+        return new Promise<boolean>((resolve, reject) => {
+          const timeoutId = setTimeout(() => {
+            console.warn('⚠️ [GameWebSocket] Timeout détecté, nouvelle tentative...');
+            reject(new Error('Timeout'));
+          }, 8000);
+
+          socket.emit('game:submit_answer', {
+            gameId,
+            questionId,
+            content,
+            userId,
+            attempt,
+            timestamp: Date.now()
+          }, (response: any) => {
+            clearTimeout(timeoutId);
+            if (response?.success) {
+              resolve(true);
+            } else {
+              reject(new Error(response?.error || 'Erreur inconnue'));
+            }
+          });
+        });
+      } catch (error) {
+        attempt++;
+        if (attempt === maxRetries) {
+          throw error;
+        }
+        console.log(`🔄 [GameWebSocket] Nouvelle tentative dans ${attempt}s...`);
+        await new Promise(resolve => setTimeout(resolve, attempt * 1000));
+      }
     }
+    return false;
   }
 
   /**
@@ -618,49 +542,56 @@ class GameWebSocketService {
   }
 
   /**
+   * Obtient une instance socket valide
+   */
+  private async getSocket(): Promise<Socket> {
+    const socket = await SocketService.getInstanceAsync();
+    if (!socket.connected) {
+      throw new Error('Socket non connecté');
+    }
+    return socket;
+  }
+
+  /**
    * Passe au tour suivant via WebSocket
    */
-  async nextRound(gameId: string): Promise<boolean> {
-    try {
-      console.log(`🎮 [GameWebSocket] Passage au tour suivant pour le jeu ${gameId}...`);
-      
-      const socket = await SocketService.getInstanceAsync();
-      const userId = await UserIdManager.getUserId();
+  async nextRound(gameId: string, force: boolean = false): Promise<boolean> {
+    const maxRetries = 3;
+    let currentRetry = 0;
 
-      return new Promise<boolean>((resolve, reject) => {
-        // Attendre la confirmation du changement de phase
-        const phaseChangeHandler = (data: any) => {
-          if (data.type === 'phase_change' && data.phase !== 'results') {
-            socket.off('game:update', phaseChangeHandler);
-            resolve(true);
-          }
-        };
+    const attemptNextRound = async (): Promise<boolean> => {
+      try {
+        await this.ensureSocketConnection(gameId);
+        const socket = await SocketService.getInstanceAsync();
 
-        // Écouter les mises à jour de phase
-        socket.on('game:update', phaseChangeHandler);
+        return new Promise((resolve, reject) => {
+          const timeoutId = setTimeout(() => {
+            if (currentRetry < maxRetries - 1) {
+              currentRetry++;
+              console.log(`🔄 GameWebSocket: Nouvelle tentative ${currentRetry}/${maxRetries}...`);
+              attemptNextRound().then(resolve).catch(reject);
+            } else {
+              reject(new Error('Timeout final dépassé'));
+            }
+          }, 8000);
 
-        // Envoyer la commande avec timeout
-        const timeoutId = setTimeout(() => {
-          socket.off('game:update', phaseChangeHandler);
-          reject(new Error('Timeout lors du passage au tour suivant'));
-        }, 5000);
-
-        socket.emit('game:next_round', { 
-          gameId, 
-          userId,
-          timestamp: Date.now() 
-        }, (response: WebSocketResponse) => {
-          if (!response || !response.success) {
+          socket.emit('game:next_round', { gameId, forceAdvance: force }, (response: any) => {
             clearTimeout(timeoutId);
-            socket.off('game:update', phaseChangeHandler);
-            reject(new Error(response?.error || 'Erreur lors du passage au tour suivant'));
-          }
+            if (response?.success) {
+              resolve(true);
+            } else {
+              reject(new Error(response?.error || 'Erreur lors du passage au tour suivant'));
+            }
+          });
         });
-      });
-    } catch (error) {
-      console.error(`❌ [GameWebSocket] Erreur lors du passage au tour suivant:`, error);
-      throw error;
-    }
+      } catch (error) {
+        if (currentRetry >= maxRetries - 1) throw error;
+        await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, currentRetry)));
+        return attemptNextRound();
+      }
+    };
+
+    return attemptNextRound();
   }
 
   /**

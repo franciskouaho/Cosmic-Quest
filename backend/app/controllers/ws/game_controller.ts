@@ -270,9 +270,18 @@ export default class GamesController {
       const user = await auth.authenticate()
       const gameId = params.id
 
-      console.log(
-        `🎮 [submitAnswer] Tentative de soumission d'une réponse - User: ${user.id}, Game: ${gameId}`
-      )
+      console.log(`🎮 [submitAnswer] Réception réponse - User: ${user.id}, Game: ${gameId}`)
+
+      // Verrou Redis pour éviter les doublons
+      const lockKey = `answer:${gameId}:${user.id}`
+      const lockAcquired = await this.acquireLock(lockKey, 10)
+
+      if (!lockAcquired) {
+        console.log(`⚠️ [submitAnswer] Verrou actif pour User=${user.id}`)
+        return response.conflict({
+          error: 'Une soumission est déjà en cours',
+        })
+      }
 
       try {
         var payload = await request.validateUsing(answerValidator)
@@ -365,17 +374,20 @@ export default class GamesController {
       }
 
       try {
-        // Créer la réponse
-        console.log(
-          `🎮 [submitAnswer] Tentative de création de réponse pour User=${user.id}, Question=${question.id}`
-        )
-        const answer = await Answer.create({
-          questionId: question.id,
-          userId: user.id,
-          content: content,
-          votesCount: 0,
-          isSelected: false,
-        })
+        // Répondre plus rapidement au client
+        response.response.socket?.setTimeout(2000)
+
+        // Créer la réponse avec un timeout plus court
+        const answer = await Promise.race([
+          Answer.create({
+            questionId: question.id,
+            userId: user.id,
+            content: content,
+            votesCount: 0,
+            isSelected: false,
+          }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('DB Timeout')), 3000)),
+        ])
 
         console.log(`✅ [submitAnswer] Réponse créée avec succès: ID=${answer.id}`)
 
@@ -398,12 +410,14 @@ export default class GamesController {
 
         // Vérifier si tous les joueurs qui PEUVENT répondre ont répondu
         await this.checkAndProgressPhase(gameId, question.id)
-      } catch (dbError) {
-        console.error(`❌ [submitAnswer] Erreur lors de la création de la réponse:`, dbError)
-        return response.internalServerError({
-          error: "Erreur lors de l'enregistrement de votre réponse",
-          details: dbError.message,
+
+        // Notifier immédiatement le succès
+        return response.created({
+          status: 'success',
+          message: 'Réponse soumise avec succès',
         })
+      } finally {
+        await this.releaseLock(lockKey)
       }
     } catch (error) {
       console.error(
@@ -756,6 +770,9 @@ export default class GamesController {
             startTime: Date.now(),
           },
         })
+
+        // Démarrer la progression automatique
+        this.autoAdvanceGamePhase(game.id, 'results', resultsPhaseDuration)
       }
 
       return response.created({
@@ -1495,6 +1512,44 @@ export default class GamesController {
     return {
       duration,
       startTime,
+    }
+  }
+
+  /**
+   * Progression automatique des phases du jeu
+   */
+  private async autoAdvanceGamePhase(gameId: number, currentPhase: string, duration: number) {
+    try {
+      // Attendre la durée spécifiée
+      await new Promise((resolve) => setTimeout(resolve, duration * 1000))
+
+      const game = await Game.find(gameId)
+      if (!game || game.currentPhase !== currentPhase) {
+        return // Le jeu n'existe plus ou la phase a déjà changé
+      }
+
+      // Pour la phase results, passer automatiquement au tour suivant
+      if (currentPhase === 'results') {
+        console.log(`🔄 Progression automatique depuis la phase results pour le jeu ${gameId}`)
+
+        const room = await Room.find(game.roomId)
+        if (!room) return
+
+        // Simuler une requête de l'hôte pour passer au tour suivant
+        const mockContext = {
+          params: { id: gameId },
+          auth: {
+            authenticate: async () => ({ id: room.hostId }),
+          },
+          response: {
+            // ...existing code...
+          },
+        }
+
+        await this.nextRound(mockContext)
+      }
+    } catch (error) {
+      console.error(`❌ Erreur lors de la progression automatique:`, error)
     }
   }
 }

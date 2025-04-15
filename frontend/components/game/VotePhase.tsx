@@ -68,7 +68,10 @@ const VotePhase: React.FC<VotePhaseProps> = ({
 
       <View style={styles.targetMessageContainer}>
         <Text style={styles.targetMessage}>
-          Cette question vous concerne. Choisissez votre réponse préférée!
+          Cette question vous concerne. Vous devez choisir votre réponse préférée!
+        </Text>
+        <Text style={styles.targetMessageHighlight}>
+          Si vous ne votez pas, le jeu passera automatiquement au tour suivant.
         </Text>
       </View>
       
@@ -213,6 +216,13 @@ const styles = StyleSheet.create({
     fontSize: 16,
     textAlign: 'center',
     marginBottom: 8,
+  },
+  targetMessageHighlight: {
+    color: '#ffcc00',
+    fontSize: 14,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    marginTop: 8,
   },
   messageContainer: {
     flex: 1,

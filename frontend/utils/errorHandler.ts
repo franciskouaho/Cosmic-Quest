@@ -48,8 +48,6 @@ export const handleWebSocketError = async (
   context: string,
   callback?: () => Promise<void>
 ): Promise<boolean> => {
-  // Journalisation avec contexte
-  console.error(`❌ Erreur WebSocket (${context}):`, error);
   
   // Déterminer si c'est une erreur de timeout
   const isTimeout = error.message?.includes('timeout') || error.message?.includes('timed out');
@@ -81,10 +79,14 @@ export const handleWebSocketError = async (
         
         // Exécuter le callback si fourni
         if (callback) {
+          console.log('🔄 Tentative d\'exécution de l\'opération initiale...');
           await callback();
+          return true;
         }
-        
-        return true;
+      } else {
+        console.log('⚠️ Échec de l\'optimisation WebSocket, utilisation du mode REST');
+        // Ici nous pourrions basculer sur une stratégie HTTP REST
+        return false;
       }
     }
     
@@ -120,7 +122,7 @@ export const handleWebSocketError = async (
     
     return false;
   } catch (handlerError) {
-    console.error('❌ Erreur dans le gestionnaire d\'erreurs WebSocket:', handlerError);
+    console.error('❌ Erreur dans le gestionnaire d\'erreurs:', handlerError);
     return false;
   }
 };

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator, Alert } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Answer, Player, Question } from '@/types/gameTypes';
@@ -117,34 +117,38 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
   }, [gameId, answers, isSynchronizing]);
   
   const handleNextRound = useCallback(() => {
-    if (isButtonDisabled || !canProceed || isSynchronizing) {
-      return;
-    }
+    if (isButtonDisabled || !canProceed || isSynchronizing) return;
     
     setIsButtonDisabled(true);
     setIsSynchronizing(true);
     
-    // Forcer un délai minimal avant de permettre une nouvelle tentative
-    const minDelay = new Promise(resolve => setTimeout(resolve, 1500));
-    
     try {
-      console.log("🎮 Tentative de passage au tour suivant...");
+      console.log("🎮 ResultsPhase: Tentative de passage au tour suivant...");
       
-      // Exécuter les deux promesses en parallèle
-      Promise.all([onNextRound(), minDelay]).then(() => {
-        console.log("✅ Passage au tour suivant initié avec succès");
+      // Réduire le délai minimal et augmenter le timeout
+      const minDelay = new Promise(resolve => setTimeout(resolve, 500));
+      
+      Promise.race([
+        Promise.all([onNextRound(), minDelay]),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Timeout dépassé')), 12000)
+        )
+      ]).then(() => {
+        console.log("✅ ResultsPhase: Passage au tour suivant initié");
       }).catch((error) => {
-        console.error("❌ Erreur lors du passage au tour suivant:", error);
-        setIsButtonDisabled(false);
+        console.error("❌ ResultsPhase: Erreur:", error);
+        Alert.alert(
+          "Erreur",
+          "Le passage au tour suivant a échoué. Nous réessayons automatiquement.",
+          [{ text: "OK" }]
+        );
       }).finally(() => {
-        // Réactiver le bouton après un délai plus long pour éviter les clics multiples
         setTimeout(() => {
           setIsButtonDisabled(false);
           setIsSynchronizing(false);
-        }, 3000);
+        }, 1000);
       });
     } catch (error) {
-      console.error("❌ Erreur lors du passage au tour suivant:", error);
       setIsButtonDisabled(false);
       setIsSynchronizing(false);
     }

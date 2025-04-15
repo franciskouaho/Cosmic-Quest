@@ -1,74 +1,113 @@
 import { createClient } from 'redis'
 import env from '#start/env'
 
-class RedisConnection {
-  private static instance: RedisConnection | null = null
-  private client: any | null = null
-  private pubClient: any | null = null
-  private subClient: any | null = null
+class RedisProvider {
+  private static instance: RedisProvider | null = null
+  private mainClient: any = null
+  private pubClient: any = null
+  private subClient: any = null
+  private isConnecting: boolean = false
+  private reconnectAttempts: number = 0
+  private readonly MAX_RECONNECT_ATTEMPTS = 5
 
   private constructor() {
     const options = {
       url: `redis://${env.get('REDIS_HOST')}:${env.get('REDIS_PORT')}`,
       password: env.get('REDIS_PASSWORD', ''),
       retryStrategy: (times: number) => {
-        const delay = Math.min(times * 50, 2000)
-        console.log(`🔄 Redis: Tentative de reconnexion dans ${delay}ms`)
-        return delay
+        if (times > this.MAX_RECONNECT_ATTEMPTS) return null
+        return Math.min(times * 1000, 3000)
       },
     }
 
-    this.client = createClient(options)
-    this.pubClient = createClient(options)
-    this.subClient = createClient(options)
+    this.initializeClients(options)
+  }
 
-    // Gestion des erreurs
-    ;[this.client, this.pubClient, this.subClient].forEach((client) => {
-      client.on('error', (err: Error) => console.error('Redis Error:', err))
-      client.on('ready', () => console.log('✅ Redis connecté'))
-      client.on('reconnecting', () => console.log('🔄 Redis: Reconnexion...'))
+  private initializeClients(options: any) {
+    this.mainClient = createClient(options)
+    this.pubClient = this.mainClient.duplicate()
+    this.subClient = this.mainClient.duplicate()
+    ;[this.mainClient, this.pubClient, this.subClient].forEach((client) => {
+      client.on('error', this.handleError.bind(this))
+      client.on('connect', this.handleConnect.bind(this))
+      client.on('ready', this.handleReady.bind(this))
+      client.on('reconnecting', this.handleReconnecting.bind(this))
     })
   }
 
-  public static getInstance(): RedisConnection {
-    if (!RedisConnection.instance) {
-      RedisConnection.instance = new RedisConnection()
+  private handleError(err: Error) {
+    console.error('❌ Redis Error:', err)
+    if (!this.isConnecting) this.reconnect()
+  }
+
+  private handleConnect() {
+    console.log('🔌 Redis connecté')
+    this.reconnectAttempts = 0
+  }
+
+  private handleReady() {
+    console.log('✅ Redis prêt')
+    this.isConnecting = false
+  }
+
+  private handleReconnecting() {
+    console.log('🔄 Redis: Tentative de reconnexion...')
+    this.isConnecting = true
+    this.reconnectAttempts++
+  }
+
+  private async reconnect() {
+    if (this.isConnecting) return
+    this.isConnecting = true
+
+    try {
+      await Promise.all([
+        this.mainClient?.disconnect(),
+        this.pubClient?.disconnect(),
+        this.subClient?.disconnect(),
+      ])
+      await this.connect()
+    } catch (error) {
+      console.error('❌ Erreur lors de la reconnexion Redis:', error)
+      this.isConnecting = false
     }
-    return RedisConnection.instance
+  }
+
+  public static getInstance(): RedisProvider {
+    if (!RedisProvider.instance) {
+      RedisProvider.instance = new RedisProvider()
+    }
+    return RedisProvider.instance
   }
 
   public async connect() {
+    if (this.isConnecting) return
+
     try {
-      await Promise.all([this.client.connect(), this.pubClient.connect(), this.subClient.connect()])
+      this.isConnecting = true
+      await Promise.all([
+        this.mainClient.connect(),
+        this.pubClient.connect(),
+        this.subClient.connect(),
+      ])
+      console.log('✅ Redis connecté avec succès')
     } catch (error) {
       console.error('❌ Erreur de connexion Redis:', error)
       throw error
+    } finally {
+      this.isConnecting = false
     }
   }
 
   public getClient() {
-    return this.client
+    return this.mainClient
   }
-
   public getPubClient() {
     return this.pubClient
   }
-
   public getSubClient() {
     return this.subClient
   }
-
-  public async disconnect() {
-    try {
-      await Promise.all([
-        this.client?.disconnect(),
-        this.pubClient?.disconnect(),
-        this.subClient?.disconnect(),
-      ])
-    } catch (error) {
-      console.error('❌ Erreur lors de la déconnexion Redis:', error)
-    }
-  }
 }
 
-export default RedisConnection.getInstance()
+export default RedisProvider.getInstance()

@@ -73,11 +73,22 @@ export class SocketService {
         maxHttpBufferSize: 1e8, // 100 MB
       })
 
-      // Configurer l'adaptateur Redis
+      // S'assurer que Redis est connecté avant de configurer l'adaptateur
       const pubClient = redisProvider.getPubClient()
       const subClient = redisProvider.getSubClient()
 
+      if (!pubClient.isOpen || !subClient.isOpen) {
+        throw new Error('Redis clients not connected')
+      }
+
       this.io.adapter(createAdapter(pubClient, subClient))
+
+      // Ajouter une gestion d'erreur pour l'adaptateur
+      this.io.of('/').adapter.on('error', (error) => {
+        console.error('❌ Erreur adaptateur Redis:', error)
+        // Tenter de reconnecter l'adaptateur
+        this.reconnectAdapter()
+      })
 
       console.log('⚡ Initialisation du service WebSocket...')
 
@@ -540,6 +551,20 @@ export class SocketService {
     } catch (error) {
       console.error("❌ Erreur lors de l'initialisation du serveur WebSocket:", error)
       throw error
+    }
+  }
+
+  private async reconnectAdapter() {
+    try {
+      const pubClient = redisProvider.getPubClient()
+      const subClient = redisProvider.getSubClient()
+
+      await Promise.all([pubClient.connect(), subClient.connect()])
+
+      this.io?.adapter(createAdapter(pubClient, subClient))
+      console.log('✅ Adaptateur Redis reconnecté')
+    } catch (error) {
+      console.error('❌ Erreur reconnexion adaptateur:', error)
     }
   }
 
