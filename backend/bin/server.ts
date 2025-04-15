@@ -13,6 +13,7 @@ import 'reflect-metadata'
 import http from 'node:http'
 import socketService from '#services/socket_service'
 import { Ignitor, prettyPrintError } from '@adonisjs/core'
+import redisProvider from '#providers/redis_provider'
 
 /**
  * URL to the application root. AdonisJS need it to resolve
@@ -35,16 +36,31 @@ new Ignitor(APP_ROOT, { importer: IMPORTER })
   .tap((app) => {
     app.booting(async () => {
       await import('#start/env')
+
+      // Initialiser Redis
+      try {
+        await redisProvider.connect()
+      } catch (error) {
+        console.error('❌ Erreur de connexion Redis:', error)
+        process.exit(1)
+      }
     })
-    app.listen('SIGTERM', () => app.terminate())
-    app.listenIf(app.managedByPm2, 'SIGINT', () => app.terminate())
+
+    app.listen('SIGTERM', async () => {
+      await redisProvider.disconnect()
+      app.terminate()
+    })
+
+    app.listenIf(app.managedByPm2, 'SIGINT', async () => {
+      await redisProvider.disconnect()
+      app.terminate()
+    })
   })
   .httpServer()
   .start((handler) => {
     const httpServer = http.createServer(handler)
 
     try {
-      // Initialisation unique de Socket.IO
       socketService.init(httpServer)
       console.log('💬 Service WebSocket initialisé')
     } catch (error) {

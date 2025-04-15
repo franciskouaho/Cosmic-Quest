@@ -392,6 +392,33 @@ class GameDebugger {
       return false;
     }
   }
+
+  /**
+   * Journaliser les transitions de phase
+   */
+  static async logPhaseTransition(
+    gameId: string,
+    serverPhase: string,
+    effectivePhase: string,
+    context: any
+  ): Promise<void> {
+    try {
+      const issue = {
+        type: 'phase_transition',
+        gameId,
+        serverPhase,
+        effectivePhase,
+        context,
+        timestamp: new Date().toISOString()
+      };
+      
+      console.log(`🔍 [GameDebugger] Phase transition:`, issue);
+      
+      await this.logIssue('state', 'phase_transition', issue);
+    } catch (error) {
+      console.error(`❌ [GameDebugger] Erreur de log de transition:`, error);
+    }
+  }
 }
 
 export default GameDebugger;

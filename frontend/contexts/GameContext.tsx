@@ -145,16 +145,25 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
         : null;
 
-      // Utiliser PhaseManager pour déterminer la phase effective
+      // Utiliser PhaseManager pour déterminer la phase effective avec plus de logs
       const effectivePhase = PhaseManager.determineEffectivePhase(
         gameData.game.currentPhase,
-        gameData.currentUserState?.isTargetPlayer || false,
-        gameData.currentUserState?.hasAnswered || false,
-        gameData.currentUserState?.hasVoted || false
+        Boolean(gameData.currentUserState?.isTargetPlayer),
+        Boolean(gameData.currentUserState?.hasAnswered),
+        Boolean(gameData.currentUserState?.hasVoted)
       );
+
+      console.log(`🔄 [GameContext] Transition de phase:
+        - Phase serveur: ${gameData.game.currentPhase}
+        - Phase effective: ${effectivePhase}
+        - isTarget: ${Boolean(gameData.currentUserState?.isTargetPlayer)}
+        - hasAnswered: ${Boolean(gameData.currentUserState?.hasAnswered)}
+        - hasVoted: ${Boolean(gameData.currentUserState?.hasVoted)}
+      `);
 
       const updatedGameState = {
         ...gameState,
+        phase: effectivePhase,
         currentRound: gameData.game.currentRound || 1,
         totalRounds: gameData.game.totalRounds || 5,
         targetPlayer: targetPlayer,
@@ -171,7 +180,6 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           isTargetPlayer: Boolean(gameData.currentUserState?.isTargetPlayer),
         },
         game: gameData.game,
-        phase: effectivePhase,
       };
 
       setGameState(updatedGameState);

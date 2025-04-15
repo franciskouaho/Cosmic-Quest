@@ -13,6 +13,16 @@ class GameService {
   private readonly MAX_SOCKET_FAILS = 3;
   private readonly SOCKET_RESET_INTERVAL = 60000; // 1 minute
 
+  // Liste des phases valides du jeu
+  private readonly VALID_PHASES = ['question', 'answer', 'vote', 'results', 'waiting'] as const;
+  private readonly PHASE_TRANSITIONS = {
+    'question': ['answer'],
+    'answer': ['vote', 'waiting'],
+    'vote': ['results'],
+    'results': ['question'],
+    'waiting': ['question', 'answer', 'vote']
+  };
+
   constructor() {
     // Vérifier périodiquement si on peut réactiver le socket
     setInterval(() => {
@@ -21,6 +31,20 @@ class GameService {
         this.socketEnabled = true;
       }
     }, this.SOCKET_RESET_INTERVAL);
+  }
+
+  // Vérifier si une phase est valide
+  private isValidPhase(phase: string): boolean {
+    return this.VALID_PHASES.includes(phase as any);
+  }
+
+  // Vérifier si une transition de phase est valide
+  private isValidTransition(from: string, to: string): boolean {
+    if (!this.isValidPhase(from) || !this.isValidPhase(to)) {
+      console.error(`❌ Phase invalide détectée: ${from} -> ${to}`);
+      return false;
+    }
+    return this.PHASE_TRANSITIONS[from]?.includes(to) || false;
   }
 
   // Récupérer l'état actuel du jeu, priorité au WebSocket
@@ -75,6 +99,26 @@ class GameService {
             if (gameData.currentUserState && gameData.currentUserState.isTargetPlayer !== isReallyTarget) {
               console.log(`🔧 Correction d'incohérence isTargetPlayer: ${gameData.currentUserState.isTargetPlayer} => ${isReallyTarget}`);
               gameData.currentUserState.isTargetPlayer = isReallyTarget;
+            }
+          }
+          
+          // Validation de la phase reçue
+          if (gameData && gameData.game && gameData.game.currentPhase) {
+            const currentPhase = gameData.game.currentPhase;
+            
+            if (!this.isValidPhase(currentPhase)) {
+              console.error(`❌ Phase invalide reçue du serveur: ${currentPhase}`);
+              gameData.game.currentPhase = 'question'; // Fallback à la phase par défaut
+            }
+            
+            // Mise à jour du cache avec validation
+            if (this.gameStateCache.has(gameId)) {
+              const previousState = this.gameStateCache.get(gameId).state;
+              const previousPhase = previousState.game.currentPhase;
+              
+              if (!this.isValidTransition(previousPhase, currentPhase)) {
+                console.warn(`⚠️ Transition de phase invalide: ${previousPhase} -> ${currentPhase}`);
+              }
             }
           }
           
@@ -169,6 +213,26 @@ class GameService {
           ...answer,
           isOwnAnswer: String(answer.playerId) === userIdStr || answer.isOwnAnswer
         }));
+      }
+      
+      // Validation de la phase reçue
+      if (gameData && gameData.game && gameData.game.currentPhase) {
+        const currentPhase = gameData.game.currentPhase;
+        
+        if (!this.isValidPhase(currentPhase)) {
+          console.error(`❌ Phase invalide reçue du serveur: ${currentPhase}`);
+          gameData.game.currentPhase = 'question'; // Fallback à la phase par défaut
+        }
+        
+        // Mise à jour du cache avec validation
+        if (this.gameStateCache.has(gameId)) {
+          const previousState = this.gameStateCache.get(gameId).state;
+          const previousPhase = previousState.game.currentPhase;
+          
+          if (!this.isValidTransition(previousPhase, currentPhase)) {
+            console.warn(`⚠️ Transition de phase invalide: ${previousPhase} -> ${currentPhase}`);
+          }
+        }
       }
       
       // Mettre en cache l'état du jeu récupéré via REST API
@@ -338,61 +402,38 @@ class GameService {
     try {
       console.log(`🎮 Tentative de passage au tour suivant pour le jeu ${gameId}`);
       
+      this.gameStateCache.delete(gameId); // Invalider le cache
+      
       // S'assurer que la connexion WebSocket est active
-      const socketConnected = await this.ensureSocketConnection(gameId);
+      await this.ensureSocketConnection(gameId);
       
-      if (!socketConnected) {
-        console.warn("⚠️ Socket non connecté avant nextRound, tentative de connexion...");
-        await this.resetWebSocketConnection();
-        await new Promise(resolve => setTimeout(resolve, 800)); // Attente pour établir la connexion
-      }
+      // Augmenter le délai d'attente
+      const TIMEOUT = 15000; // 15 secondes
+      const startTime = Date.now();
       
-      try {
-        // Utiliser notre nouvelle méthode WebSocket avec plusieurs tentatives
-        let success = false;
-        let attempts = 0;
-        
-        while (!success && attempts < 3) {
-          try {
-            attempts++;
-            console.log(`🎮 Tentative ${attempts}/3 de passage au tour suivant via WebSocket`);
-            await GameWebSocketService.nextRound(gameId);
-            success = true;
-          } catch (attemptError) {
-            if (attempts >= 3) throw attemptError;
-            await new Promise(resolve => setTimeout(resolve, 1000)); // Attente entre les tentatives
-          }
+      // Fonction pour vérifier le changement de phase
+      const verifyPhaseChange = async () => {
+        const state = await this.getGameState(gameId, 0, 1, true);
+        return {
+          changed: state.game.currentPhase !== 'results',
+          newPhase: state.game.currentPhase
+        };
+      };
+
+      // Envoyer la commande de passage au tour suivant
+      await GameWebSocketService.nextRound(gameId);
+
+      // Attendre le changement de phase avec timeout
+      while (Date.now() - startTime < TIMEOUT) {
+        const { changed, newPhase } = await verifyPhaseChange();
+        if (changed) {
+          console.log(`✅ Phase changée avec succès vers: ${newPhase}`);
+          return { success: true, phase: newPhase };
         }
-        
-        console.log(`✅ Commande de passage au tour suivant envoyée avec succès pour ${gameId}`);
-        
-        // Invalider le cache pour forcer une mise à jour
-        this.gameStateCache.delete(gameId);
-        
-        return { success: true };
-      } catch (wsError) {
-        // Si l'erreur est liée au statut d'hôte, on la gère spécialement
-        if (wsError.message && wsError.message.includes("l'hôte")) {
-          console.warn(`⚠️ Accès refusé: l'utilisateur n'est pas l'hôte`);
-          throw wsError; // On fait remonter cette erreur spécifique
-        }
-        
-        // Pour les autres erreurs, on peut essayer une approche différente
-        console.warn(`⚠️ Erreur WebSocket, tentative via API REST: ${wsError.message}`);
-        
-        // Fallback vers l'API REST si possible
-        const url = `/games/${gameId}/next-round`;
-        const response = await api.post(url);
-        
-        if (response.data && response.data.status === 'success') {
-          // Invalider le cache pour forcer une mise à jour
-          this.gameStateCache.delete(gameId);
-          
-          return { success: true };
-        } else {
-          throw new Error('Échec du passage au tour suivant via API REST');
-        }
+        await new Promise(resolve => setTimeout(resolve, 1000));
       }
+
+      throw new Error('Timeout lors du passage au tour suivant');
     } catch (error) {
       console.error(`❌ Échec du passage au tour suivant:`, error);
       throw error;

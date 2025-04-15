@@ -1,9 +1,53 @@
 import env from '#start/env'
 import { Server } from 'socket.io'
+import { createAdapter } from '@socket.io/redis-adapter'
 import type { Server as HttpServer } from 'node:http'
+import redisProvider from '#providers/redis_provider'
 
 export class SocketService {
   private io: Server | null = null
+
+  // Méthodes pour la gestion des locks Redis
+  private async acquireLock(key: string, ttl: number = 30): Promise<boolean> {
+    try {
+      const result = await redisProvider.getClient().set(key, Date.now().toString(), {
+        NX: true,
+        EX: ttl,
+      })
+      return result === 'OK'
+    } catch (error) {
+      console.error("❌ Erreur lors de l'acquisition du lock:", error)
+      return false
+    }
+  }
+
+  private async releaseLock(key: string): Promise<void> {
+    try {
+      await redisProvider.getClient().del(key)
+    } catch (error) {
+      console.error('❌ Erreur lors de la libération du lock:', error)
+    }
+  }
+
+  // Méthode utilitaire pour gérer un lock avec un timeout
+  public async withLock<T>(
+    key: string,
+    callback: () => Promise<T>,
+    ttl: number = 30
+  ): Promise<T | null> {
+    const lockAcquired = await this.acquireLock(key, ttl)
+
+    if (!lockAcquired) {
+      console.warn(`⚠️ Impossible d'acquérir le lock pour ${key}`)
+      return null
+    }
+
+    try {
+      return await callback()
+    } finally {
+      await this.releaseLock(key)
+    }
+  }
 
   init(httpServer: HttpServer) {
     if (this.io) {
@@ -28,6 +72,12 @@ export class SocketService {
         reconnectionDelay: 1000,
         maxHttpBufferSize: 1e8, // 100 MB
       })
+
+      // Configurer l'adaptateur Redis
+      const pubClient = redisProvider.getPubClient()
+      const subClient = redisProvider.getSubClient()
+
+      this.io.adapter(createAdapter(pubClient, subClient))
 
       console.log('⚡ Initialisation du service WebSocket...')
 

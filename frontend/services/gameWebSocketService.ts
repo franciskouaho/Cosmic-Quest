@@ -624,75 +624,36 @@ class GameWebSocketService {
     try {
       console.log(`🎮 [GameWebSocket] Passage au tour suivant pour le jeu ${gameId}...`);
       
-      // S'assurer que la connexion est établie
-      const connectionReady = await this.ensureSocketConnection(gameId);
-      if (!connectionReady) {
-        console.warn(`⚠️ [GameWebSocket] Connexion non établie, tentative de reconnexion...`);
-        await this.reconnect();
-        // Attendre un peu pour que la reconnexion prenne effet
-        await new Promise(resolve => setTimeout(resolve, 500));
-      }
-      
       const socket = await SocketService.getInstanceAsync();
       const userId = await UserIdManager.getUserId();
-      
-      return new Promise<boolean>(async (resolve, reject) => {
-        // Timeout initial plus court (5 secondes)
-        const timeoutId = setTimeout(async () => {
-          console.warn(`⚠️ [GameWebSocket] Timeout initial détecté lors du passage au tour suivant, tentative de retry...`);
-          
-          try {
-            // S'assurer que le socket est toujours connecté
-            if (!socket.connected) {
-              await this.reconnect();
-              await new Promise(resolve => setTimeout(resolve, 500));
-            }
-            
-            // Nouvelle tentative avec timeout plus court
-            const secondAttemptTimeoutId = setTimeout(() => {
-              console.error(`❌ [GameWebSocket] Second timeout détecté, échec du passage au tour suivant`);
-              reject(new Error("Timeout lors du passage au tour suivant"));
-            }, 5000);
-            
-            socket.emit('game:next_round', { 
-              gameId, 
-              userId, 
-              retry: true,
-              timestamp: Date.now() 
-            }, (response: WebSocketResponse) => {
-              clearTimeout(secondAttemptTimeoutId);
-              
-              if (response && response.success) {
-                console.log(`✅ [GameWebSocket] Passage au tour suivant réussi après retry`);
-                resolve(true);
-              } else {
-                console.error(`❌ [GameWebSocket] Échec après retry:`, response?.error || 'Erreur inconnue');
-                reject(new Error(response?.error || 'Échec du passage au tour suivant'));
-              }
-            });
-          } catch (retryError) {
-            console.error(`❌ [GameWebSocket] Erreur lors du retry:`, retryError);
-            reject(retryError);
+
+      return new Promise<boolean>((resolve, reject) => {
+        // Attendre la confirmation du changement de phase
+        const phaseChangeHandler = (data: any) => {
+          if (data.type === 'phase_change' && data.phase !== 'results') {
+            socket.off('game:update', phaseChangeHandler);
+            resolve(true);
           }
+        };
+
+        // Écouter les mises à jour de phase
+        socket.on('game:update', phaseChangeHandler);
+
+        // Envoyer la commande avec timeout
+        const timeoutId = setTimeout(() => {
+          socket.off('game:update', phaseChangeHandler);
+          reject(new Error('Timeout lors du passage au tour suivant'));
         }, 5000);
-        
-        // Première tentative
+
         socket.emit('game:next_round', { 
           gameId, 
           userId,
           timestamp: Date.now() 
         }, (response: WebSocketResponse) => {
-          clearTimeout(timeoutId);
-          
-          if (response && response.success) {
-            console.log(`✅ [GameWebSocket] Passage au tour suivant réussi pour le jeu ${gameId}`);
-            resolve(true);
-          } else if (response) {
-            console.error(`❌ [GameWebSocket] Erreur lors du passage au tour suivant:`, response.error || 'Erreur inconnue');
-            reject(new Error(response.error || 'Erreur lors du passage au tour suivant'));
-          } else {
-            // Si pas de réponse, laisser le timeout se déclencher pour le retry
-            console.warn(`⚠️ [GameWebSocket] Pas de réponse pour le passage au tour suivant`);
+          if (!response || !response.success) {
+            clearTimeout(timeoutId);
+            socket.off('game:update', phaseChangeHandler);
+            reject(new Error(response?.error || 'Erreur lors du passage au tour suivant'));
           }
         });
       });

@@ -7,22 +7,45 @@ export class PhaseManager {
     hasAnswered: boolean,
     hasVoted: boolean
   ): GamePhase {
+    console.log(`📊 [PhaseManager] Détermination de la phase effective:
+      - Phase serveur: ${serverPhase}
+      - isTarget: ${isTargetPlayer}
+      - hasAnswered: ${hasAnswered}
+      - hasVoted: ${hasVoted}
+    `);
+
     switch (serverPhase) {
       case 'question':
-        return isTargetPlayer ? GamePhase.WAITING : GamePhase.QUESTION;
+        if (isTargetPlayer) {
+          console.log('🎯 Cible détectée: passage en phase WAITING');
+          return GamePhase.WAITING;
+        }
+        return GamePhase.QUESTION;
         
       case 'answer':
-        if (isTargetPlayer) return GamePhase.WAITING;
-        return hasAnswered ? GamePhase.WAITING : GamePhase.ANSWER;
+        if (isTargetPlayer) {
+          console.log('🎯 Cible détectée en phase réponse: passage en WAITING');
+          return GamePhase.WAITING;
+        }
+        if (hasAnswered) {
+          console.log('✅ Réponse déjà donnée: passage en WAITING');
+          return GamePhase.WAITING;
+        }
+        return GamePhase.ANSWER;
         
       case 'vote':
-        if (isTargetPlayer && !hasVoted) return GamePhase.VOTE;
+        if (isTargetPlayer && !hasVoted) {
+          console.log('🎯 Cible doit voter: passage en VOTE');
+          return GamePhase.VOTE;
+        }
+        console.log('⏳ Attente des votes: passage en WAITING_FOR_VOTE');
         return GamePhase.WAITING_FOR_VOTE;
         
       case 'results':
         return GamePhase.RESULTS;
         
       default:
+        console.warn(`⚠️ Phase serveur inconnue: ${serverPhase}, utilisation de WAITING`);
         return GamePhase.WAITING;
     }
   }

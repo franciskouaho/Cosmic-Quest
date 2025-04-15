@@ -118,34 +118,35 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
   
   const handleNextRound = useCallback(() => {
     if (isButtonDisabled || !canProceed || isSynchronizing) {
-      return; // Ajout d'un return pour éviter l'exécution si désactivé
+      return;
     }
     
-    // Désactiver le bouton immédiatement pour éviter les clics multiples
     setIsButtonDisabled(true);
     setIsSynchronizing(true);
     
-    console.log("⏱️ Passage au tour suivant...");
+    // Forcer un délai minimal avant de permettre une nouvelle tentative
+    const minDelay = new Promise(resolve => setTimeout(resolve, 1500));
     
     try {
       console.log("🎮 Tentative de passage au tour suivant...");
       
-      // Important de déléguer à onNextRound pour que le parent puisse gérer l'action
-      onNextRound();
-      
-      // Ajouter un délai pour empêcher les clics multiples
-      setTimeout(() => {
+      // Exécuter les deux promesses en parallèle
+      Promise.all([onNextRound(), minDelay]).then(() => {
+        console.log("✅ Passage au tour suivant initié avec succès");
+      }).catch((error) => {
+        console.error("❌ Erreur lors du passage au tour suivant:", error);
         setIsButtonDisabled(false);
-        setIsSynchronizing(false);
-      }, 3000);
+      }).finally(() => {
+        // Réactiver le bouton après un délai plus long pour éviter les clics multiples
+        setTimeout(() => {
+          setIsButtonDisabled(false);
+          setIsSynchronizing(false);
+        }, 3000);
+      });
     } catch (error) {
       console.error("❌ Erreur lors du passage au tour suivant:", error);
-      
-      // Réactiver le bouton après un délai plus court en cas d'erreur
-      setTimeout(() => {
-        setIsButtonDisabled(false);
-        setIsSynchronizing(false);
-      }, 1500);
+      setIsButtonDisabled(false);
+      setIsSynchronizing(false);
     }
   }, [onNextRound, isButtonDisabled, canProceed, isSynchronizing]);
 

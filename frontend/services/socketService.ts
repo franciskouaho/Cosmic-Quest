@@ -750,25 +750,50 @@ class SocketService {
     try {
       console.log(`🎮 SocketService: Demande de passage au tour suivant pour ${gameId} (force=${force})`);
       
-      // S'assurer que la connexion est établie
       const socket = await this.getInstanceAsync();
 
-      // Envoyer l'événement de passage au tour suivant
+      // Envoyer l'événement de passage au tour suivant avec confirmation
       return new Promise<boolean>((resolve, reject) => {
-        socket.emit('game:next_round', { gameId, forceAdvance: force }, (response: any) => {
+        let responded = false;
+
+        // Fonction pour vérifier la progression de phase
+        const checkPhaseChange = async () => {
+          try {
+            const gameState = await this.emit('game:get_state', { gameId });
+            return gameState.game.currentPhase !== 'results';
+          } catch {
+            return false;
+          }
+        };
+
+        socket.emit('game:next_round', { gameId, forceAdvance: force }, async (response: any) => {
+          if (responded) return;
+          responded = true;
+
           if (response && response.success) {
-            console.log(`✅ SocketService: Passage au tour suivant réussi`);
-            resolve(true);
+            // Vérifier le changement effectif de phase
+            let phaseChanged = false;
+            for (let i = 0; i < 3; i++) {
+              await new Promise(resolve => setTimeout(resolve, 500));
+              phaseChanged = await checkPhaseChange();
+              if (phaseChanged) break;
+            }
+
+            if (phaseChanged) {
+              console.log(`✅ SocketService: Passage au tour suivant confirmé`);
+              resolve(true);
+            } else {
+              reject(new Error('Phase non mise à jour après plusieurs tentatives'));
+            }
           } else {
-            const errorMessage = response?.error || 'Échec du passage au tour suivant';
-            console.error(`❌ SocketService: Échec du passage au tour suivant: ${errorMessage}`);
-            reject(new Error(errorMessage));
+            reject(new Error(response?.error || 'Échec du passage au tour suivant'));
           }
         });
 
-        // En cas d'absence de réponse, échouer après un délai
         setTimeout(() => {
-          reject(new Error('Pas de réponse du serveur pour le passage au tour suivant'));
+          if (!responded) {
+            reject(new Error('Pas de réponse du serveur pour le passage au tour suivant'));
+          }
         }, 5000);
       });
     } catch (error) {

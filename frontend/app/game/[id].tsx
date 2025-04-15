@@ -124,50 +124,42 @@ export default function GameScreen() {
       }
 
       // Déterminer la phase effective en fonction de l'état du jeu et du joueur
-      const determineEffectivePhase = (() => {
-        const serverPhase = gameData.game.currentPhase;
-        const isTarget = isTargetPlayer;
-        const hasAnswered = gameData.currentUserState?.hasAnswered || false;
-        const hasVoted = gameData.currentUserState?.hasVoted || false;
-
+      const determineEffectivePhase = (serverPhase: string, isTarget: boolean, hasAnswered: boolean, hasVoted: boolean): GamePhase => {
         console.log(`🎮 Détermination phase - Serveur: ${serverPhase}, isTarget: ${isTarget}, hasAnswered: ${hasAnswered}, hasVoted: ${hasVoted}`);
-
+      
         switch (serverPhase) {
           case 'question':
-            // Si c'est la phase question, la personne ciblée ne doit pas pouvoir répondre
-            if (isTarget) {
-              return GamePhase.WAITING;
-            }
-            return GamePhase.QUESTION;
-
+            return isTarget ? GamePhase.WAITING : GamePhase.QUESTION;
+      
           case 'answer':
-            // Si c'est la phase de réponse, seuls les autres joueurs peuvent répondre
-            if (isTarget) {
-              return GamePhase.WAITING;
-            }
+            if (isTarget) return GamePhase.WAITING;
             return hasAnswered ? GamePhase.WAITING : GamePhase.ANSWER;
-
+      
           case 'vote':
-            // Seule la personne ciblée peut voter
-            if (isTarget && !hasVoted) {
-              return GamePhase.VOTE;
-            }
+            if (isTarget && !hasVoted) return GamePhase.VOTE;
             return GamePhase.WAITING_FOR_VOTE;
-
+      
           case 'results':
             return GamePhase.RESULTS;
-
+      
           default:
             return GamePhase.WAITING;
         }
-      })();
+      };
+
+      const effectivePhase = determineEffectivePhase(
+        gameData.game.currentPhase,
+        isTargetPlayer,
+        gameData.currentUserState?.hasAnswered || false,
+        gameData.currentUserState?.hasVoted || false
+      );
 
       // Afficher un log détaillé pour le débogage
-      console.log(`🎮 Phase serveur: ${gameData.game.currentPhase}, Phase UI: ${determineEffectivePhase}, isTarget: ${isTargetPlayer}, hasVoted: ${gameData.currentUserState?.hasVoted}`);
+      console.log(`🎮 Phase serveur: ${gameData.game.currentPhase}, Phase UI: ${effectivePhase}, isTarget: ${isTargetPlayer}, hasVoted: ${gameData.currentUserState?.hasVoted}`);
       
       // Construction du nouvel état du jeu
       const newGameState: GameState = {
-        phase: determineEffectivePhase,
+        phase: effectivePhase,
         currentRound: gameData.game.currentRound || 1,
         totalRounds: gameData.game.totalRounds || 5,
         targetPlayer: targetPlayer,
