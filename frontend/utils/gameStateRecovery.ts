@@ -1,122 +1,200 @@
-/**
- * Utilitaire pour récupérer des états de jeu problématiques
- */
-import SocketService from "@/services/socketService";
-import api from "@/config/axios";
-import UserIdManager from "./userIdManager";
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import SocketService from '@/services/socketService';
+import api from '@/config/axios';
+import UserIdManager from './userIdManager';
 
-export class GameStateRecovery {
+/**
+ * Utilitaire pour récupérer l'état d'un jeu bloqué ou inaccessible
+ */
+class GameStateRecovery {
   /**
-   * Tente de récupérer un état de jeu défaillant
+   * Récupère un état minimal pour un jeu qui génère des erreurs persistantes
    * @param gameId ID du jeu à récupérer
+   * @returns Un état minimal permettant à l'interface de fonctionner
    */
-  static async recoverFromPersistentError(gameId: string): Promise<boolean> {
-    console.log(`🔄 [GameStateRecovery] Tentative de récupération pour le jeu ${gameId}`);
+  static async recoverFromPersistentError(gameId: string): Promise<any> {
+    console.log(`🔄 [GameStateRecovery] Tentative de récupération pour le jeu ${gameId}...`);
+    
     try {
-      // 1. Tenter de récupérer via le socket
-      const socketRecovery = await this.recoverViaSocket(gameId);
+      // 1. Essayer d'abord de récupérer depuis le stockage local
+      const persistedState = await this.getPersistedState(gameId);
+      if (persistedState) {
+        console.log(`💾 [GameStateRecovery] État récupéré depuis le stockage local`);
+        return {
+          ...persistedState,
+          recovered: true
+        };
+      }
       
-      if (socketRecovery) {
-        console.log(`✅ [GameStateRecovery] Récupération via socket réussie`);
+      // 2. Essayer via l'API de récupération d'urgence
+      try {
+        const userId = await UserIdManager.getUserId();
+        
+        // Ajouter un header spécial pour indiquer le mode de récupération
+        const headers = { 'X-Recovery-Mode': 'true' };
+        if (userId) headers['userId'] = String(userId);
+        
+        const response = await api.get(`/games/${gameId}`, { headers });
+        
+        if (response.data?.data) {
+          console.log(`✅ [GameStateRecovery] État récupéré via l'API d'urgence`);
+          
+          // Stocker l'état récupéré pour les futurs problèmes
+          this.persistState(gameId, response.data.data);
+          
+          return {
+            ...response.data.data,
+            recovered: true
+          };
+        }
+      } catch (apiError) {
+        console.error(`❌ [GameStateRecovery] Échec de l'API de récupération:`, apiError);
+      }
+      
+      // 3. Dernière chance: créer un état synthétique minimal
+      console.log(`⚠️ [GameStateRecovery] Création d'un état minimal pour ${gameId}`);
+      
+      // Récupérer les données minimales dont on pourrait avoir besoin
+      const minimalState = await this.createMinimalState(gameId);
+      
+      return {
+        ...minimalState,
+        recovered: true,
+        minimal: true
+      };
+    } catch (error) {
+      console.error(`❌ [GameStateRecovery] Échec de la récupération:`, error);
+      
+      // État absolument minimal en cas d'échec complet
+      return {
+        game: {
+          id: gameId,
+          currentRound: 1,
+          totalRounds: 5,
+          currentPhase: 'question',
+          scores: {}
+        },
+        players: [],
+        answers: [],
+        currentQuestion: null,
+        recovered: true,
+        minimal: true,
+        failed: true
+      };
+    }
+  }
+  
+  /**
+   * Tente de forcer la récupération d'un jeu via le serveur
+   */
+  static async forceGameRecovery(gameId: string): Promise<boolean> {
+    try {
+      console.log(`🔄 [GameStateRecovery] Demande de récupération forcée pour ${gameId}...`);
+      
+      // 1. Essayer via l'API de récupération
+      const userId = await UserIdManager.getUserId();
+      const response = await api.post(`/games/${gameId}/recover-state`, { userId });
+      
+      if (response.data?.status === 'success') {
+        console.log(`✅ [GameStateRecovery] Récupération serveur réussie`);
         return true;
       }
       
-      // 2. Si échec, tenter via API REST
-      const apiRecovery = await this.recoverViaAPI(gameId);
-      
-      if (apiRecovery) {
-        console.log(`✅ [GameStateRecovery] Récupération via API réussie`);
-        return true;
-      }
-      
-      console.log(`⚠️ [GameStateRecovery] Échec de la récupération`);
       return false;
     } catch (error) {
-      console.error(`❌ [GameStateRecovery] Erreur lors de la récupération:`, error);
+      console.error(`❌ [GameStateRecovery] Échec de la récupération forcée:`, error);
       return false;
     }
   }
   
   /**
-   * Tente de récupérer l'état via un reset du socket
+   * Force la progression d'un jeu bloqué
    */
-  static async recoverViaSocket(gameId: string): Promise<boolean> {
-    console.log(`🔄 [GameStateRecovery] Tentative de récupération via WebSocket pour le jeu ${gameId}`);
+  static async forceGameProgress(gameId: string): Promise<boolean> {
     try {
-      // Initialiser la connexion WebSocket si nécessaire
-      await SocketService.getInstanceAsync();
+      console.log(`🔄 [GameStateRecovery] Tentative de déblocage pour ${gameId}...`);
       
-      // Rejoindre le canal de jeu si nécessaire
-      const socketDiagnostic = SocketService.diagnose();
-      const isInGameChannel = socketDiagnostic.details?.currentGame === gameId || 
-                             (socketDiagnostic.details?.activeGames && 
-                              Array.isArray(socketDiagnostic.details.activeGames) && 
-                              socketDiagnostic.details.activeGames.includes(gameId));
+      // 1. Forcer une vérification de phase
+      const socket = await SocketService.getInstanceAsync();
       
-      if (!isInGameChannel) {
-        console.log(`🔄 [GameStateRecovery] Tentative de rejoindre le canal de jeu ${gameId}`);
-        await SocketService.joinGameChannel(gameId);
-      }
+      socket.emit('game:force_check', { gameId });
+      console.log(`📤 [GameStateRecovery] Signal de vérification forcée envoyé`);
       
-      // Forcer une vérification de phase
-      console.log(`🔄 [GameStateRecovery] Forçage d'une vérification de phase pour le jeu ${gameId}`);
-      await SocketService.forcePhaseCheck(gameId);
+      // 2. Attendre un peu
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      // 3. Essayer de forcer le passage au tour suivant si c'est un cas de blocage
+      socket.emit('game:next_round', { 
+        gameId,
+        forceAdvance: true,
+        timestamp: Date.now()
+      });
+      console.log(`📤 [GameStateRecovery] Signal de forçage de tour suivant envoyé`);
       
       return true;
     } catch (error) {
-      console.error(`❌ [GameStateRecovery] Échec de la récupération via WebSocket:`, error);
+      console.error(`❌ [GameStateRecovery] Échec du forçage de progression:`, error);
       return false;
     }
   }
   
   /**
-   * Tente de récupérer l'état via un appel API direct
+   * Récupère un état de jeu persisté localement
    */
-  static async recoverViaAPI(gameId: string): Promise<boolean> {
-    console.log(`🔄 [GameStateRecovery] Tentative de récupération via API pour le jeu ${gameId}`);
+  private static async getPersistedState(gameId: string): Promise<any | null> {
     try {
-      // Obtenir l'ID utilisateur
-      const userId = await UserIdManager.getUserId();
-      if (!userId) {
-        console.warn(`⚠️ [GameStateRecovery] ID utilisateur non disponible`);
-        return false;
+      const savedState = await AsyncStorage.getItem(`game_state_${gameId}`);
+      if (savedState) {
+        const parsed = JSON.parse(savedState);
+        
+        // Si l'état date de moins de 5 minutes, le considérer comme valide pour la récupération
+        if (Date.now() - parsed.timestamp < 5 * 60 * 1000) {
+          return parsed.state;
+        }
       }
-      
-      // Appeler l'API de récupération
-      const response = await api.post(`/games/${gameId}/recover`, {
-        userId,
-        timestamp: Date.now()
-      });
-      
-      return response.data?.success === true;
+      return null;
     } catch (error) {
-      console.error(`❌ [GameStateRecovery] Échec de la récupération via API:`, error);
-      return false;
+      console.warn(`⚠️ [GameStateRecovery] Erreur lors de la récupération de l'état persisté:`, error);
+      return null;
     }
   }
   
   /**
-   * Fournit un état minimal en cas d'échec total
-   * @param gameState État original (peut être null)
-   * @param userId ID de l'utilisateur actuel
+   * Persiste un état de jeu localement
    */
-  static sanitizeGameState(gameState: any, userId: string | null): any {
-    // Créer un état minimal en cas d'erreur majeure pour éviter un crash complet
+  private static async persistState(gameId: string, state: any): Promise<void> {
+    try {
+      await AsyncStorage.setItem(
+        `game_state_${gameId}`, 
+        JSON.stringify({
+          state,
+          timestamp: Date.now()
+        })
+      );
+    } catch (error) {
+      console.warn(`⚠️ [GameStateRecovery] Erreur lors de la persistence de l'état:`, error);
+    }
+  }
+  
+  /**
+   * Crée un état minimal à partir des données disponibles
+   */
+  private static async createMinimalState(gameId: string): Promise<any> {
+    // Essayer de récupérer des morceaux d'informations depuis le stockage
+    const userId = await UserIdManager.getUserId();
+    
+    // État minimal par défaut
     return {
-      recovered: true,
       game: {
-        id: gameState?.game?.id || 0,
-        currentRound: gameState?.game?.currentRound || 1,
-        totalRounds: gameState?.game?.totalRounds || 5,
-        currentPhase: 'waiting',
-        status: 'in_progress',
-        roomId: gameState?.game?.roomId || 0,
-        gameMode: gameState?.game?.gameMode || 'standard',
-        scores: gameState?.game?.scores || {}
+        id: gameId,
+        currentRound: 1,
+        totalRounds: 5,
+        currentPhase: 'loading', // Commencer en phase loading pour forcer une actualisation
+        scores: {}
       },
+      players: [],
       currentQuestion: null,
       answers: [],
-      players: gameState?.players || [],
       currentUserState: {
         hasAnswered: false,
         hasVoted: false,

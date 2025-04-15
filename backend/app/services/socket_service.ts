@@ -114,509 +114,6 @@ export class SocketService {
           }
         })
 
-        // Nouveau gestionnaire pour forcer la vérification de phase
-        socket.on('game:force_check', async (data) => {
-          try {
-            const gameId = data.gameId
-            console.log(`🔄 [WebSocket] Demande de vérification forcée pour le jeu ${gameId}`)
-
-            // Importer le contrôleur de jeu de manière dynamique
-            const GameController = (await import('#controllers/ws/game_controller')).default
-            const controller = new GameController()
-
-            // Récupérer les données nécessaires
-            const game = await Game.find(gameId)
-            if (!game) {
-              console.error(`❌ [WebSocket] Jeu non trouvé: ${gameId}`)
-              return
-            }
-
-            // Récupérer la question actuelle
-            const question = await Question.query()
-              .where('game_id', gameId)
-              .where('round_number', game.currentRound)
-              .first()
-
-            if (!question) {
-              console.error(`❌ [WebSocket] Question non trouvée pour le jeu ${gameId}`)
-              return
-            }
-
-            // Utiliser la méthode du contrôleur pour vérifier et faire progresser la phase
-            const success = await controller.checkAndProgressPhase(gameId, question.id)
-
-            console.log(
-              `${success ? '✅' : 'ℹ️'} [WebSocket] Vérification forcée ${success ? 'a mis à jour' : "n'a pas modifié"} la phase`
-            )
-          } catch (error) {
-            console.error('❌ [WebSocket] Erreur lors de la vérification forcée:', error)
-          }
-        })
-
-        // Nouveau gestionnaire pour la soumission de réponses
-        socket.on('game:submit_answer', async (data, callback) => {
-          try {
-            console.log(`🎮 [WebSocket] Réception d'une réponse via WebSocket:`, data)
-
-            // Extraire les données
-            const { gameId, questionId, content } = data
-
-            // Vérifier que toutes les données nécessaires sont présentes
-            if (!gameId || !questionId || !content) {
-              console.error(`❌ [WebSocket] Données manquantes pour la soumission de réponse`)
-              if (typeof callback === 'function') {
-                callback({
-                  success: false,
-                  error: 'Données incomplètes pour la soumission de la réponse',
-                })
-              }
-              return
-            }
-
-            // Récupérer l'ID utilisateur depuis les informations de session
-            const userId = socket.handshake.auth?.userId || socket.handshake.headers?.userId
-
-            if (!userId) {
-              console.error(`❌ [WebSocket] ID utilisateur manquant pour la soumission de réponse`)
-              if (typeof callback === 'function') {
-                callback({
-                  success: false,
-                  error: 'ID utilisateur manquant',
-                })
-              }
-              return
-            }
-
-            // Récupérer le jeu et la question
-            const Game = (await import('#models/game')).default
-            const Question = (await import('#models/question')).default
-            const Answer = (await import('#models/answer')).default
-
-            // Vérifier que le jeu existe
-            const game = await Game.find(gameId)
-            if (!game) {
-              console.error(`❌ [WebSocket] Jeu non trouvé: ${gameId}`)
-              if (typeof callback === 'function') {
-                callback({
-                  success: false,
-                  error: 'Jeu non trouvé',
-                })
-              }
-              return
-            }
-
-            // Vérifier que la question existe
-            const question = await Question.query()
-              .where('id', questionId)
-              .where('game_id', gameId)
-              .first()
-
-            if (!question) {
-              console.error(`❌ [WebSocket] Question non trouvée: ${questionId}`)
-              if (typeof callback === 'function') {
-                callback({
-                  success: false,
-                  error: 'Question non trouvée',
-                })
-              }
-              return
-            }
-
-            // Vérifier que l'utilisateur n'est pas la cible
-            if (question.targetPlayerId === Number(userId)) {
-              console.error(`❌ [WebSocket] L'utilisateur est la cible: ${userId}`)
-              if (typeof callback === 'function') {
-                callback({
-                  success: false,
-                  error: 'Vous êtes la cible de cette question et ne pouvez pas y répondre',
-                  code: 'TARGET_PLAYER_CANNOT_ANSWER',
-                })
-              }
-              return
-            }
-
-            // Vérifier que l'utilisateur n'a pas déjà répondu
-            const existingAnswer = await Answer.query()
-              .where('question_id', questionId)
-              .where('user_id', userId)
-              .first()
-
-            if (existingAnswer) {
-              console.error(`❌ [WebSocket] L'utilisateur a déjà répondu: ${userId}`)
-              if (typeof callback === 'function') {
-                callback({
-                  success: false,
-                  error: 'Vous avez déjà répondu à cette question',
-                })
-              }
-              return
-            }
-
-            try {
-              // Créer la réponse avec un objet bien formé
-              const answer = await Answer.create({
-                questionId: Number(questionId),
-                userId: Number(userId),
-                content: String(content).trim(),
-                votesCount: 0,
-                isSelected: false,
-              })
-
-              console.log(`✅ [WebSocket] Réponse créée avec succès: ID=${answer.id}`)
-
-              // Envoyer une confirmation directe à l'émetteur
-              if (typeof callback === 'function') {
-                callback({
-                  success: true,
-                  answerId: answer.id,
-                })
-              }
-
-              // Récupérer les informations utilisateur
-              const User = (await import('#models/user')).default
-              const user = await User.find(userId)
-
-              // Notifier tous les joueurs de la nouvelle réponse
-              this.io.to(`game:${gameId}`).emit('game:update', {
-                type: 'new_answer',
-                answer: {
-                  id: answer.id,
-                  content: answer.content,
-                  playerId: userId,
-                  playerName: user ? user.displayName || user.username : 'Joueur',
-                },
-              })
-
-              // Envoyer également une confirmation spécifique
-              socket.emit('answer:confirmation', {
-                success: true,
-                questionId,
-                answerId: answer.id,
-              })
-
-              // Vérifier si toutes les réponses ont été soumises pour avancer la phase
-              const GameController = (await import('#controllers/ws/game_controller')).default
-              const controller = new GameController()
-              await controller.checkAndProgressPhase(gameId, questionId)
-            } catch (createError) {
-              console.error(`❌ [WebSocket] Erreur lors de la création de la réponse:`, createError)
-
-              // Log plus détaillé pour mieux comprendre le problème
-              console.error(`🔎 Détails de l'erreur:`, {
-                message: createError.message,
-                stack: createError.stack,
-                data: { questionId, userId, content },
-              })
-
-              if (typeof callback === 'function') {
-                callback({
-                  success: false,
-                  error: 'Erreur lors de la création de la réponse: ' + createError.message,
-                })
-              }
-            }
-          } catch (error) {
-            console.error(`❌ [WebSocket] Erreur lors de la soumission de réponse:`, error)
-            if (typeof callback === 'function') {
-              callback({
-                success: false,
-                error: 'Erreur lors de la soumission de la réponse',
-              })
-            }
-          }
-        })
-
-        // Nouveau gestionnaire pour la soumission de votes
-        socket.on('game:submit_vote', async (data, callback) => {
-          try {
-            console.log(`🗳️ [WebSocket] Réception d'un vote via WebSocket:`, data)
-
-            // Extraire les données
-            const { gameId, answerId, questionId } = data
-
-            // Vérifier que toutes les données nécessaires sont présentes
-            if (!gameId || !answerId || !questionId) {
-              console.error(`❌ [WebSocket] Données manquantes pour la soumission de vote`)
-              if (typeof callback === 'function') {
-                callback({
-                  success: false,
-                  error: 'Données incomplètes pour la soumission du vote',
-                })
-              }
-              return
-            }
-
-            // Récupérer l'ID utilisateur depuis les informations de session
-            const userId = socket.handshake.auth?.userId || socket.handshake.headers?.userId
-
-            if (!userId) {
-              console.error(`❌ [WebSocket] ID utilisateur manquant pour la soumission de vote`)
-              if (typeof callback === 'function') {
-                callback({
-                  success: false,
-                  error: 'ID utilisateur manquant',
-                })
-              }
-              return
-            }
-
-            // Importer dynamiquement les modèles pour éviter les dépendances circulaires
-            const Game = (await import('#models/game')).default
-            const Question = (await import('#models/question')).default
-            const Answer = (await import('#models/answer')).default
-            const Vote = (await import('#models/vote')).default
-
-            // Vérifier que le jeu existe
-            const game = await Game.find(gameId)
-            if (!game) {
-              console.error(`❌ [WebSocket] Jeu non trouvé: ${gameId}`)
-              if (typeof callback === 'function') {
-                callback({
-                  success: false,
-                  error: 'Jeu non trouvé',
-                })
-              }
-              return
-            }
-
-            // Vérifier que la question existe
-            const question = await Question.query()
-              .where('id', questionId)
-              .where('game_id', gameId)
-              .first()
-
-            if (!question) {
-              console.error(`❌ [WebSocket] Question non trouvée: ${questionId}`)
-              if (typeof callback === 'function') {
-                callback({
-                  success: false,
-                  error: 'Question non trouvée',
-                })
-              }
-              return
-            }
-
-            // Vérifier que la réponse existe
-            const answer = await Answer.query()
-              .where('id', answerId)
-              .where('question_id', question.id)
-              .first()
-
-            if (!answer) {
-              console.error(`❌ [WebSocket] Réponse non trouvée: ${answerId}`)
-              if (typeof callback === 'function') {
-                callback({
-                  success: false,
-                  error: 'Réponse non trouvée',
-                })
-              }
-              return
-            }
-
-            // Vérifier que l'utilisateur ne vote pas pour sa propre réponse
-            if (answer.userId === Number(userId)) {
-              console.error(
-                `❌ [WebSocket] L'utilisateur ${userId} a tenté de voter pour sa propre réponse`
-              )
-              if (typeof callback === 'function') {
-                callback({
-                  success: false,
-                  error: 'Vous ne pouvez pas voter pour votre propre réponse',
-                })
-              }
-              return
-            }
-
-            // Vérifier que l'utilisateur n'a pas déjà voté
-            const existingVote = await Vote.query()
-              .where('question_id', question.id)
-              .where('voter_id', userId)
-              .first()
-
-            if (existingVote) {
-              console.error(
-                `❌ [WebSocket] L'utilisateur ${userId} a déjà voté pour cette question`
-              )
-              if (typeof callback === 'function') {
-                callback({
-                  success: false,
-                  error: 'Vous avez déjà voté pour cette question',
-                })
-              }
-              return
-            }
-
-            try {
-              // Créer le vote
-              const vote = await Vote.create({
-                questionId: Number(questionId),
-                voterId: Number(userId),
-                answerId: Number(answerId),
-              })
-
-              console.log(`✅ [WebSocket] Vote créé avec succès: ID=${vote.id}`)
-
-              // Incrémenter le compteur de votes sur la réponse
-              answer.votesCount = (answer.votesCount || 0) + 1
-              await answer.save()
-
-              // Envoyer une confirmation directe à l'émetteur
-              if (typeof callback === 'function') {
-                callback({
-                  success: true,
-                  voteId: vote.id,
-                })
-              }
-
-              // Notifier tous les joueurs du nouveau vote
-              this.io.to(`game:${gameId}`).emit('game:update', {
-                type: 'new_vote',
-                vote: {
-                  voterId: userId,
-                  answerId: answerId,
-                },
-              })
-
-              // Envoyer également une confirmation spécifique
-              socket.emit('vote:confirmation', {
-                success: true,
-                questionId,
-                voteId: vote.id,
-              })
-
-              // Importer le contrôleur de jeu pour vérifier la progression de phase
-              const GameController = (await import('#controllers/ws/game_controller')).default
-              const controller = new GameController()
-
-              // Vérifier si tous les joueurs qui peuvent voter l'ont fait
-              const room = await (await import('#models/room')).default.find(game.roomId)
-              const players = await room.related('players').query()
-              const targetPlayer = players.find((p) => p.id === question.targetPlayerId)
-
-              if (targetPlayer) {
-                // Dans une partie standard, seule la cible vote
-                // Si c'est le joueur cible qui a voté, c'est suffisant pour passer à la phase suivante
-                if (Number(userId) === targetPlayer.id) {
-                  console.log(`✅ [WebSocket] Le joueur ciblé a voté, passage en phase résultats`)
-
-                  // Passer à la phase de résultats
-                  game.currentPhase = 'results'
-                  await game.save()
-
-                  // Calculer les points et mettre à jour les scores
-                  await controller.calculateAndUpdateScores(question.id, game)
-
-                  // Notifier tous les joueurs du changement de phase
-                  this.io.to(`game:${gameId}`).emit('game:update', {
-                    type: 'phase_change',
-                    phase: 'results',
-                    scores: game.scores,
-                  })
-                }
-              }
-            } catch (voteError) {
-              console.error(`❌ [WebSocket] Erreur lors de la création du vote:`, voteError)
-
-              if (typeof callback === 'function') {
-                callback({
-                  success: false,
-                  error: 'Erreur lors de la création du vote: ' + voteError.message,
-                })
-              }
-            }
-          } catch (error) {
-            console.error(`❌ [WebSocket] Erreur lors de la soumission de vote:`, error)
-            if (typeof callback === 'function') {
-              callback({
-                success: false,
-                error: 'Erreur lors de la soumission du vote',
-              })
-            }
-          }
-        })
-
-        // Nouveau gestionnaire pour vérifier si on peut passer au tour suivant
-        socket.on('game:check_phase', async (data, callback) => {
-          try {
-            console.log(
-              `🔍 [WebSocket] Vérification de la possibilité de passer au tour suivant pour le jeu ${data.gameId}`
-            )
-
-            // Récupérer le jeu
-            const Game = (await import('#models/game')).default
-            const game = await Game.find(data.gameId)
-
-            if (!game) {
-              if (typeof callback === 'function') {
-                callback({
-                  success: false,
-                  error: 'Jeu non trouvé',
-                  canAdvance: false,
-                })
-              }
-              return
-            }
-
-            // Récupérer la question actuelle
-            const Question = (await import('#models/question')).default
-            const Vote = (await import('#models/vote')).default
-
-            const question = await Question.query()
-              .where('game_id', data.gameId)
-              .where('round_number', game.currentRound)
-              .first()
-
-            if (!question) {
-              if (typeof callback === 'function') {
-                callback({
-                  success: false,
-                  error: 'Question non trouvée',
-                  canAdvance: false,
-                  currentPhase: game.currentPhase,
-                })
-              }
-              return
-            }
-
-            // Vérifier la phase actuelle
-            const validPhases = ['results', 'vote']
-            const isValidPhase = validPhases.includes(game.currentPhase)
-
-            // Si nous sommes en phase vote, vérifier s'il y a eu des votes
-            let hasVotes = true
-            if (game.currentPhase === 'vote') {
-              const votes = await Vote.query().where('question_id', question.id)
-              hasVotes = votes.length > 0
-            }
-
-            // On peut avancer si on est en phase résultats OU en phase vote avec des votes
-            const canAdvance =
-              game.currentPhase === 'results' || (game.currentPhase === 'vote' && hasVotes)
-
-            console.log(
-              `🔍 [WebSocket] Statut d'avancement: ${canAdvance ? 'peut avancer' : 'ne peut pas avancer'} (phase: ${game.currentPhase}, votes: ${hasVotes})`
-            )
-
-            if (typeof callback === 'function') {
-              callback({
-                success: true,
-                canAdvance,
-                currentPhase: game.currentPhase,
-                hasVotes,
-              })
-            }
-          } catch (error) {
-            console.error(`❌ [WebSocket] Erreur lors de la vérification de phase:`, error)
-            if (typeof callback === 'function') {
-              callback({
-                success: false,
-                error: 'Erreur lors de la vérification',
-                canAdvance: false,
-              })
-            }
-          }
-        })
-
         // Nouveau gestionnaire pour le passage au tour suivant via WebSocket
         socket.on('game:next_round', async (data, callback) => {
           try {
@@ -628,7 +125,8 @@ export class SocketService {
             const userId =
               socket.handshake.auth?.userId ||
               socket.handshake.headers?.userId ||
-              socket.handshake.query?.userId
+              socket.handshake.query?.userId ||
+              data.userId // Ajout de data.userId comme source
 
             if (!userId) {
               console.error(
@@ -711,7 +209,7 @@ export class SocketService {
 
             // Vérifier que nous sommes dans une phase valide
             const validPhases = ['results', 'vote']
-            if (!validPhases.includes(game.currentPhase)) {
+            if (!validPhases.includes(game.currentPhase) && !data.forceAdvance) {
               console.error(
                 `❌ [WebSocket] Phase incorrecte pour le passage au tour suivant: ${game.currentPhase}`
               )
@@ -789,27 +287,95 @@ export class SocketService {
               })
             }
 
-            // Tenter le passage au tour suivant
-            if (game.currentRound >= game.totalRounds) {
-              // C'est la fin du jeu
-              // ...existing code...
-            } else {
-              // Passage au tour suivant
-              // ...existing code...
+            try {
+              // Tenter le passage au tour suivant directement via le contrôleur
+              console.log(
+                `🚀 [WebSocket] Exécution de nextRound via le contrôleur pour ${data.gameId}`
+              )
 
-              // Confirmer spécifiquement l'action next_round à tout le monde
-              socket.emit('next_round:confirmation', {
-                success: true,
-                message: 'Nouveau tour démarré',
-                gameId: data.gameId,
-                round: game.currentRound,
+              // Créer un contexte minimal pour appeler la méthode du contrôleur
+              const mockContext = {
+                params: { id: data.gameId },
+                auth: {
+                  authenticate: async () => ({ id: userId }),
+                },
+                response: {
+                  ok: (data) => {
+                    console.log(`✅ [WebSocket] nextRound exécuté avec succès:`, data)
+
+                    // Confirmer spécifiquement l'action next_round à tout le monde
+                    socket.emit('next_round:confirmation', {
+                      success: true,
+                      message: data.message || 'Nouveau tour démarré',
+                      gameId: data.gameId,
+                      round: game.currentRound + 1,
+                      data: data.data,
+                    })
+
+                    this.io.to(`game:${data.gameId}`).emit('game:update', {
+                      type: 'phase_change',
+                      phase: 'question', // Phase par défaut au début d'un tour
+                      round: game.currentRound + 1,
+                      message: 'Nouveau tour commencé',
+                    })
+
+                    return data
+                  },
+                  notFound: (data) => {
+                    console.error(`❌ [WebSocket] Ressource non trouvée:`, data)
+                    socket.emit('next_round:error', {
+                      success: false,
+                      error: 'Ressource non trouvée',
+                    })
+                    return data
+                  },
+                  forbidden: (data) => {
+                    console.error(`❌ [WebSocket] Accès interdit:`, data)
+                    socket.emit('next_round:error', {
+                      success: false,
+                      error: data.error || 'Accès interdit',
+                    })
+                    return data
+                  },
+                  badRequest: (data) => {
+                    console.error(`❌ [WebSocket] Requête invalide:`, data)
+                    socket.emit('next_round:error', {
+                      success: false,
+                      error: data.error || 'Requête invalide',
+                    })
+                    return data
+                  },
+                  internalServerError: (data) => {
+                    console.error(`❌ [WebSocket] Erreur serveur:`, data)
+                    socket.emit('next_round:error', {
+                      success: false,
+                      error: data.error || 'Erreur serveur',
+                    })
+                    return data
+                  },
+                },
+              }
+
+              // Appeler directement la méthode du contrôleur avec notre contexte
+              await controller.nextRound(mockContext)
+
+              console.log(`✅ [WebSocket] Traitement nextRound terminé pour ${data.gameId}`)
+            } catch (controllerError) {
+              console.error(`❌ [WebSocket] Erreur lors de l'appel au contrôleur:`, controllerError)
+              socket.emit('next_round:error', {
+                success: false,
+                error: controllerError.message || 'Erreur lors du passage au tour suivant',
               })
-
-              // ...existing code...
             }
           } catch (error) {
             console.error(`❌ [WebSocket] Erreur lors du passage au tour suivant:`, error)
-            if (typeof callback === 'function') {
+            socket.emit('next_round:error', {
+              success: false,
+              error: error.message || 'Une erreur est survenue lors du passage au tour suivant',
+            })
+
+            if (typeof callback === 'function' && !callback.called) {
+              callback.called = true
               callback({
                 success: false,
                 error: 'Une erreur est survenue lors du passage au tour suivant',
@@ -818,122 +384,72 @@ export class SocketService {
           }
         })
 
-        // Nouveau gestionnaire pour vérifier si l'utilisateur est l'hôte d'un jeu
-        socket.on('game:check_host', async (data, callback) => {
+        // Gestionnaire pour récupérer l'état du jeu
+        socket.on('game:get_state', async (data, callback) => {
           try {
-            const { gameId, userId } = data
-
-            if (!gameId || !userId) {
-              if (typeof callback === 'function') {
-                callback({
-                  success: false,
-                  error: 'Données incomplètes',
-                  isHost: false,
-                })
-              }
-              return
-            }
-
             console.log(
-              `👑 [WebSocket] Vérification si l'utilisateur ${userId} est l'hôte du jeu ${gameId}`
+              `🎮 [WebSocket] Demande d'état du jeu ${data.gameId} par ${data.userId || 'utilisateur inconnu'}`
             )
 
-            // Récupérer les modèles nécessaires
-            const Game = (await import('#models/game')).default
-            const Room = (await import('#models/room')).default
+            // Récupérer l'ID utilisateur depuis l'authentification avec fallbacks multiples
+            const userId =
+              socket.handshake.auth?.userId ||
+              socket.handshake.headers?.userId ||
+              socket.handshake.query?.userId ||
+              data.userId
 
-            // Récupérer le jeu
-            const game = await Game.find(gameId)
-            if (!game) {
-              console.log(`❌ [WebSocket] Jeu ${gameId} non trouvé`)
+            if (!userId) {
+              console.error(
+                `❌ [WebSocket] ID utilisateur non fourni pour la récupération d'état de jeu`
+              )
               if (typeof callback === 'function') {
                 callback({
                   success: false,
-                  error: 'Jeu non trouvé',
-                  isHost: false,
+                  error: 'ID utilisateur non fourni',
                 })
               }
               return
             }
 
-            // Si le jeu a un hostId direct, l'utiliser
-            if (game.hostId) {
-              const isHost = String(game.hostId) === String(userId)
-              console.log(`👑 [WebSocket] Vérification via hostId du jeu: ${isHost}`)
+            // Importer le contrôleur de jeu
+            const GameController = (await import('#controllers/ws/game_controller')).default
+            const controller = new GameController()
 
+            try {
+              // Récupérer l'état du jeu via la méthode du contrôleur
+              const gameState = await controller.getGameState(data.gameId, userId)
+
+              console.log(
+                `✅ [WebSocket] État du jeu ${data.gameId} récupéré avec succès pour ${userId}`
+              )
+
+              // Retourner les données au client
               if (typeof callback === 'function') {
                 callback({
                   success: true,
-                  isHost,
-                  hostId: String(game.hostId),
-                  source: 'game',
+                  data: gameState,
                 })
               }
-              return
-            }
+            } catch (controllerError) {
+              console.error(
+                `❌ [WebSocket] Erreur lors de la récupération de l'état du jeu:`,
+                controllerError
+              )
 
-            // Sinon vérifier via la salle
-            if (game.roomId) {
-              try {
-                const room = await Room.find(game.roomId)
-                if (room) {
-                  const isHost = String(room.hostId) === String(userId)
-                  console.log(`👑 [WebSocket] Vérification via hostId de la salle: ${isHost}`)
-
-                  if (typeof callback === 'function') {
-                    callback({
-                      success: true,
-                      isHost,
-                      hostId: String(room.hostId),
-                      source: 'room',
-                    })
-                  }
-                  return
-                }
-              } catch (roomError) {
-                console.warn(
-                  `⚠️ [WebSocket] Erreur lors de la récupération de la salle: ${roomError.message}`
-                )
-
-                // Si la salle n'existe plus, gérer cette situation spéciale
-                if (
-                  roomError.code === 'E_ROW_NOT_FOUND' ||
-                  roomError.message.includes('not found')
-                ) {
-                  // Si la salle n'existe plus, on peut utiliser les informations du jeu
-                  // pour déterminer quel joueur était l'hôte initialement
-                  console.log(`⚠️ [WebSocket] Salle non trouvée, tentative via le logger du jeu`)
-
-                  // On pourrait récupérer cette information depuis un log ou une table spécifique
-                  // Pour l'instant, on renvoie un résultat négatif
-                  if (typeof callback === 'function') {
-                    callback({
-                      success: false,
-                      error: 'Salle non trouvée',
-                      isHost: false,
-                      roomDeleted: true,
-                    })
-                  }
-                  return
-                }
+              if (typeof callback === 'function') {
+                callback({
+                  success: false,
+                  error:
+                    controllerError.message || "Erreur lors de la récupération de l'état du jeu",
+                })
               }
             }
-
-            // Si tout échoue
-            if (typeof callback === 'function') {
-              callback({
-                success: false,
-                error: "Impossible de déterminer l'hôte",
-                isHost: false,
-              })
-            }
           } catch (error) {
-            console.error(`❌ [WebSocket] Erreur lors de la vérification d'hôte:`, error)
+            console.error(`❌ [WebSocket] Erreur lors du traitement de game:get_state:`, error)
             if (typeof callback === 'function') {
               callback({
                 success: false,
-                error: 'Erreur serveur',
-                isHost: false,
+                error: "Une erreur est survenue lors de la récupération de l'état du jeu",
               })
             }
           }

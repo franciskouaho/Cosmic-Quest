@@ -1244,4 +1244,213 @@ export default class GamesController {
       return false
     }
   }
+
+  /**
+   * Méthode pour récupérer l'état complet du jeu via WebSocket
+   * Cette méthode est appelée par le service socket pour le handler 'game:get_state'
+   */
+  public async getGameState(gameId: string | number, userId?: string | number) {
+    try {
+      console.log(
+        `🎮 [getGameState] Récupération de l'état du jeu ${gameId} pour l'utilisateur ${userId || 'anonyme'}`
+      )
+
+      // Récupérer le jeu
+      const game = await Game.find(gameId)
+      if (!game) {
+        throw new Error('Partie non trouvée')
+      }
+
+      // Récupérer la salle et les joueurs
+      let room
+      let players = []
+
+      try {
+        room = await Room.find(game.roomId)
+        players = await room.related('players').query()
+      } catch (roomError) {
+        console.warn(
+          `⚠️ [getGameState] Erreur lors de la récupération de la salle: ${roomError.message}`
+        )
+        // Continuer avec une liste vide si la salle n'existe plus
+      }
+
+      // Récupérer la question actuelle
+      let currentQuestion = null
+      try {
+        if (game.currentRound > 0) {
+          currentQuestion = await Question.query()
+            .where('game_id', game.id)
+            .where('round_number', game.currentRound)
+            .preload('targetPlayer')
+            .first()
+        }
+      } catch (questionError) {
+        console.error(
+          `❌ [getGameState] Erreur lors de la récupération de la question:`,
+          questionError
+        )
+        // Continuer avec currentQuestion = null
+      }
+
+      // Récupérer les réponses pour la question actuelle
+      let answers = []
+      try {
+        if (currentQuestion) {
+          // Récupérer les réponses avec les utilisateurs qui les ont écrites
+          answers = await Answer.query().where('question_id', currentQuestion.id).preload('user')
+
+          // Ajouter un marqueur pour identifier les propres réponses de l'utilisateur
+          if (userId) {
+            answers = answers.map((answer) => ({
+              ...answer.toJSON(),
+              isOwnAnswer: answer.userId === Number(userId),
+            }))
+          }
+        }
+      } catch (answersError) {
+        console.error(
+          `❌ [getGameState] Erreur lors de la récupération des réponses:`,
+          answersError
+        )
+        // Continuer avec answers = []
+      }
+
+      // Déterminer l'état actuel de l'utilisateur
+      let hasAnswered = false
+      let hasVoted = false
+      let isTargetPlayer = false
+
+      if (userId && currentQuestion) {
+        try {
+          // Vérifier si l'utilisateur a déjà répondu
+          hasAnswered =
+            (await Answer.query()
+              .where('question_id', currentQuestion.id)
+              .where('user_id', userId)
+              .first()) !== null
+
+          // Vérifier si l'utilisateur a déjà voté
+          hasVoted =
+            (await Vote.query()
+              .where('question_id', currentQuestion.id)
+              .where('voter_id', userId)
+              .first()) !== null
+
+          // Vérifier si l'utilisateur est la cible
+          isTargetPlayer = currentQuestion.targetPlayerId === Number(userId)
+
+          console.log(
+            `👤 [getGameState] État utilisateur ${userId}: isTarget=${isTargetPlayer}, hasAnswered=${hasAnswered}, hasVoted=${hasVoted}`
+          )
+        } catch (stateError) {
+          console.error(
+            `❌ [getGameState] Erreur lors de la récupération des états utilisateur:`,
+            stateError
+          )
+          // Garder les valeurs par défaut
+        }
+      }
+
+      // Calculer la durée restante pour la phase actuelle
+      const timer = this.calculateRemainingTime(game.currentPhase)
+
+      // Formater les joueurs pour inclure leurs scores
+      const formattedPlayers = players.map((player) => ({
+        id: player.id,
+        username: player.username,
+        displayName: player.displayName,
+        avatar: player.avatar,
+        score: game.scores?.[player.id] || 0,
+        isHost: room ? player.id === room.hostId : false,
+      }))
+
+      // Formater les réponses pour l'envoi
+      const formattedAnswers = answers.map((answer) => ({
+        id: answer.id,
+        content: answer.content,
+        playerId: answer.userId,
+        gameId: game.id, // Ajouter cette propriété utile pour le client
+        questionId: answer.questionId,
+        playerName: answer.user?.displayName || answer.user?.username || 'Joueur anonyme',
+        votesCount: answer.votesCount || 0,
+        isOwnAnswer: answer.isOwnAnswer || (userId && answer.userId === Number(userId)),
+      }))
+
+      // Construire et retourner l'état complet du jeu
+      return {
+        game: {
+          id: game.id,
+          roomId: game.roomId,
+          hostId: room?.hostId || null,
+          currentRound: game.currentRound,
+          totalRounds: game.totalRounds,
+          status: game.status,
+          gameMode: game.gameMode,
+          currentPhase: game.currentPhase,
+          scores: game.scores || {},
+          createdAt: game.createdAt,
+        },
+        room: room
+          ? {
+              id: room.id,
+              code: room.code,
+              name: room.name,
+              hostId: room.hostId,
+            }
+          : null,
+        players: formattedPlayers,
+        currentQuestion: currentQuestion
+          ? {
+              id: currentQuestion.id,
+              text: currentQuestion.text,
+              roundNumber: currentQuestion.roundNumber,
+              targetPlayer: currentQuestion.targetPlayer
+                ? {
+                    id: currentQuestion.targetPlayer.id,
+                    username: currentQuestion.targetPlayer.username,
+                    displayName: currentQuestion.targetPlayer.displayName,
+                    avatar: currentQuestion.targetPlayer.avatar,
+                  }
+                : null,
+            }
+          : null,
+        answers: formattedAnswers,
+        currentUserState: {
+          hasAnswered,
+          hasVoted,
+          isTargetPlayer,
+        },
+        timer,
+      }
+    } catch (error) {
+      console.error(`❌ [getGameState] Erreur lors de la récupération de l'état du jeu:`, error)
+      throw error
+    }
+  }
+
+  /**
+   * Calcule le temps restant pour la phase actuelle
+   */
+  private calculateRemainingTime(currentPhase: string) {
+    // Durées par défaut pour chaque phase (en secondes)
+    const phaseDurations = {
+      question: 10,
+      answer: 30,
+      vote: 20,
+      results: 15,
+    }
+
+    // Phase actuelle et durée
+    const duration = phaseDurations[currentPhase as keyof typeof phaseDurations] || 10
+
+    // Simuler un temps de départ (temps actuel - un délai aléatoire entre 1 et durée)
+    const randomElapsed = Math.floor(Math.random() * (duration - 1)) + 1
+    const startTime = Date.now() - randomElapsed * 1000
+
+    return {
+      duration,
+      startTime,
+    }
+  }
 }

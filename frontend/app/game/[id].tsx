@@ -125,38 +125,35 @@ export default function GameScreen() {
       }
 
       // Déterminer la phase effective en fonction de l'état du jeu et du joueur
-      const effectivePhase = (() => {
-        // Phase serveur reçue
+      const determineEffectivePhase = (() => {
         const serverPhase = gameData.game.currentPhase;
-        const isTarget = isTargetPlayer; // Utiliser la variable corrigée
+        const isTarget = isTargetPlayer;
         const hasAnswered = gameData.currentUserState?.hasAnswered || false;
         const hasVoted = gameData.currentUserState?.hasVoted || false;
 
-        // Log pour debug
         console.log(`🎮 Détermination phase - Serveur: ${serverPhase}, isTarget: ${isTarget}, hasAnswered: ${hasAnswered}, hasVoted: ${hasVoted}`);
 
         switch (serverPhase) {
           case 'question':
+            // Si c'est la phase question, la personne ciblée ne doit pas pouvoir répondre
+            if (isTarget) {
+              return GamePhase.WAITING;
+            }
             return GamePhase.QUESTION;
 
           case 'answer':
+            // Si c'est la phase de réponse, seuls les autres joueurs peuvent répondre
             if (isTarget) {
               return GamePhase.WAITING;
             }
             return hasAnswered ? GamePhase.WAITING : GamePhase.ANSWER;
 
           case 'vote':
-            // CORRECTION: Seul le joueur cible qui n'a pas encore voté doit voir l'écran de vote
+            // Seule la personne ciblée peut voter
             if (isTarget && !hasVoted) {
-              return GamePhase.VOTE; // Le joueur cible doit voter
-            } else if (!isTarget && !hasVoted) {
-              // CORRECTION IMPORTANTE: Les autres joueurs ne votent pas dans cette phase, uniquement la cible
-              // mais ils doivent quand même voir autre chose que l'écran d'attente
-              return GamePhase.WAITING_FOR_VOTE;
-            } else {
-              // Pour les joueurs qui ont déjà voté, ils sont en attente
-              return GamePhase.WAITING;
+              return GamePhase.VOTE;
             }
+            return GamePhase.WAITING_FOR_VOTE;
 
           case 'results':
             return GamePhase.RESULTS;
@@ -167,11 +164,11 @@ export default function GameScreen() {
       })();
 
       // Afficher un log détaillé pour le débogage
-      console.log(`🎮 Phase serveur: ${gameData.game.currentPhase}, Phase UI: ${effectivePhase}, isTarget: ${isTargetPlayer}, hasVoted: ${gameData.currentUserState?.hasVoted}`);
+      console.log(`🎮 Phase serveur: ${gameData.game.currentPhase}, Phase UI: ${determineEffectivePhase}, isTarget: ${isTargetPlayer}, hasVoted: ${gameData.currentUserState?.hasVoted}`);
       
       // Construction du nouvel état du jeu
       const newGameState: GameState = {
-        phase: effectivePhase,
+        phase: determineEffectivePhase,
         currentRound: gameData.game.currentRound || 1,
         totalRounds: gameData.game.totalRounds || 5,
         targetPlayer: targetPlayer,
@@ -673,59 +670,13 @@ export default function GameScreen() {
         return <LoadingOverlay message="Préparation de la partie" />;
           
       case GamePhase.QUESTION:
-        if (!gameState.targetPlayer || !gameState.currentQuestion) {
-          return <LoadingOverlay message="Chargement des données de jeu..." />;
-        }
-        
-        const isTargetInQuestionPhase = Boolean(gameState.currentUserState?.isTargetPlayer);
-        
-        if (isTargetInQuestionPhase) {
-          console.log("🎯 Utilisateur identifié comme cible pendant la phase QUESTION - affichage message spécial");
+        if (gameState.currentUserState?.isTargetPlayer) {
           return (
             <View style={styles.messageContainer}>
-              <Text style={styles.messageTitle}>Cette question est à propos de vous</Text>
+              <Text style={styles.messageTitle}>Cette question vous concerne !</Text>
               <Text style={styles.messageText}>
-                Cette question vous concerne. Les autres joueurs sont en train de la lire et vont ensuite y répondre.
-                Vous pourrez voir et voter pour leurs réponses plus tard.
-              </Text>
-              {gameState.timer && (
-                <View style={styles.timerContainer}>
-                  <GameTimer 
-                    duration={gameState.timer.duration}
-                    startTime={gameState.timer.startTime}
-                  />
-                </View>
-              )}
-            </View>
-          );
-        }
-        
-        return (
-          <QuestionPhase 
-            question={gameState.currentQuestion}
-            targetPlayer={gameState.targetPlayer}
-            onSubmit={handleSubmitAnswer}
-            round={gameState.currentRound}
-            totalRounds={gameState.totalRounds}
-            timer={gameState.timer}
-          />
-        );
-      
-      case GamePhase.ANSWER:
-        if (!gameState.currentQuestion) {
-          return <LoadingOverlay message="Chargement de la question..." />;
-        }
-        
-        const isTarget = Boolean(gameState.currentUserState?.isTargetPlayer);
-        
-        if (isTarget) {
-          console.log("🎯 Utilisateur identifié comme cible de la question - affichage message spécial");
-          return (
-            <View style={styles.messageContainer}>
-              <Text style={styles.messageTitle}>Cette question est à propos de vous</Text>
-              <Text style={styles.messageText}>
-                Vous ne pouvez pas répondre à une question qui vous concerne.
-                Attendez que les autres joueurs finissent de répondre.
+                Vous ne pouvez pas répondre car la question parle de vous. 
+                Attendez que les autres joueurs répondent.
               </Text>
               {gameState.timer && (
                 <View style={styles.timerContainer}>
@@ -739,12 +690,53 @@ export default function GameScreen() {
           );
         }
 
-        if (gameState.currentUserState && gameState.currentUserState.hasAnswered) {
+        if (!gameState.targetPlayer || !gameState.currentQuestion) {
+          return <LoadingOverlay message="Chargement des données de jeu..." />;
+        }
+        
+        return (
+          <QuestionPhase 
+            question={gameState.currentQuestion}
+            targetPlayer={gameState.targetPlayer}
+            onSubmit={handleSubmitAnswer}
+            round={gameState.currentRound}
+            totalRounds={gameState.totalRounds}
+            timer={gameState.timer}
+          />
+        );
+
+      case GamePhase.ANSWER:
+        // Si l'utilisateur a déjà répondu, afficher l'écran d'attente
+        if (gameState.currentUserState?.hasAnswered) {
+          return (
+            <View style={styles.waitingContainer}>
+              <Text style={styles.messageTitle}>Réponse envoyée !</Text>
+              <Text style={styles.messageText}>En attente des autres joueurs...</Text>
+              {gameState.timer && (
+                <View style={styles.timerContainer}>
+                  <GameTimer 
+                    duration={gameState.timer.duration}
+                    startTime={gameState.timer.startTime}
+                  />
+                </View>
+              )}
+              <LoadingOverlay 
+                message="Attente des autres joueurs..."
+                showSpinner={true}
+                retryFunction={fetchGameData}
+              />
+            </View>
+          );
+        }
+
+        // Si c'est la cible, bloqué 
+        if (gameState.currentUserState?.isTargetPlayer) {
           return (
             <View style={styles.messageContainer}>
-              <Text style={styles.messageTitle}>Réponse envoyée</Text>
+              <Text style={styles.messageTitle}>Cette question vous concerne !</Text>
               <Text style={styles.messageText}>
-                Votre réponse a été enregistrée avec succès. Attendez que les autres joueurs terminent.
+                Vous ne pouvez pas répondre car la question parle de vous.
+                Attendez que les autres joueurs répondent.
               </Text>
               {gameState.timer && (
                 <View style={styles.timerContainer}>
@@ -757,14 +749,15 @@ export default function GameScreen() {
             </View>
           );
         }
-        
+
+        // Sinon afficher le formulaire de réponse pour les autres joueurs
         return (
-          <AnswerPhase
+          <AnswerPhase 
             question={gameState.currentQuestion}
             onSubmit={handleSubmitAnswer}
             timer={gameState.timer}
             isSubmitting={isSubmitting}
-            isTargetPlayer={isTarget}
+            isTargetPlayer={gameState.currentUserState?.isTargetPlayer}
           />
         );
           
@@ -793,14 +786,11 @@ export default function GameScreen() {
           return <LoadingOverlay message="Chargement des données de vote..." />;
         }
         
-        // CORRECTION: S'assurer que le composant VotePhase reçoit les bonnes props
         const isTargetPlayer = Boolean(gameState.currentUserState?.isTargetPlayer);
         const hasVoted = Boolean(gameState.currentUserState?.hasVoted);
         
-        // Log critique pour débogage
         console.log(`🎯 Phase VOTE - Utilisateur ${user?.id} ${isTargetPlayer ? 'EST' : "n'est pas"} la cible. hasVoted=${hasVoted}`);
         
-        // Afficher l'interface de vote de manière plus agressive pour le joueur cible
         if (isTargetPlayer && !hasVoted) {
           return (
             <View style={{ flex: 1 }}>
@@ -831,7 +821,6 @@ export default function GameScreen() {
         );
           
       case GamePhase.WAITING_FOR_VOTE:
-        // Nouvel écran pour les non-cibles pendant la phase de vote
         return (
           <View style={styles.waitingContainer}>
             <Text style={styles.waitingTitle}>C'est au tour de {gameState.targetPlayer?.name} de voter !</Text>
@@ -865,7 +854,6 @@ export default function GameScreen() {
       const gameData = await gameService.getGameState(gameId);
       
       if (gameData.game.currentPhase === 'results') {
-        // Forcer l'affichage des résultats pour tous les joueurs
         setGameState(prev => ({
           ...prev,
           ...gameData,

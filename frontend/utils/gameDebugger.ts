@@ -1,24 +1,139 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import SocketService from '@/services/socketService';
 import api from '@/config/axios';
 import { GameState } from '../types/gameTypes';
 import { UserIdManager } from './userIdManager';
 
 /**
- * Outils de débogage pour le jeu
+ * Classe d'utilitaire pour le débogage et la récupération des jeux
  */
-interface GameDebuggerOptions {
-  gameId: string;
-  verbose?: boolean;
-}
-
 class GameDebugger {
   private gameId: string;
   private verbose: boolean;
 
-  constructor(options: GameDebuggerOptions) {
+  constructor(options: { gameId: string; verbose?: boolean }) {
     this.gameId = options.gameId;
     this.verbose = options.verbose || false;
     this.log('Débogueur initialisé pour le jeu ' + this.gameId);
+  }
+
+  /**
+   * Vérifie si les fonctionnalités WebSocket sont disponibles
+   */
+  static async checkWebSocketFeatures(): Promise<{
+    isConnected: boolean;
+    features: {
+      getGameState: boolean;
+      submitAnswer: boolean;
+      submitVote: boolean;
+      checkHost: boolean;
+      nextRound: boolean;
+    };
+  }> {
+    const socket = await SocketService.getInstanceAsync();
+    
+    const features = {
+      getGameState: !(await AsyncStorage.getItem('@websocket_getGameState_missing')),
+      submitAnswer: true,
+      submitVote: true,
+      checkHost: true,
+      nextRound: true
+    };
+    
+    return {
+      isConnected: socket.connected,
+      features
+    };
+  }
+
+  /**
+   * Enregistre un problème rencontré
+   */
+  static async logIssue(
+    type: 'connection' | 'method' | 'auth' | 'state' | 'other',
+    context: string,
+    details: any
+  ): Promise<void> {
+    try {
+      const timestamp = new Date().toISOString();
+      const issue = { type, context, details, timestamp };
+      
+      // Récupérer les anciens problèmes
+      const existingIssuesStr = await AsyncStorage.getItem('@game_issues');
+      const existingIssues = existingIssuesStr ? JSON.parse(existingIssuesStr) : [];
+      
+      // Ajouter le nouveau problème
+      existingIssues.push(issue);
+      
+      // Limiter à 50 problèmes
+      const limitedIssues = existingIssues.slice(-50);
+      
+      // Sauvegarder
+      await AsyncStorage.setItem('@game_issues', JSON.stringify(limitedIssues));
+      
+      console.log(`📝 [GameDebugger] Problème enregistré: ${type} dans ${context}`);
+    } catch (error) {
+      console.error('❌ Erreur lors de l\'enregistrement d\'un problème:', error);
+    }
+  }
+
+  /**
+   * Récupère tous les problèmes enregistrés
+   */
+  static async getIssues(): Promise<any[]> {
+    try {
+      const issues = await AsyncStorage.getItem('@game_issues');
+      return issues ? JSON.parse(issues) : [];
+    } catch (error) {
+      console.error('❌ Erreur lors de la récupération des problèmes:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Efface tous les problèmes enregistrés
+   */
+  static async clearIssues(): Promise<void> {
+    try {
+      await AsyncStorage.removeItem('@game_issues');
+      console.log('🧹 [GameDebugger] Tous les problèmes ont été effacés');
+    } catch (error) {
+      console.error('❌ Erreur lors de l\'effacement des problèmes:', error);
+    }
+  }
+
+  /**
+   * Vérifie si la fonction getGameState existe au niveau du serveur
+   */
+  static async checkGetGameStateSupport(): Promise<boolean> {
+    try {
+      const socket = await SocketService.getInstanceAsync();
+      
+      return new Promise<boolean>((resolve) => {
+        // Tester avec un gameId factice
+        socket.emit('game:get_state', { gameId: 'test', userId: '0' }, (response: any) => {
+          // Vérifier si la réponse contient une erreur spécifique à la fonction manquante
+          const isFeatureAvailable = !(response?.error?.includes('getGameState is not a function'));
+          
+          // Si la fonction n'existe pas, on le stocke dans le stockage local
+          if (!isFeatureAvailable) {
+            AsyncStorage.setItem('@websocket_getGameState_missing', 'true');
+          } else {
+            AsyncStorage.removeItem('@websocket_getGameState_missing');
+          }
+          
+          resolve(isFeatureAvailable);
+        });
+        
+        // En cas d'absence de réponse, timeout après 2s
+        setTimeout(() => {
+          resolve(false);
+        }, 2000);
+      });
+    } catch (error) {
+      console.error('❌ Erreur lors de la vérification de getGameState:', error);
+      return false;
+    }
   }
 
   /**
@@ -279,13 +394,4 @@ class GameDebugger {
   }
 }
 
-/**
- * Utilitaire pour déboguer et corriger les problèmes d'état de jeu
- */
-const gameDebugger = new GameDebugger({ gameId: '', verbose: true });
-
-export const createGameDebugger = (options: GameDebuggerOptions): GameDebugger => {
-  return new GameDebugger(options);
-};
-
-export default gameDebugger;
+export default GameDebugger;

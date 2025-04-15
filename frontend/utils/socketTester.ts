@@ -676,6 +676,204 @@ export const diagnosticSocket = async () => {
   }
 };
 
+/**
+ * Teste la latence des événements WebSocket
+ */
+export const testWebSocketLatency = async (): Promise<{ 
+  success: boolean; 
+  averageLatency?: number;
+  results?: number[];
+  errors?: number;
+}> => {
+  try {
+    console.log('🏓 Test de latence WebSocket démarré...');
+    
+    // Obtenir une instance de socket
+    const socket = await SocketService.getInstanceAsync();
+    
+    if (!socket.connected) {
+      console.error('❌ Socket non connecté, test impossible');
+      return { success: false, errors: 1 };
+    }
+    
+    // Effectuer 5 tests de ping-pong
+    const results: number[] = [];
+    let errors = 0;
+    
+    for (let i = 0; i < 5; i++) {
+      try {
+        const startTime = Date.now();
+        
+        // Créer une promesse qui sera résolue quand on reçoit la réponse
+        const pingResult = await new Promise<number>((resolve, reject) => {
+          // Timeout de 3 secondes
+          const timeoutId = setTimeout(() => {
+            reject(new Error('Timeout lors du test de latence'));
+          }, 3000);
+          
+          socket.emit('ping', (response: any) => {
+            clearTimeout(timeoutId);
+            const latency = Date.now() - startTime;
+            resolve(latency);
+          });
+        });
+        
+        results.push(pingResult);
+        console.log(`✅ Test #${i+1}: ${pingResult}ms`);
+        
+        // Courte pause entre les tests
+        await new Promise(resolve => setTimeout(resolve, 500));
+      } catch (error) {
+        console.error(`❌ Erreur lors du test #${i+1}:`, error);
+        errors++;
+      }
+    }
+    
+    if (results.length === 0) {
+      return { success: false, errors };
+    }
+    
+    // Calculer la latence moyenne
+    const averageLatency = results.reduce((acc, val) => acc + val, 0) / results.length;
+    console.log(`📊 Latence moyenne: ${averageLatency.toFixed(2)}ms`);
+    
+    return {
+      success: true,
+      averageLatency,
+      results,
+      errors
+    };
+  } catch (error) {
+    console.error('❌ Erreur lors du test de latence:', error);
+    return { success: false, errors: 1 };
+  }
+};
+
+/**
+ * Optimise la connexion WebSocket en forçant une reconnexion propre
+ */
+export const optimizeWebSocketConnection = async (): Promise<boolean> => {
+  try {
+    console.log('🔄 Optimisation de la connexion WebSocket...');
+    
+    // Fermer proprement la connexion existante
+    const socket = await SocketService.getInstanceAsync();
+    
+    if (socket.connected) {
+      console.log('🔌 Déconnexion de la socket existante...');
+      socket.disconnect();
+      
+      // Attendre un court instant
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+    
+    // Forcer l'initialisation d'une nouvelle connexion
+    console.log('🔌 Établissement d\'une nouvelle connexion...');
+    const newSocket = await SocketService.getInstanceAsync(true);
+    
+    // Attendre que la connexion soit établie
+    const connectionPromise = new Promise<boolean>((resolve) => {
+      if (newSocket.connected) {
+        resolve(true);
+        return;
+      }
+      
+      const timeout = setTimeout(() => {
+        resolve(false);
+      }, 5000);
+      
+      newSocket.once('connect', () => {
+        clearTimeout(timeout);
+        resolve(true);
+      });
+    });
+    
+    const isConnected = await connectionPromise;
+    
+    if (isConnected) {
+      console.log('✅ Connexion WebSocket optimisée avec succès');
+      
+      // Tester la latence de la nouvelle connexion
+      const latencyTest = await testWebSocketLatency();
+      
+      if (latencyTest.success) {
+        console.log(`📊 Latence après optimisation: ${latencyTest.averageLatency?.toFixed(2)}ms`);
+      }
+      
+      return true;
+    } else {
+      console.error('❌ Échec de l\'optimisation de la connexion WebSocket');
+      return false;
+    }
+  } catch (error) {
+    console.error('❌ Erreur lors de l\'optimisation de la connexion:', error);
+    return false;
+  }
+};
+
+/**
+ * Vérifie et optimise la connexion au jeu WebSocket
+ * @param gameId ID du jeu
+ */
+export const ensureGameConnectionQuality = async (gameId: string): Promise<boolean> => {
+  try {
+    console.log(`🔍 Vérification de la qualité de connexion pour le jeu ${gameId}...`);
+    
+    // Importer GameWebSocketService directement
+    const GameWebSocketService = (await import('@/services/gameWebSocketService')).default;
+    
+    // Vérifier d'abord si la connexion est déjà établie
+    const isConnected = await GameWebSocketService.ensureSocketConnection(gameId);
+    
+    if (!isConnected) {
+      console.log('⚠️ Connexion non établie, tentative d\'optimisation...');
+      
+      // Forcer une reconnexion
+      const reconnected = await GameWebSocketService.reconnect();
+      
+      if (!reconnected) {
+        console.error('❌ Échec de la reconnexion');
+        return false;
+      }
+      
+      // Attendre un court instant
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // Essayer de rejoindre le canal à nouveau
+      const joined = await GameWebSocketService.ensureSocketConnection(gameId);
+      
+      if (!joined) {
+        console.error('❌ Échec de la jointure au canal du jeu après reconnexion');
+        return false;
+      }
+    }
+    
+    // Tester la latence pour vérifier la qualité de la connexion
+    const latencyTest = await testWebSocketLatency();
+    
+    if (!latencyTest.success || (latencyTest.averageLatency && latencyTest.averageLatency > 500)) {
+      console.warn(`⚠️ Latence élevée détectée (${latencyTest.averageLatency}ms), tentative d'optimisation...`);
+      
+      // Tenter une optimisation complète
+      const optimized = await optimizeWebSocketConnection();
+      
+      if (!optimized) {
+        console.error('❌ Échec de l\'optimisation');
+        return false;
+      }
+      
+      // Rejoindre le canal à nouveau
+      await GameWebSocketService.ensureSocketConnection(gameId);
+    }
+    
+    console.log('✅ Connexion au jeu optimisée et vérifiée');
+    return true;
+  } catch (error) {
+    console.error('❌ Erreur lors de la vérification/optimisation de la connexion au jeu:', error);
+    return false;
+  }
+};
+
 export default {
   testSocketConnection,
   checkSocketStatus,
@@ -693,4 +891,7 @@ export default {
   testAnswerSubmission,
   diagnoseSocketMethods,
   diagnosticSocket,
+  testWebSocketLatency,
+  optimizeWebSocketConnection,
+  ensureGameConnectionQuality,
 };

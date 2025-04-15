@@ -3,8 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Answer, Player, Question } from '../../types/gameTypes';
-import HostChecker from '@/utils/hostChecker';
-import SocketService from '@/services/socketService';
+import GameWebSocketService from '@/services/gameWebSocketService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 interface ResultsPhaseProps {
@@ -60,18 +59,16 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
     return () => clearTimeout(timer);
   }, []);
   
-  // Vérifier si l'utilisateur est l'hôte de la partie en utilisant toutes les méthodes disponibles
+  // Vérifier si l'utilisateur est l'hôte de la partie en utilisant uniquement WebSocket
   useEffect(() => {
     const checkIfUserIsHost = async () => {
       setIsCheckingHost(true);
       
       try {
         // Utiliser gameId de props OU extraire des réponses si disponible
-        let effectiveGameId: string | number = null;
+        let effectiveGameId = gameId;
         
-        if (gameId) {
-          effectiveGameId = gameId;
-        } else if (answers && answers.length > 0) {
+        if (!effectiveGameId && answers && answers.length > 0) {
           effectiveGameId = answers[0].gameId;
           
           // Si gameId n'est pas directement disponible, essayer de l'extraire du questionId
@@ -92,8 +89,8 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
         
         console.log(`🔍 Vérification d'hôte pour la partie ${effectiveGameId}`);
         
-        // Utiliser directement HostChecker avec le nouvel algorithme optimisé
-        const isHost = await HostChecker.isCurrentUserHost(effectiveGameId);
+        // Utiliser GameWebSocketService pour la vérification d'hôte
+        const isHost = await GameWebSocketService.isUserHost(String(effectiveGameId));
         
         console.log(`👑 Résultat vérification hôte: ${isHost ? 'EST' : 'N\'EST PAS'} l'hôte`);
         setIsUserHost(isHost);
@@ -119,51 +116,36 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
     };
   }, [gameId, answers, isSynchronizing]);
   
-  // Établir une connexion WebSocket et écouter les événements pour le jeu
-  useEffect(() => {
-    if (!gameId) return;
-    
-    const setupGameConnection = async () => {
-      try {
-        const socket = await SocketService.getInstanceAsync();
-        
-        if (socket.connected) {
-          // Rejoindre le canal du jeu pour recevoir les mises à jour en temps réel
-          await SocketService.joinGameChannel(String(gameId));
-          console.log(`✅ Canal WebSocket pour le jeu ${gameId} rejoint avec succès`);
-        }
-      } catch (error) {
-        console.warn(`⚠️ Erreur lors de la configuration WebSocket:`, error);
-      }
-    };
-    
-    setupGameConnection();
-    
-    // Nettoyage lors du démontage
-    return () => {
-      // Quitter le canal du jeu n'est pas nécessaire ici, car déjà géré au niveau supérieur
-    };
-  }, [gameId]);
-  
   const handleNextRound = useCallback(() => {
-    if (isButtonDisabled || !canProceed || isSynchronizing) return;
+    if (isButtonDisabled || !canProceed || isSynchronizing) {
+      return; // Ajout d'un return pour éviter l'exécution si désactivé
+    }
     
     // Désactiver le bouton immédiatement pour éviter les clics multiples
     setIsButtonDisabled(true);
     setIsSynchronizing(true);
     
+    console.log("⏱️ Passage au tour suivant...");
+    
     try {
-      // Appeler la fonction de passage au tour suivant
-      console.log('⏱️ Passage au tour suivant...');
+      console.log("🎮 Tentative de passage au tour suivant...");
+      
+      // Important de déléguer à onNextRound pour que le parent puisse gérer l'action
       onNextRound();
-    } catch (error) {
-      console.error('❌ Erreur lors du passage au tour suivant:', error);
-    } finally {
-      // Réactiver le bouton après un délai pour éviter les clics rapides successifs
+      
+      // Ajouter un délai pour empêcher les clics multiples
       setTimeout(() => {
         setIsButtonDisabled(false);
         setIsSynchronizing(false);
-      }, 2000);
+      }, 3000);
+    } catch (error) {
+      console.error("❌ Erreur lors du passage au tour suivant:", error);
+      
+      // Réactiver le bouton après un délai plus court en cas d'erreur
+      setTimeout(() => {
+        setIsButtonDisabled(false);
+        setIsSynchronizing(false);
+      }, 1500);
     }
   }, [onNextRound, isButtonDisabled, canProceed, isSynchronizing]);
 

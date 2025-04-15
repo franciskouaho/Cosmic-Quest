@@ -61,30 +61,48 @@ dans vos outils de développement.
 
 ## Communication Socket.IO dans Cosmic Quest
 
-Le jeu utilise Socket.IO pour les communications en temps réel. Voici les événements clés:
+Cosmic Quest utilise Socket.IO pour les communications en temps réel. Voici les événements clés:
 
-### Événements envoyés au serveur:
+### Événements du client vers le serveur
 
-- `game:submit_answer` - Soumettre une réponse à une question
-- `game:submit_vote` - Voter pour une réponse
-- `game:force_check` - Forcer une vérification de l'état du jeu
-- `game:next_round` - Passer au tour suivant
-- `join-game` - Rejoindre un canal de jeu
-- `join-room` - Rejoindre un canal de salle
+- `join-game`: Rejoindre un canal de jeu
+- `game:get_state`: Récupérer l'état complet d'un jeu
+- `game:submit_answer`: Soumettre une réponse à une question
+- `game:submit_vote`: Voter pour une réponse
+- `game:next_round`: Passer au tour suivant (hôte uniquement)
+- `game:check_host`: Vérifier si l'utilisateur est l'hôte du jeu
 
-### Événements reçus du serveur:
+### Événements du serveur vers le client
 
-- `game:update` - Mises à jour sur l'état du jeu (changement de phase, nouvelles réponses, etc.)
-- `room:update` - Mises à jour sur l'état de la salle (joueurs qui rejoignent/quittent, etc.)
+- `game:update`: Mises à jour sur l'état du jeu (nouvelles réponses, votes, changements de phase)
+- `next_round:confirmation`: Confirmation du passage au tour suivant
+- `next_round:error`: Erreur lors du passage au tour suivant
 
-### Dépannage Socket.IO
+### Problèmes courants et solutions
 
-Si les communications temps réel ne fonctionnent pas:
+#### Le bouton "Tour suivant" ne fonctionne pas
 
-1. Vérifier la connexion internet
-2. Essayer de rafraîchir manuellement l'état du jeu
-3. Vérifier dans les logs si les événements sont correctement envoyés/reçus
-4. Utiliser l'utilitaire `socketTester.diagnosticSocket()` pour vérifier l'état de la connexion
+Si le bouton "Tour suivant" ne fonctionne pas correctement:
+
+1. **Vérifiez les logs**: Regardez si l'événement `game:next_round` est envoyé et quelle réponse est reçue
+2. **Vérifiez le statut d'hôte**: Seul l'hôte peut passer au tour suivant
+3. **Essayez de rafraîchir l'application**: Parfois, les informations d'hôte peuvent être mal synchronisées
+4. **Utilisez la récupération manuelle**: En dernier recours, utilisez:
+   ```js
+   // Dans la console de développement
+   GameStateRecovery.forceGameProgress("ID_DU_JEU");
+   ```
+
+#### Les joueurs sont bloqués dans une phase
+
+Si tous les joueurs sont bloqués dans une phase:
+
+1. **Rafraîchissez l'état du jeu**: Tire vers le bas pour rafraîchir
+2. **Vérifiez que toutes les actions requises sont effectuées**: En phase answer, tous les joueurs (sauf la cible) doivent répondre
+3. **L'hôte peut forcer la progression**: Si le bouton "Tour suivant" est visible, l'utiliser
+4. **Reconnectez-vous au jeu**: En dernier recours, rafraîchissez l'application complètement
+
+La plupart des problèmes de blocage sont maintenant automatiquement détectés et résolus par l'application.
 
 ## Get a fresh project
 
