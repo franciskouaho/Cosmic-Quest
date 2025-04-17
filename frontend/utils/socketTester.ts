@@ -267,3 +267,79 @@ export const diagnoseAndRepairWebSockets = async () => {
     };
   }
 };
+
+/**
+ * Teste la fiabilité du passage au tour suivant via HTTP uniquement
+ * @param gameId ID de la partie
+ * @param forceAdvance Indique si le passage doit être forcé
+ * @returns {Promise<boolean>} true si le passage au tour suivant a réussi, false sinon
+ */
+export const testNextRound = async (
+  gameId: string | number,
+  forceAdvance: boolean = false
+): Promise<boolean> => {
+  try {
+    console.log('🌐 Test du passage au tour suivant via HTTP...');
+    const userId = await UserIdManager.getUserId();
+    
+    if (!userId) {
+      console.error('❌ ID utilisateur manquant pour le test next round');
+      return false;
+    }
+    
+    // Essayer avec un timeout plus court et des options plus souples
+    const response = await api.post(`/games/${gameId}/next-round`, {
+      user_id: userId,
+      force_advance: forceAdvance,
+      client_timestamp: Date.now()
+    }, {
+      headers: {
+        'X-Direct-HTTP': 'true',
+        'X-Test-Mode': 'true'
+      },
+      timeout: 5000 // 5 secondes
+    });
+    
+    if (response.data?.status === 'success') {
+      console.log('✅ Test de passage au tour suivant réussi!');
+      return true;
+    } else {
+      console.warn('⚠️ Réponse inattendue lors du test:', response.data);
+      return false;
+    }
+  } catch (error) {
+    console.error(`❌ Erreur lors du test de passage au tour suivant:`, error);
+    
+    // Essayer via WebSocket en cas d'échec HTTP
+    try {
+      console.log('🔄 Tentative via WebSocket après échec HTTP...');
+      const socketModule = await import('../services/socketService');
+      const socketService = socketModule.default;
+      
+      const socket = await socketService.getInstanceAsync();
+      
+      // Utiliser une promesse avec un timeout
+      const result = await Promise.race([
+        new Promise<boolean>((resolve) => {
+          socket.emit('game:next_round', { 
+            gameId, 
+            forceAdvance,
+            userId: UserIdManager.getUserIdSync(),
+            isTest: true
+          }, (response: any) => {
+            resolve(response?.success === true);
+          });
+        }),
+        new Promise<boolean>((resolve) => setTimeout(() => {
+          console.log('⏱️ Timeout de la tentative WebSocket, échec du test');
+          resolve(false);
+        }, 3000))
+      ]);
+      
+      return result;
+    } catch (socketError) {
+      console.error('❌ Échec également de la tentative WebSocket:', socketError);
+      return false;
+    }
+  }
+};

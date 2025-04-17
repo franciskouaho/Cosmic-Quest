@@ -725,19 +725,70 @@ class SocketService {
       // S'assurer que la connexion est établie
       const socket = await this.getInstanceAsync();
 
-      // Émettre l'événement de vérification
+      if (!socket.connected) {
+        console.warn('⚠️ Socket non connecté lors de la vérification forcée, tentative de reconnexion...');
+        try {
+          await this.reconnect();
+          console.log('✅ Socket reconnecté avec succès');
+        } catch (reconnectError) {
+          console.error('❌ Échec de la reconnexion:', reconnectError);
+          return false;
+        }
+      }
+
+      // Émettre l'événement de vérification avec accusé de réception
       return new Promise<boolean>((resolve) => {
-        socket.emit('game:force_check', { gameId });
+        console.log(`📤 Envoi de la demande de vérification de phase pour le jeu ${gameId}`);
         
-        // Réussir après un court délai pour permettre au serveur de traiter la demande
+        socket.emit('game:force_check', { gameId }, (response: any) => {
+          if (response && response.success) {
+            console.log(`✅ Vérification de phase réussie pour le jeu ${gameId}`);
+            resolve(true);
+          } else {
+            console.warn(`⚠️ Vérification de phase sans confirmation pour le jeu ${gameId}`);
+            // Considérer comme un succès partiel pour ne pas bloquer l'expérience utilisateur
+            resolve(true);
+          }
+        });
+        
+        // Définir un timeout au cas où le serveur ne répond pas
         setTimeout(() => {
+          console.log(`⏱️ Timeout de la vérification, on considère comme fait`);
           resolve(true);
-        }, 1000);
+        }, 2000);
       });
     } catch (error) {
       console.error(`❌ SocketService: Erreur lors de la vérification forcée de phase:`, error);
       return false;
     }
+  }
+
+  /**
+   * Méthode utilitaire pour tenter une reconnexion
+   */
+  private async reconnect(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      try {
+        // Récupérer l'instance existante
+        const socket = this.getInstance();
+        
+        // Déclencher une reconnexion manuelle
+        socket.disconnect().connect();
+        
+        // Attendre la confirmation de reconnexion
+        socket.once('connect', () => {
+          console.log('🔄 Socket reconnexion réussie');
+          resolve();
+        });
+        
+        // Timeout après 5 secondes
+        setTimeout(() => {
+          reject(new Error('Timeout de reconnexion'));
+        }, 5000);
+      } catch (error) {
+        reject(error);
+      }
+    });
   }
 
   /**

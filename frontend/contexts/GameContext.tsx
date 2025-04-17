@@ -7,6 +7,9 @@ import { Alert } from 'react-native';
 import Toast from '@/components/common/Toast';
 import { PhaseManager } from '../utils/phaseManager';
 import HostChecker from '../utils/hostChecker';
+import axios from 'axios';
+import { API_URL } from '../config/axios'; // Correction de l'importation pour utiliser le chemin correct
+import UserIdManager from '../utils/userIdManager';
 
 type GameContextType = {
   gameState: GameState | null;
@@ -162,28 +165,62 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         - hasVoted: ${Boolean(gameData.currentUserState?.hasVoted)}
       `);
 
-      const updatedGameState = {
-        ...gameState,
-        phase: effectivePhase,
-        currentRound: gameData.game.currentRound || 1,
-        totalRounds: gameData.game.totalRounds || 5,
-        targetPlayer: targetPlayer,
-        currentQuestion: currentQuestion,
-        answers: gameData.answers || [],
-        players: gameData.players || [],
-        scores: gameData.game.scores || {},
-        theme: gameData.game.gameMode || 'standard',
-        timer: gameData.timer || null,
-        currentUserState: {
-          ...gameData.currentUserState,
-          hasAnswered: shouldResetState ? false : (gameState?.currentUserState?.hasAnswered || false),
-          hasVoted: shouldResetState ? false : (gameState?.currentUserState?.hasVoted || false),
-          isTargetPlayer: Boolean(gameData.currentUserState?.isTargetPlayer),
-        },
-        game: gameData.game,
-      };
+      // Vérification de cohérence supplémentaire et correction
+      if (effectivePhase === 'unknown' || !effectivePhase) {
+        console.warn(`⚠️ [GameContext] Phase invalide détectée: ${effectivePhase}, utilisation de fallback`);
+        // Utiliser une phase par défaut basée sur le contexte
+        const fallbackPhase = gameData.game.currentPhase === 'results' 
+          ? GamePhase.RESULTS 
+          : GamePhase.WAITING;
+          
+        console.log(`🔄 [GameContext] Utilisation de la phase de secours: ${fallbackPhase}`);
+        
+        const updatedGameState = {
+          ...gameState,
+          phase: fallbackPhase,
+          currentRound: gameData.game.currentRound || 1,
+          totalRounds: gameData.game.totalRounds || 5,
+          targetPlayer: targetPlayer,
+          currentQuestion: currentQuestion,
+          answers: gameData.answers || [],
+          players: gameData.players || [],
+          scores: gameData.game.scores || {},
+          theme: gameData.game.gameMode || 'standard',
+          timer: gameData.timer || null,
+          currentUserState: {
+            ...gameData.currentUserState,
+            hasAnswered: shouldResetState ? false : (gameState?.currentUserState?.hasAnswered || false),
+            hasVoted: shouldResetState ? false : (gameState?.currentUserState?.hasVoted || false),
+            isTargetPlayer: Boolean(gameData.currentUserState?.isTargetPlayer),
+          },
+          game: gameData.game,
+        };
 
-      setGameState(updatedGameState);
+        setGameState(updatedGameState);
+      } else {
+        const updatedGameState = {
+          ...gameState,
+          phase: effectivePhase,
+          currentRound: gameData.game.currentRound || 1,
+          totalRounds: gameData.game.totalRounds || 5,
+          targetPlayer: targetPlayer,
+          currentQuestion: currentQuestion,
+          answers: gameData.answers || [],
+          players: gameData.players || [],
+          scores: gameData.game.scores || {},
+          theme: gameData.game.gameMode || 'standard',
+          timer: gameData.timer || null,
+          currentUserState: {
+            ...gameData.currentUserState,
+            hasAnswered: shouldResetState ? false : (gameState?.currentUserState?.hasAnswered || false),
+            hasVoted: shouldResetState ? false : (gameState?.currentUserState?.hasVoted || false),
+            isTargetPlayer: Boolean(gameData.currentUserState?.isTargetPlayer),
+          },
+          game: gameData.game,
+        };
+
+        setGameState(updatedGameState);
+      }
 
       console.log('✅ GameContext: Jeu chargé avec succès');
 
@@ -310,47 +347,58 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   };
 
   const nextRound = async (gameId: string) => {
-    const validPhases = ['results', 'vote'];
-    if (!validPhases.includes(gameState?.phase || '')) {
-      showToast("Impossible de passer au tour suivant dans cette phase", "warning");
-      return;
-    }
-
-    const handleNextRound = useCallback(() => {
-      if (isSubmitting) return;
-      
+    try {
+      console.log("🎮 Tentative de passage au tour suivant...");
       setIsSubmitting(true);
       
+      // Utiliser directement HTTP pour passer au tour suivant
       try {
-        console.log("🎮 Tentative de passage au tour suivant...");
+        await gameService.nextRound(gameId as string);
         
-        // Raccourcir le timeout et ajouter une notification d'erreur plus claire
-        Promise.race([
-          gameService.nextRound(gameId as string),
-          new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Timeout lors du passage au tour suivant')), 8000)
-          )
-        ]).then(() => {
-          console.log("✅ Passage au tour suivant initié avec succès");
-          // Forcer la mise à jour de l'état après un court délai
-          setTimeout(() => fetchGameData(), 1000);
-        }).catch((error) => {
-          console.error("❌ Erreur lors du passage au tour suivant:", error);
+        console.log("✅ Passage au tour suivant initié avec succès via HTTP");
+        showToast("Tour suivant initié avec succès", "success");
+        
+        // Forcer un rafraîchissement des données
+        setTimeout(() => fetchGameData(), 1000);
+      } catch (error) {
+        console.error("❌ Erreur lors du passage au tour suivant:", error);
+        
+        // Une seule nouvelle tentative en cas d'erreur
+        try {
+          console.log("🔄 Nouvelle tentative via méthode alternative...");
+          const userId = await UserIdManager.getUserId();
+          
+          const response = await axios.post(`${API_URL}/games/${gameId}/next-round`, {
+            user_id: userId,
+            force_advance: true,
+            retry: true
+          }, {
+            headers: { 'X-Emergency': 'true' },
+            timeout: 15000
+          });
+          
+          if (response.data?.status === 'success') {
+            console.log("✅ Passage au tour suivant réussi via méthode alternative");
+            showToast("Tour suivant initié avec succès", "success");
+            setTimeout(() => fetchGameData(), 1200);
+          } else {
+            throw new Error("Échec de la tentative alternative");
+          }
+        } catch (retryError) {
+          console.error("❌ Échec complet:", retryError);
+          showToast("Impossible de passer au tour suivant", "error");
           Alert.alert(
             "Erreur",
             "Le passage au tour suivant a échoué. Veuillez réessayer.",
             [{ text: "OK" }]
           );
-        }).finally(() => {
-          setIsSubmitting(false);
-        });
-      } catch (error) {
-        console.error("❌ Erreur lors du passage au tour suivant:", error);
-        setIsSubmitting(false);
+        }
       }
-    }, [gameId, isSubmitting, fetchGameData]);
-    
-    handleNextRound();
+    } catch (outerError) {
+      console.error("❌ Erreur externe:", outerError);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const setTimer = (timer: { duration: number; startTime: number }) => {

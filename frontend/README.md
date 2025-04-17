@@ -56,6 +56,40 @@ Le système dispose maintenant d'un mécanisme de récupération automatique qui
 - Tente de récupérer l'état via WebSocket
 - Fournit un état minimal en dernier recours pour éviter les crashs d'application
 
+Le système intègre une approche HTTP directe pour le passage au tour suivant.
+
+#### Passage au tour suivant (REST API)
+
+Le passage au tour suivant s'effectue uniquement via l'API REST avec l'endpoint:
+
+- `POST /api/v1/games/:id/next-round`
+
+Paramètres:
+
+```json
+{
+  "user_id": "string",
+  "force_advance": boolean
+}
+```
+
+En cas d'erreur, le système tente automatiquement une seconde requête avec des paramètres adaptés.
+
+#### Avantages de l'approche REST pour next-round
+
+- Fiabilité accrue: pas de dépendance aux connexions WebSocket
+- Meilleure résilience aux problèmes de connexion instable
+- Réponses synchrones avec codes d'erreur explicites
+- Possibilité de vérifier le statut de la requête
+
+#### Diagnostic de problèmes
+
+En cas d'échec persistant du passage au tour suivant:
+
+1. Vérifier les logs serveur pour les erreurs côté backend
+2. S'assurer que l'utilisateur est bien l'hôte de la partie
+3. Vérifier que la partie est dans une phase où le passage au tour suivant est autorisé
+
 En cas d'erreur persistante, utilisez la fonction `GameStateRecovery.recoverFromPersistentError(gameId)`
 dans vos outils de développement.
 
@@ -93,6 +127,19 @@ Si le bouton "Tour suivant" ne fonctionne pas correctement:
    GameStateRecovery.forceGameProgress("ID_DU_JEU");
    ```
 
+#### Passage au tour suivant (next_round) échoue
+
+Le système implémente une stratégie de fiabilité à plusieurs niveaux:
+
+1. Première tentative via WebSocket avec un timeout de 8 secondes
+2. En cas d'échec, tentative automatique via API REST HTTP
+3. Si toutes les tentatives échouent, l'interface affiche un message d'erreur explicite
+
+La méthode HTTP est disponible à l'endpoint `/api/v1/games/:id/next-round` et accepte:
+
+- `user_id`: ID de l'utilisateur qui demande l'action
+- `force_advance`: boolean pour forcer le passage au tour suivant
+
 #### Les joueurs sont bloqués dans une phase
 
 Si tous les joueurs sont bloqués dans une phase:
@@ -103,6 +150,14 @@ Si tous les joueurs sont bloqués dans une phase:
 4. **Reconnectez-vous au jeu**: En dernier recours, rafraîchissez l'application complètement
 
 La plupart des problèmes de blocage sont maintenant automatiquement détectés et résolus par l'application.
+
+#### Désynchronisation entre clients
+
+Si certains joueurs voient des phases différentes:
+
+- L'application tente automatiquement une récupération
+- Utiliser le endpoint `/api/v1/games/:id/force-check-phase` pour resynchroniser l'état du jeu
+- Le bouton de rafraîchissement manuel est disponible en cas de besoin extrême
 
 ## Get a fresh project
 

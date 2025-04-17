@@ -4,6 +4,7 @@ import UserIdManager from '@/utils/userIdManager';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { WebSocketResponse } from '@/types/gameTypes';
 import { PhaseManager } from '../utils/phaseManager';
+import api, { API_URL } from '@/config/axios';
 
 class GameWebSocketService {
   private pendingRequests: Map<string, { promise: Promise<any>, timestamp: number }> = new Map();
@@ -556,42 +557,73 @@ class GameWebSocketService {
    * Passe au tour suivant via WebSocket
    */
   async nextRound(gameId: string, force: boolean = false): Promise<boolean> {
-    const maxRetries = 3;
-    let currentRetry = 0;
+    try {
+      console.log(`🎮 Tentative de passage au tour suivant via HTTP direct pour le jeu ${gameId}`);
 
-    const attemptNextRound = async (): Promise<boolean> => {
-      try {
-        await this.ensureSocketConnection(gameId);
-        const socket = await SocketService.getInstanceAsync();
-
-        return new Promise((resolve, reject) => {
-          const timeoutId = setTimeout(() => {
-            if (currentRetry < maxRetries - 1) {
-              currentRetry++;
-              console.log(`🔄 GameWebSocket: Nouvelle tentative ${currentRetry}/${maxRetries}...`);
-              attemptNextRound().then(resolve).catch(reject);
-            } else {
-              reject(new Error('Timeout final dépassé'));
-            }
-          }, 8000);
-
-          socket.emit('game:next_round', { gameId, forceAdvance: force }, (response: any) => {
-            clearTimeout(timeoutId);
-            if (response?.success) {
-              resolve(true);
-            } else {
-              reject(new Error(response?.error || 'Erreur lors du passage au tour suivant'));
-            }
-          });
-        });
-      } catch (error) {
-        if (currentRetry >= maxRetries - 1) throw error;
-        await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, currentRetry)));
-        return attemptNextRound();
+      // Récupérer l'ID utilisateur
+      const userId = await UserIdManager.getUserId();
+      if (!userId) {
+        throw new Error("ID utilisateur non disponible");
       }
-    };
+      
+      // Faire la requête HTTP directement
+      const response = await api.post(`/games/${gameId}/next-round`, {
+        user_id: userId,
+        force_advance: force
+      }, {
+        headers: {
+          'X-Direct-Method': 'true'
+        },
+        timeout: 12000 // timeout plus long pour assurer une chance de succès
+      });
+      
+      console.log(`✅ Réponse du serveur pour passage au tour suivant:`, response.data);
+      
+      if (response.data?.status === 'success') {
+        return true;
+      } else {
+        throw new Error(response.data?.message || "Échec du passage au tour suivant");
+      }
+    } catch (error) {
+      console.error(`❌ Erreur lors du passage au tour suivant:`, error);
+      
+      // Essayer une approche alternative en cas d'échec
+      try {
+        return await this.nextRoundViaHttp(gameId, force);
+      } catch (secondError) {
+        console.error(`❌ Échec de la méthode alternative:`, secondError);
+        throw error; // Propager l'erreur originale
+      }
+    }
+  }
 
-    return attemptNextRound();
+  // Nouvelle méthode pour exécuter la demande via HTTP
+  private async nextRoundViaHttp(gameId: string, force: boolean = false): Promise<boolean> {
+    try {
+      console.log(`🌐 Tentative de passage au tour suivant via HTTP - Game: ${gameId}`);
+      const userId = await UserIdManager.getUserId();
+      
+      const response = await api.post(`/games/${gameId}/next-round`, {
+        force_advance: force,
+        user_id: userId
+      }, {
+        headers: {
+          'X-Retry-Mode': 'true',  // Indiquer qu'il s'agit d'une tentative de récupération
+        },
+        timeout: 10000
+      });
+      
+      if (response.data?.status === 'success') {
+        console.log('✅ Passage au tour suivant réussi via HTTP (solution de repli)');
+        return true;
+      } else {
+        console.error('❌ Échec du passage au tour suivant via HTTP:', response.data);
+        return false;
+      }
+    } catch (error) {
+      console.error('❌ Erreur lors du passage au tour suivant via HTTP:', error);
+      throw new Error('Échec total du passage au tour suivant');
+    }
   }
 
   /**

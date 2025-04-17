@@ -11,7 +11,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Player, GamePhase, GameState, Answer, Question } from '@/types/gameTypes';
 import gameService from '@/services/queries/game';
 import SocketService from '@/services/socketService';
-import api from '@/config/axios';
+import api, { API_URL } from '@/config/axios';
+import axios from 'axios';
 import NetInfo from '@react-native-community/netinfo';
 import GameTimer from '@/components/game/GameTimer';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -127,6 +128,12 @@ export default function GameScreen() {
       const determineEffectivePhase = (serverPhase: string, isTarget: boolean, hasAnswered: boolean, hasVoted: boolean): GamePhase => {
         console.log(`🎮 Détermination phase - Serveur: ${serverPhase}, isTarget: ${isTarget}, hasAnswered: ${hasAnswered}, hasVoted: ${hasVoted}`);
       
+        // Validation de la phase pour éviter les erreurs
+        if (!serverPhase || typeof serverPhase !== 'string') {
+          console.warn(`⚠️ Phase invalide reçue: ${serverPhase}`);
+          return GamePhase.WAITING;
+        }
+      
         switch (serverPhase) {
           case 'question':
             return isTarget ? GamePhase.WAITING : GamePhase.QUESTION;
@@ -141,8 +148,15 @@ export default function GameScreen() {
       
           case 'results':
             return GamePhase.RESULTS;
+            
+          case 'finished':
+            return GamePhase.FINISHED;
+          
+          case 'waiting':
+            return GamePhase.WAITING;
       
           default:
+            console.warn(`⚠️ Phase serveur non reconnue: ${serverPhase}, utilisation de WAITING comme fallback`);
             return GamePhase.WAITING;
         }
       };
@@ -545,54 +559,67 @@ export default function GameScreen() {
     }
     
     try {
-      console.log("🎮 Tentative de passage au tour suivant...");
-      
+      console.log("🎮 Tentative de passage au tour suivant via HTTP...");
       setIsSubmitting(true);
       
+      const userId = await UserIdManager.getUserId();
+      
+      // Utiliser directement HTTP sans tenter d'abord via WebSocket
       try {
-        // Utiliser le service game qui vérifiera si l'utilisateur est l'hôte
-        await gameService.nextRound(id as string);
+        const response = await api.post(`/games/${id}/next-round`, { 
+          user_id: userId,
+          force_advance: true 
+        }, { 
+          headers: { 'X-Direct-HTTP': 'true' },
+          timeout: 10000
+        });
         
-        setGameState(prev => ({
-          ...prev,
-          phase: GamePhase.LOADING,
-        }));
-        
-        setTimeout(() => {
-          if (typeof fetchGameData === 'function') {
-            fetchGameData();
-          }
-        }, 1500);
-      } catch (error) {
-        // Si l'erreur est liée au statut d'hôte, vérifier si nous pouvons quand même continuer
-        if (error.message && error.message.includes("l'hôte")) {
-          // Ce n'est pas l'hôte - c'est normal pour les joueurs non-hôtes
-          console.log("⚠️ L'utilisateur n'est pas l'hôte - attente de la progression initiée par l'hôte");
-          return;
-        }
-        
-        // Pour les autres erreurs, les afficher
-        throw error;
-      }
-    } catch (error) {
-      console.error("❌ Erreur lors du passage au tour suivant:", error);
-      
-      let errorMessage = "Impossible de passer au tour suivant.";
-      if (error.message && typeof error.message === 'string') {
-        if (error.message.includes("l'hôte") || error.message.includes("Seul l'hôte")) {
-          errorMessage = "Seul l'hôte de la partie peut passer au tour suivant.";
-        } else if (error.message.includes("Ce n'est pas le moment")) {
-          errorMessage = "Ce n'est pas encore le moment de passer au tour suivant. Veuillez attendre la fin de la phase actuelle.";
+        if (response.data?.status === 'success') {
+          console.log("✅ Passage au tour suivant réussi via HTTP");
+          Alert.alert("Succès", "Passage au tour suivant effectué!");
+          
+          // Forcer une mise à jour des données du jeu
+          setTimeout(() => fetchGameData(), 1000);
         } else {
-          errorMessage = error.message;
+          throw new Error(response.data?.message || "La requête HTTP a échoué");
+        }
+      } catch (error) {
+        console.error("❌ Erreur lors du passage au tour suivant:", error);
+        
+        // En cas d'échec, nouvelle tentative avec des paramètres légèrement différents
+        try {
+          console.log("🔄 Seconde tentative HTTP avec paramètres alternatifs...");
+          
+          const retryResponse = await api.post(`/games/${id}/next-round`, { 
+            user_id: userId,
+            force_advance: true,
+            retry: true
+          }, { 
+            headers: { 'X-Retry': 'true' },
+            timeout: 15000
+          });
+          
+          if (retryResponse.data?.status === 'success') {
+            console.log("✅ Passage au tour suivant réussi via seconde tentative HTTP");
+            Alert.alert("Succès", "Passage au tour suivant effectué via méthode alternative!");
+            
+            // Forcer une mise à jour des données du jeu
+            setTimeout(() => fetchGameData(), 1500);
+          } else {
+            throw new Error("Échec de toutes les tentatives");
+          }
+        } catch (retryError) {
+          console.error("❌ Échec de la seconde tentative:", retryError);
+          Alert.alert(
+            "Erreur",
+            "Impossible de passer au tour suivant. Veuillez réessayer.",
+            [{ text: "OK" }]
+          );
         }
       }
-      
-      Alert.alert(
-        "Erreur", 
-        errorMessage,
-        [{ text: "OK" }]
-      );
+    } catch (outerError) {
+      console.error("❌ Erreur externe:", outerError);
+      Alert.alert("Erreur", "Une erreur inattendue s'est produite.");
     } finally {
       setIsSubmitting(false);
     }
@@ -625,6 +652,27 @@ export default function GameScreen() {
     // Pour le débogage : afficher des informations sur la phase actuelle
     console.log(`🎮 Rendu de la phase: ${gameState.phase} (serveur: ${gameState.game?.currentPhase})`);
     console.log(`👤 État joueur: isTarget=${gameState.currentUserState?.isTargetPlayer}, hasVoted=${gameState.currentUserState?.hasVoted}`);
+
+    // Vérifier si la phase est valide
+    const validPhases = Object.values(GamePhase);
+    if (!validPhases.includes(gameState.phase as GamePhase)) {
+      console.error(`❌ Phase inconnue détectée lors du rendu: ${gameState.phase}`);
+      // Utiliser une phase de secours adaptée au contexte
+      return (
+        <View style={styles.waitingContainer}>
+          <Text style={styles.messageTitle}>Synchronisation en cours...</Text>
+          <Text style={styles.messageText}>
+            Le jeu est en cours de synchronisation. Veuillez patienter un instant.
+          </Text>
+          <TouchableOpacity
+            style={styles.refreshButton}
+            onPress={() => fetchGameData()}
+          >
+            <Text style={styles.refreshButtonText}>Rafraîchir</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
 
     // Ne pas autoriser de changement d'interface pendant la phase resultats
     if (gameState.phase === GamePhase.RESULTS) {

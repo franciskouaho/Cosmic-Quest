@@ -508,46 +508,43 @@ class GameService {
   }
 
   /**
-   * Passer au tour suivant
+   * Passer au tour suivant via HTTP uniquement
    */
-  async nextRound(gameId: string) {
+  async nextRound(gameId: string, forceAdvance: boolean = false): Promise<any> {
     try {
-      console.log(`🎮 Tentative de passage au tour suivant pour le jeu ${gameId}`);
+      console.log(`🌐 Passage au tour suivant via HTTP direct pour le jeu ${gameId}`);
       
-      this.gameStateCache.delete(gameId); // Invalider le cache
+      // Invalider immédiatement le cache pour forcer un rechargement après
+      this.gameStateCache.delete(gameId);
       
-      // S'assurer que la connexion WebSocket est active
-      await this.ensureSocketConnection(gameId);
-      
-      // Augmenter le délai d'attente
-      const TIMEOUT = 15000; // 15 secondes
-      const startTime = Date.now();
-      
-      // Fonction pour vérifier le changement de phase
-      const verifyPhaseChange = async () => {
-        const state = await this.getGameState(gameId, 0, 1, true);
-        return {
-          changed: state.game.currentPhase !== 'results',
-          newPhase: state.game.currentPhase
-        };
-      };
-
-      // Envoyer la commande de passage au tour suivant
-      await GameWebSocketService.nextRound(gameId);
-
-      // Attendre le changement de phase avec timeout
-      while (Date.now() - startTime < TIMEOUT) {
-        const { changed, newPhase } = await verifyPhaseChange();
-        if (changed) {
-          console.log(`✅ Phase changée avec succès vers: ${newPhase}`);
-          return { success: true, phase: newPhase };
-        }
-        await new Promise(resolve => setTimeout(resolve, 1000));
+      // Récupérer l'ID utilisateur
+      const userId = await UserIdManager.getUserId();
+      if (!userId) {
+        throw new Error("ID utilisateur non disponible");
       }
-
-      throw new Error('Timeout lors du passage au tour suivant');
+      
+      // Faire la requête HTTP directement
+      const response = await api.post(`/games/${gameId}/next-round`, {
+        user_id: userId,
+        force_advance: forceAdvance
+      }, {
+        headers: {
+          'X-Direct-Method': 'true'
+        },
+        timeout: 12000 // timeout plus long pour assurer une chance de succès
+      });
+      
+      console.log(`✅ Réponse du serveur pour passage au tour suivant:`, response.data);
+      
+      if (response.data?.status === 'success') {
+        // Forcer un rafraîchissement des données après un court délai
+        setTimeout(() => this.getGameState(gameId, 0, 1, true), 800);
+        return response.data;
+      } else {
+        throw new Error(response.data?.message || "Échec du passage au tour suivant");
+      }
     } catch (error) {
-      console.error(`❌ Échec du passage au tour suivant:`, error);
+      console.error(`❌ Erreur lors du passage au tour suivant:`, error);
       throw error;
     }
   }
