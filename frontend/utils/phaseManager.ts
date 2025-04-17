@@ -4,6 +4,7 @@ export enum GamePhase {
   ANSWER = 'answer',
   VOTE = 'vote',
   WAITING = 'waiting',
+  WAITING_FOR_VOTE = 'waiting_for_vote',
   RESULTS = 'results',
   FINISHED = 'finished'
 }
@@ -12,10 +13,10 @@ export class PhaseManager {
   static readonly VALID_TRANSITIONS = {
     'question': ['answer'],
     'answer': ['vote', 'waiting'],
-    'vote': ['results', 'waiting_for_vote'],
+    'vote': ['results', 'waiting', 'waiting_for_vote'],
     'waiting': ['vote', 'results', 'question'],
-    'waiting_for_vote': ['results'],
-    'results': ['question'],
+    'waiting_for_vote': ['results', 'waiting'],
+    'results': ['question', 'finished'],
     'finished': []
   };
 
@@ -50,16 +51,28 @@ export class PhaseManager {
     switch (serverPhase) {
       case 'question':
         return isTarget ? GamePhase.WAITING : GamePhase.QUESTION;
+      
       case 'answer':
         return isTarget ? GamePhase.WAITING : (hasAnswered ? GamePhase.WAITING : GamePhase.ANSWER);
+      
       case 'vote':
-        return isTarget ? (hasVoted ? GamePhase.WAITING : GamePhase.VOTE) : GamePhase.WAITING_FOR_VOTE;
+        // Cas particulier : si le joueur est la cible ET a déjà voté, il doit attendre
+        if (isTarget) {
+          return hasVoted ? GamePhase.WAITING : GamePhase.VOTE;
+        } else {
+          // Si le joueur n'est pas la cible, il attend pendant que la cible vote
+          return GamePhase.WAITING_FOR_VOTE;
+        }
+      
       case 'results':
         return GamePhase.RESULTS;
+      
       case 'finished':
         return GamePhase.FINISHED;
+      
       case 'waiting':
         return GamePhase.WAITING;
+      
       default:
         console.warn(`⚠️ Phase inconnue: ${serverPhase}, utilisation de la phase 'waiting'`);
         return GamePhase.WAITING;

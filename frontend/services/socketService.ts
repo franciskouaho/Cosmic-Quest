@@ -493,6 +493,126 @@ class SocketService {
     
     console.log('📊 État actuel du service WebSocket:', debugInfo);
   }
+  
+  /**
+   * Réinitialise complètement la connexion
+   * Utile en cas d'erreur grave ou de désynchronisation
+   */
+  async reset(): Promise<boolean> {
+    try {
+      console.log('🔄 Réinitialisation complète du service WebSocket...');
+      
+      // Stocker les canaux actifs pour se reconnecter après
+      const previousRooms = Array.from(this.activeRooms);
+      const previousGames = Array.from(this.activeGames);
+      
+      // Fermer proprement la connexion actuelle
+      if (this.socket) {
+        this.socket.offAny(); // Supprimer tous les écouteurs
+        this.socket.disconnect();
+        this.socket = null;
+      }
+      
+      // Réinitialiser l'état
+      this.isConnecting = false;
+      this.reconnectAttempts = 0;
+      this.activeRooms.clear();
+      this.activeGames.clear();
+      this.currentRoom = null;
+      this.currentGame = null;
+      
+      // Attendre un court instant
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      // Créer une nouvelle connexion
+      await this.initialize();
+      
+      // Se reconnecter aux canaux précédents
+      if (this.socket && this.socket.connected) {
+        for (const room of previousRooms) {
+          this.socket.emit('join-room', { roomCode: room });
+          this.activeRooms.add(room);
+        }
+        
+        for (const game of previousGames) {
+          this.socket.emit('join-game', { gameId: game });
+          this.activeGames.add(game);
+        }
+        
+        console.log('✅ Réinitialisation réussie, reconnecté aux canaux précédents');
+        return true;
+      }
+      
+      console.error('❌ Réinitialisation échouée: impossible de se reconnecter');
+      return false;
+    } catch (error) {
+      console.error('❌ Erreur lors de la réinitialisation du service:', error);
+      return false;
+    }
+  }
+  
+  /**
+   * Tente de reconnecter le socket si déconnecté
+   */
+  async reconnect(): Promise<boolean> {
+    if (this.isConnecting) {
+      console.log('⚠️ Reconnexion déjà en cours, ignoré');
+      return false;
+    }
+    
+    if (this.socket && this.socket.connected) {
+      console.log('✅ Socket déjà connecté, reconnexion inutile');
+      return true;
+    }
+    
+    try {
+      this.isConnecting = true;
+      this.reconnectAttempts++;
+      
+      console.log(`🔄 Tentative de reconnexion (${this.reconnectAttempts})...`);
+      
+      if (!this.socket) {
+        await this.initialize();
+      } else {
+        this.socket.connect();
+      }
+      
+      // Attendre que la connexion soit établie
+      const result = await Promise.race([
+        new Promise<boolean>(resolve => {
+          if (!this.socket) {
+            resolve(false);
+            return;
+          }
+          
+          const connectHandler = () => {
+            if (this.socket) {
+              this.socket.off('connect', connectHandler);
+            }
+            resolve(true);
+          };
+          
+          this.socket.once('connect', connectHandler);
+        }),
+        new Promise<boolean>(resolve => setTimeout(() => resolve(false), 5000))
+      ]);
+      
+      if (result) {
+        console.log('✅ Reconnexion réussie');
+        this.isConnecting = false;
+        this.reconnectAttempts = 0;
+        return true;
+      } else {
+        console.error('❌ Échec de reconnexion: timeout');
+        this.isConnecting = false;
+        return false;
+      }
+    } catch (error) {
+      console.error('❌ Erreur lors de la reconnexion:', error);
+      this.isConnecting = false;
+      return false;
+    }
+  }
 
   /**
    * Quitter une salle spécifique
@@ -761,34 +881,6 @@ class SocketService {
       console.error(`❌ SocketService: Erreur lors de la vérification forcée de phase:`, error);
       return false;
     }
-  }
-
-  /**
-   * Méthode utilitaire pour tenter une reconnexion
-   */
-  private async reconnect(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      try {
-        // Récupérer l'instance existante
-        const socket = this.getInstance();
-        
-        // Déclencher une reconnexion manuelle
-        socket.disconnect().connect();
-        
-        // Attendre la confirmation de reconnexion
-        socket.once('connect', () => {
-          console.log('🔄 Socket reconnexion réussie');
-          resolve();
-        });
-        
-        // Timeout après 5 secondes
-        setTimeout(() => {
-          reject(new Error('Timeout de reconnexion'));
-        }, 5000);
-      } catch (error) {
-        reject(error);
-      }
-    });
   }
 
   /**

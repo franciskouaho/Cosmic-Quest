@@ -1,52 +1,79 @@
-import api from '@/config/axios';
-import UserIdManager from './userIdManager';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import SocketService from '@/services/socketService';
+import GameWebSocketService from '@/services/gameWebSocketService';
 
 /**
  * Utilitaire pour vérifier si l'utilisateur est l'hôte d'une partie ou d'une salle
  */
 class HostChecker {
   // Cache des résultats de vérification d'hôte pour éviter des requêtes répétées
-  private static hostCache: Record<string, {isHost: boolean; timestamp: number; hostId?: string}> = {};
-  private static cacheTTL = 30000; // 30 secondes
+  private static hostStatusCache = new Map<string, {isHost: boolean, timestamp: number}>();
 
   /**
-   * Vérifie si l'utilisateur courant est l'hôte d'une partie en privilégiant WebSocket
-   * @param gameId ID de la partie
-   * @returns true si l'utilisateur est l'hôte, false sinon
+   * Vérifie si l'utilisateur actuel est l'hôte de la partie
+   * Utilise un cache à court terme pour éviter les vérifications répétées
    */
   static async isCurrentUserHost(gameId: string | number): Promise<boolean> {
     const cacheTTL = 10000; // 10 seconds cache
     const cacheKey = String(gameId);
     
     try {
-      // Check cache first
+      // Vérifier d'abord le cache en mémoire (plus rapide que AsyncStorage)
+      const memCached = this.hostStatusCache.get(cacheKey);
+      if (memCached && Date.now() - memCached.timestamp < cacheTTL) {
+        return memCached.isHost;
+      }
+      
+      // Ensuite vérifier le cache persistant
       const cachedResult = await AsyncStorage.getItem(`@host_status_${cacheKey}`);
       if (cachedResult) {
         const { isHost, timestamp } = JSON.parse(cachedResult);
         if (Date.now() - timestamp < cacheTTL) {
+          // Mettre aussi en cache mémoire
+          this.hostStatusCache.set(cacheKey, { isHost, timestamp });
           return isHost;
         }
       }
       
-      // Try WebSocket verification
+      // Essayer d'abord via GameWebSocketService qui est optimisé
+      try {
+        const result = await GameWebSocketService.isUserHost(String(gameId));
+        
+        // Mettre en cache les deux résultats
+        const cacheData = {
+          isHost: result,
+          timestamp: Date.now()
+        };
+        
+        this.hostStatusCache.set(cacheKey, cacheData);
+        await AsyncStorage.setItem(`@host_status_${cacheKey}`, JSON.stringify(cacheData));
+        
+        return result;
+      } catch (gameServiceError) {
+        console.warn('⚠️ Échec vérification hôte via GameWebSocketService, tentative alternative:', gameServiceError);
+      }
+      
+      // Si l'approche optimisée échoue, tenter via le socket directement avec timeout
       const socket = await SocketService.getInstanceAsync();
       const result = await Promise.race([
-        new Promise((resolve) => {
+        new Promise<boolean>((resolve) => {
           socket.emit('game:check_host', { gameId }, (response: any) => {
             resolve(response?.isHost || false);
           });
         }),
-        new Promise((resolve) => setTimeout(() => resolve(false), 3000))
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 3000))
       ]);
       
-      // Cache the result
-      await AsyncStorage.setItem(`@host_status_${cacheKey}`, JSON.stringify({
+      // Mettre en cache
+      const cacheData = {
         isHost: result,
         timestamp: Date.now()
-      }));
+      };
       
-      return result as boolean;
+      this.hostStatusCache.set(cacheKey, cacheData);
+      await AsyncStorage.setItem(`@host_status_${cacheKey}`, JSON.stringify(cacheData));
+      
+      return result;
     } catch (error) {
       console.error('❌ Erreur lors de la vérification host:', error);
       return false;
@@ -54,79 +81,44 @@ class HostChecker {
   }
 
   /**
-   * Vérifie si un utilisateur est l'hôte d'une salle spécifique
-   * @param roomId ID de la salle
-   * @param userId ID de l'utilisateur
-   * @returns true si l'utilisateur est l'hôte
+   * Nettoie le cache pour une partie spécifique
+   * À appeler quand un changement d'hôte est possible
    */
-  private static async checkRoomHost(roomId: string | number, userId: string | number): Promise<boolean> {
+  static async clearHostCache(gameId: string | number): Promise<void> {
+    const cacheKey = String(gameId);
+    
     try {
-      console.log(`🔍 HostChecker: Vérification via salle ${roomId}`);
-      const response = await api.get(`/rooms/${roomId}`);
+      // Supprimer du cache mémoire
+      this.hostStatusCache.delete(cacheKey);
       
-      if (response.data?.data?.room?.hostId) {
-        const hostId = response.data.data.room.hostId;
-        const isHost = String(hostId) === String(userId);
-        
-        // Stocker aussi l'information dans le stockage local
-        await this.storeGameHostInfo(roomId, {
-          hostId: String(hostId),
-          timestamp: Date.now()
-        });
-        
-        console.log(`👑 HostChecker: L'utilisateur ${userId} ${isHost ? 'EST' : 'N\'EST PAS'} l'hôte de la salle ${roomId}`);
-        return isHost;
-      }
-      return false;
+      // Supprimer du cache persistant
+      await AsyncStorage.removeItem(`@host_status_${cacheKey}`);
+      
+      console.log(`🧹 Cache de statut d'hôte nettoyé pour le jeu ${gameId}`);
     } catch (error) {
-      if (error.response?.status === 404) {
-        console.warn(`⚠️ HostChecker: Salle ${roomId} non trouvée`);
-      } else {
-        console.error(`❌ HostChecker: Erreur lors de la vérification via la salle:`, error);
-      }
-      throw error;
-    }
-  }
-  
-  /**
-   * Stocke les informations d'hôte d'un jeu dans le stockage local
-   */
-  private static async storeGameHostInfo(gameId: string | number, info: { hostId: string, timestamp: number }): Promise<void> {
-    try {
-      const { AsyncStorage } = await import('@react-native-async-storage/async-storage');
-      const key = `@game_host_${gameId}`;
-      await AsyncStorage.setItem(key, JSON.stringify(info));
-    } catch (error) {
-      console.warn(`⚠️ Erreur lors du stockage d'information d'hôte:`, error);
-    }
-  }
-  
-  /**
-   * Récupère les informations d'hôte d'un jeu depuis le stockage local
-   */
-  private static async getGameHostFromStorage(gameId: string | number): Promise<{ hostId: string, timestamp: number } | null> {
-    try {
-      const { AsyncStorage } = await import('@react-native-async-storage/async-storage');
-      const key = `@game_host_${gameId}`;
-      const data = await AsyncStorage.getItem(key);
-      if (data) {
-        return JSON.parse(data);
-      }
-      return null;
-    } catch (error) {
-      console.warn(`⚠️ Erreur lors de la récupération d'information d'hôte:`, error);
-      return null;
+      console.error('❌ Erreur lors du nettoyage du cache d\'hôte:', error);
     }
   }
 
   /**
-   * Invalide le cache pour un gameId spécifique ou pour tous les jeux
+   * Définit explicitement le statut d'hôte (utilisé pour les cas spéciaux)
    */
-  static invalidateCache(gameId?: string | number): void {
-    if (gameId) {
-      delete this.hostCache[String(gameId)];
-    } else {
-      this.hostCache = {};
+  static async setHostStatus(gameId: string | number, isHost: boolean): Promise<void> {
+    const cacheKey = String(gameId);
+    
+    try {
+      const cacheData = {
+        isHost,
+        timestamp: Date.now()
+      };
+      
+      // Sauvegarder dans les deux caches
+      this.hostStatusCache.set(cacheKey, cacheData);
+      await AsyncStorage.setItem(`@host_status_${cacheKey}`, JSON.stringify(cacheData));
+      
+      console.log(`👑 Statut d'hôte défini explicitement pour le jeu ${gameId}: ${isHost}`);
+    } catch (error) {
+      console.error('❌ Erreur lors de la définition du statut d\'hôte:', error);
     }
   }
 }

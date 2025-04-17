@@ -159,6 +159,71 @@ Si certains joueurs voient des phases différentes:
 - Utiliser le endpoint `/api/v1/games/:id/force-check-phase` pour resynchroniser l'état du jeu
 - Le bouton de rafraîchissement manuel est disponible en cas de besoin extrême
 
+## Outils de débogage et récupération
+
+Cosmic Quest intègre désormais des outils avancés pour diagnostiquer et résoudre les problèmes de synchronisation.
+
+### Utilisation des outils de débogage
+
+Pour diagnostiquer un problème dans une partie:
+
+```js
+// Dans la console de développement
+import GameDebugger from "@/utils/gameDebugger";
+await GameDebugger.diagnoseGameState("ID_DU_JEU");
+```
+
+### Récupération automatique des blocages
+
+Le système détecte automatiquement plusieurs types de blocages:
+
+1. **Blocages de phase**: Lorsqu'une phase dure trop longtemps sans avancer
+2. **Désynchronisation client/serveur**: Lorsque l'état du client ne correspond pas à celui du serveur
+3. **Problèmes de WebSocket**: Déconnexions, timeouts ou erreurs de communication
+
+Lorsqu'un blocage est détecté, le système tente plusieurs stratégies de récupération:
+
+```js
+// Forcer une vérification des phases côté serveur
+await GameDebugger.forceCheckPhase("ID_DU_JEU");
+
+// Tenter une réparation complète
+await GameDebugger.repairGame("ID_DU_JEU");
+```
+
+### Vérification de l'état Socket.IO
+
+Pour vérifier l'état actuel de la connexion Socket.IO:
+
+```js
+import SocketService from "@/services/socketService";
+const socket = await SocketService.getInstanceAsync();
+socket.logDebugInfo();
+```
+
+### Tests et diagnostics WebSocket
+
+Pour tester la connexion WebSocket et les fonctionnalités spécifiques:
+
+```js
+import {
+  testSocketConnection,
+  testSubmitAnswer,
+  checkAndUnblockGame,
+} from "@/utils/socketTester";
+
+// Tester la connexion de base
+await testSocketConnection();
+
+// Tester la soumission d'une réponse
+await testSubmitAnswer("ID_DU_JEU", "ID_DE_QUESTION", "Ma réponse de test");
+
+// Vérifier et débloquer une partie potentiellement bloquée
+await checkAndUnblockGame("ID_DU_JEU");
+```
+
+Ces outils permettent de diagnostiquer rapidement les problèmes et d'y remédier sans nécessiter un redémarrage complet de l'application.
+
 ## Get a fresh project
 
 When you're ready, run:

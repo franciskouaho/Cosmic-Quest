@@ -251,13 +251,72 @@ export default function HomeScreen() {
                     <Text style={styles.modeDescription}>Un mode gratuit pour rigoler tranquillement entre potes.</Text>
                   </View>
                   <View style={styles.freeTagContainer}>
-                    <Text style={styles.freeTag}>GRATUIT</Text>
+                    <Text style={styles.freeTag}>NEW !</Text>
+                  </View>
+                </View>
+              </LinearGradient>
+            </TouchableOpacity>
+
+             <TouchableOpacity 
+              style={styles.modeCard} 
+              onPress={() => createGameRoom('soit-tu-sais-soit-tu-bois')}
+            >
+              <LinearGradient
+                colors={["rgba(156, 39, 176, 0.30)", "rgba(156, 39, 176, 0.30)"]} 
+                style={[styles.modeGradient, styles.glowingBorder]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                borderRadius={8}
+              >
+                <View style={styles.modeContent}>
+                  <View style={styles.characterContainer}>
+                    <Image 
+                      source={require('@/assets/images/cochon.png')}
+                      style={styles.characterImage}
+                      resizeMode="contain"
+                    />
+                  </View>
+                  <View style={styles.modeTextContainer}>
+                    <Text style={styles.modeName}>Soit tu sais soit tu bois</Text>
+                    <Text style={styles.modeDescription}>Un mode avancé avec encore plus de questions et de fun.</Text>
+                  </View>
+                  <View style={[styles.freeTagContainer, { backgroundColor: "rgba(255, 193, 7, 0.8)" }]}>
+                    <Text style={styles.freeTag}>PREMIUM</Text>
+                  </View>
+                </View>
+              </LinearGradient>
+            </TouchableOpacity>
+
+             <TouchableOpacity 
+              style={styles.modeCard} 
+              onPress={() => createGameRoom('action-ou-verite')}
+            >
+              <LinearGradient
+                colors={["rgba(156, 39, 176, 0.30)", "rgba(156, 39, 176, 0.30)"]} 
+                style={[styles.modeGradient, styles.glowingBorder]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                borderRadius={8}
+              >
+                <View style={styles.modeContent}>
+                  <View style={styles.characterContainer}>
+                    <Image 
+                      source={require('@/assets/images/snake_vs_fox.png')}
+                      style={styles.characterImage}
+                      resizeMode="contain"
+                    />
+                  </View>
+                  <View style={styles.modeTextContainer}>
+                    <Text style={styles.modeName}>Action ou vérité</Text>
+                    <Text style={styles.modeDescription}>Un mode avancé avec encore plus de questions et de fun.</Text>
+                  </View>
+                  <View style={[styles.freeTagContainer, { backgroundColor: "#4CAF50" }]}>
+                    <Text style={styles.freeTag}>NEW !</Text>
                   </View>
                 </View>
               </LinearGradient>
             </TouchableOpacity>
             
-            {/* Vous pouvez ajouter d'autres modes de jeu ici */}
             <TouchableOpacity 
               style={styles.modeCard} 
               onPress={() => createGameRoom('spicy')}
@@ -272,7 +331,7 @@ export default function HomeScreen() {
                 <View style={styles.modeContent}>
                   <View style={styles.characterContainer}>
                     <Image 
-                      source={require('@/assets/images/cochon.png')}
+                      source={require('@/assets/images/vache.png')}
                       style={styles.characterImage}
                       resizeMode="contain"
                     />
@@ -432,19 +491,24 @@ const styles = StyleSheet.create({
   },
   freeTagContainer: {
     backgroundColor: "rgba(156, 39, 176, 0.8)",
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
     position: "absolute",
-    right: 15,
-    top: 15,
+    right: 10,
+    top: 10,
     zIndex: 10,
     elevation: 5,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 3,
   },
   freeTag: {
     color: "white",
     fontWeight: "bold",
-    fontSize: 12,
+    fontSize: 10,
+    textAlign: 'center',
   },
   profileButton: {
     width: 40,

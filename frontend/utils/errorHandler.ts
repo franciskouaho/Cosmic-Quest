@@ -1,10 +1,12 @@
 import { Alert } from 'react-native';
 import NetInfo from '@react-native-community/netinfo';
+import GameDebugger from './gameDebugger';
+import SocketService from '@/services/socketService';
 
 /**
  * Utilitaire pour gérer les erreurs liées aux WebSockets
  */
-export const handleSocketError = async (error: any, context: string): Promise<void> => {
+export const handleSocketError = async (error: any, context: string, gameId?: string): Promise<void> => {
   // Enregistrer l'erreur avec le contexte
   console.error(`❌ Erreur Socket (${context}):`, error);
   
@@ -21,166 +23,138 @@ export const handleSocketError = async (error: any, context: string): Promise<vo
     return;
   }
   
+  // Vérifier l'état du socket
+  let socketConnected = false;
+  try {
+    const socket = await SocketService.getInstanceAsync();
+    socketConnected = socket.connected;
+  } catch (socketError) {
+    console.error('❌ Erreur lors de la vérification du socket:', socketError);
+  }
+  
   // Déterminer le type d'erreur
   if (error.message?.includes('timeout')) {
     Alert.alert(
       'Délai d\'attente dépassé',
-      'Le serveur met trop de temps à répondre. Veuillez réessayer.',
-      [{ text: 'OK' }]
+      'Le serveur met trop de temps à répondre. Nous allons tenter de rétablir la connexion.',
+      [
+        { 
+          text: 'OK', 
+          onPress: async () => {
+            if (gameId) {
+              await GameDebugger.repairGame(gameId);
+            }
+          }
+        }
+      ]
     );
-  } else if (error.message?.includes('socket')) {
-    // Pas d'alerte pour les erreurs de socket standards pour éviter de spammer l'utilisateur
-    console.warn('⚠️ Problème de connexion WebSocket:', error.message);
+  } else if (error.message?.includes('socket') || !socketConnected) {
+    Alert.alert(
+      'Problème de connexion WebSocket',
+      'La connexion temps réel est interrompue. Cela peut affecter la synchronisation du jeu.',
+      [
+        { 
+          text: 'Reconnecter', 
+          onPress: async () => {
+            try {
+              await SocketService.reconnect();
+              if (gameId) {
+                await GameDebugger.repairGame(gameId);
+              }
+            } catch (reconnectError) {
+              console.error('❌ Échec de reconnexion:', reconnectError);
+            }
+          }
+        },
+        { text: 'Ignorer' }
+      ]
+    );
   } else {
-    // Pour les erreurs inconnues, afficher un message générique
-    console.error('❌ Erreur non gérée:', error);
+    // Erreurs génériques
+    const errorMessage = error.message || 'Une erreur inconnue est survenue';
+    
+    // Ajouter des options différentes en fonction du contexte
+    if (gameId) {
+      Alert.alert(
+        'Erreur',
+        `${errorMessage}\n\nVoulez-vous diagnostiquer le problème?`,
+        [
+          { 
+            text: 'Diagnostiquer', 
+            onPress: () => GameDebugger.diagnoseGameState(gameId)
+          },
+          { text: 'Ignorer' }
+        ]
+      );
+    } else {
+      Alert.alert('Erreur', errorMessage, [{ text: 'OK' }]);
+    }
   }
 };
 
 /**
- * Gestionnaire d'erreurs spécifique pour les problèmes WebSocket récurrents
- * @param error L'erreur WebSocket
- * @param context Le contexte où l'erreur s'est produite
- * @param callback Optional callback pour des actions spécifiques
+ * Utilitaire spécifique pour gérer les erreurs de soumission de réponse
  */
-export const handleWebSocketError = async (
-  error: any,
-  context: string,
-  callback?: () => Promise<void>
-): Promise<boolean> => {
+export const handleAnswerSubmissionError = async (error: any, gameId: string, retry?: () => Promise<void>): Promise<void> => {
+  console.error(`❌ Erreur lors de la soumission de réponse:`, error);
   
-  // Déterminer si c'est une erreur de timeout
-  const isTimeout = error.message?.includes('timeout') || error.message?.includes('timed out');
+  // Messages spécifiques selon le code d'erreur
+  let message = 'Impossible d\'envoyer votre réponse.';
   
-  // Vérifier la connexion internet
-  const netInfo = await NetInfo.fetch();
-  
-  if (!netInfo.isConnected) {
-    console.log('🌐 Pas de connexion Internet détectée');
-    Alert.alert(
-      'Problème de connexion',
-      'Vous semblez être hors ligne. Veuillez vérifier votre connexion Internet.',
-      [{ text: 'OK' }]
-    );
-    return false;
+  if (error.response?.status === 409) {
+    message = 'Vous avez déjà soumis une réponse à cette question.';
+  } else if (error.response?.status === 400 && error.response?.data?.code === 'TARGET_PLAYER_CANNOT_ANSWER') {
+    message = 'Vous êtes la cible de cette question et ne pouvez pas y répondre.';
+  } else if (error.message?.includes('Network Error')) {
+    return handleSocketError(error, 'submit-answer', gameId);
+  } else if (error.response?.data?.error) {
+    message = error.response.data.error;
   }
   
-  try {
-    // Pour les erreurs de timeout, tenter une optimisation WebSocket
-    if (isTimeout) {
-      console.log('⏱️ Erreur de timeout détectée, tentative d\'optimisation...');
-      
-      // Importer dynamiquement pour éviter les dépendances circulaires
-      const { optimizeWebSocketConnection } = await import('./socketTester');
-      const optimized = await optimizeWebSocketConnection();
-      
-      if (optimized) {
-        console.log('✅ Connexion WebSocket optimisée après timeout');
-        
-        // Exécuter le callback si fourni
-        if (callback) {
-          console.log('🔄 Tentative d\'exécution de l\'opération initiale...');
-          await callback();
-          return true;
-        }
-      } else {
-        console.log('⚠️ Échec de l\'optimisation WebSocket, utilisation du mode REST');
-        // Ici nous pourrions basculer sur une stratégie HTTP REST
-        return false;
-      }
-    }
-    
-    // Pour les autres erreurs WebSocket, essayer une réinitialisation complète
-    if (error.message?.includes('socket') || error.message?.includes('WebSocket')) {
-      console.log('🔄 Erreur de socket détectée, tentative de réinitialisation...');
-      
-      // Importer SocketService dynamiquement
-      const SocketService = (await import('@/services/socketService')).default;
-      
-      // Forcer l'initialisation d'une nouvelle connexion
-      try {
-        await SocketService.getInstanceAsync(true);
-        console.log('✅ Socket réinitialisé avec succès');
-        
-        // Exécuter le callback si fourni
-        if (callback) {
-          await callback();
-        }
-        
-        return true;
-      } catch (resetError) {
-        console.error('❌ Échec de la réinitialisation du socket:', resetError);
-      }
-    }
-    
-    // Si aucune action spécifique n'a fonctionné, informer l'utilisateur
+  // Si une fonction de nouvel essai est fournie, proposer de réessayer
+  if (retry) {
     Alert.alert(
-      'Problème de communication',
-      'Un problème de communication avec le serveur est survenu. Veuillez réessayer.',
-      [{ text: 'OK' }]
+      'Erreur',
+      message,
+      [
+        { text: 'Réessayer', onPress: () => retry() },
+        { text: 'Diagnostiquer', onPress: () => GameDebugger.diagnoseGameState(gameId) },
+        { text: 'Annuler' }
+      ]
     );
-    
-    return false;
-  } catch (handlerError) {
-    console.error('❌ Erreur dans le gestionnaire d\'erreurs:', handlerError);
-    return false;
+  } else {
+    Alert.alert('Erreur', message, [{ text: 'OK' }]);
   }
 };
 
 /**
- * Réinitialise les connexions WebSocket en cas de problèmes persistants
+ * Utilitaire pour la récupération d'erreurs critique avec réinitialisation WebSocket
  */
-export const resetWebSocketConnections = async (): Promise<boolean> => {
+export const handleCriticalError = async (error: any, context: string, gameId?: string): Promise<void> => {
+  console.error(`🚨 ERREUR CRITIQUE (${context}):`, error);
+  
+  // Tenter une réinitialisation complète de la connexion
   try {
-    console.log('🔄 Réinitialisation complète des connexions WebSocket...');
+    console.log('🔄 Tentative de réinitialisation WebSocket...');
+    await SocketService.reset();
     
-    // Récupérer SocketService
-    const SocketService = (await import('@/services/socketService')).default;
-    
-    // Forcer une déconnexion complète d'abord
-    try {
-      const socket = await SocketService.getInstanceAsync(false);
-      if (socket && socket.connected) {
-        socket.disconnect();
-        console.log('🔌 Socket déconnecté');
-      }
-    } catch (disconnectError) {
-      console.warn('⚠️ Erreur lors de la déconnexion:', disconnectError);
+    // Se reconnecter au jeu si un ID est fourni
+    if (gameId) {
+      await GameDebugger.repairGame(gameId);
     }
     
-    // Attendre un court instant
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    Alert.alert(
+      'Récupération réussie',
+      'La connexion a été réinitialisée avec succès.'
+    );
+  } catch (resetError) {
+    console.error('❌ Échec de réinitialisation:', resetError);
     
-    // Initialiser une nouvelle connexion
-    try {
-      const newSocket = await SocketService.getInstanceAsync(true);
-      const isConnected = newSocket && newSocket.connected;
-      
-      console.log(`🔌 Nouvelle connexion initialisée: ${isConnected ? 'connecté' : 'non connecté'}`);
-      
-      if (!isConnected) {
-        // Attendre que la connexion s'établisse
-        await new Promise<void>((resolve, reject) => {
-          const timeout = setTimeout(() => {
-            reject(new Error('Timeout lors de la connexion'));
-          }, 5000);
-          
-          newSocket.once('connect', () => {
-            clearTimeout(timeout);
-            resolve();
-          });
-        });
-      }
-      
-      console.log('✅ Connexion WebSocket réinitialisée avec succès');
-      return true;
-    } catch (connectError) {
-      console.error('❌ Échec de la reconnexion:', connectError);
-      return false;
-    }
-  } catch (error) {
-    console.error('❌ Erreur lors de la réinitialisation des connexions:', error);
-    return false;
+    Alert.alert(
+      'Erreur critique',
+      'Une erreur grave est survenue. Essayez de quitter et redémarrer l\'application.',
+      [{ text: 'OK' }]
+    );
   }
 };
 
@@ -208,7 +182,7 @@ export const setupGlobalErrorHandlers = () => {
 
 export default {
   handleSocketError,
-  handleWebSocketError,
-  resetWebSocketConnections,
+  handleAnswerSubmissionError,
+  handleCriticalError,
   setupGlobalErrorHandlers
 };
