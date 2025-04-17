@@ -1,20 +1,128 @@
 "use client"
 
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Image, Alert } from "react-native"
-import { StatusBar } from "expo-status-bar"
 import { LinearGradient } from "expo-linear-gradient"
 import { useAuth } from "@/contexts/AuthContext"
-import { Feather } from "@expo/vector-icons"
-import { router } from "expo-router"
 import BottomTabBar from "@/components/BottomTabBar"
 import TopBar from "@/components/TopBar"
 import SocketService from '@/services/socketService';
-import RoomService from '@/services/roomService';
 import { useEffect } from 'react';
 import NetInfo from '@react-native-community/netinfo';
 import { useCreateRoom } from '@/hooks/useCreateRoom';
 import LoadingOverlay from '@/components/common/LoadingOverlay';
 import {Socket} from "socket.io-client";
+
+// Configuration des modes de jeu
+const gameModes = [
+  {
+    id: 'on-ecoute-mais-on-ne-juge-pas',
+    name: 'On écoute mais on ne juge pas',
+    description: 'Un mode gratuit pour rigoler tranquillement entre potes.',
+    image: require('@/assets/images/taupeTranspa.png'),
+    colors: ["rgba(42, 59, 181, 0.30)", "rgba(67, 89, 224, 0.40)"],
+    borderColor: "#5D6DFF",
+    shadowColor: "#5D6DFF",
+    tag: 'NEW !',
+    tagColor: "#4CAF50",
+    premium: false
+  },
+  {
+    id: 'soit-tu-sais-soit-tu-bois',
+    name: 'Soit tu sais soit tu bois',
+    description: 'Un mode ludique avec un niveau de difficulté progressif.',
+    image: require('@/assets/images/cochon.png'),
+    colors: ["rgba(156, 39, 176, 0.30)", "rgba(186, 104, 200, 0.40)"],
+    borderColor: "#BA68C8",
+    shadowColor: "#BA68C8",
+    tag: 'PREMIUM',
+    tagColor: "rgba(255, 193, 7, 0.8)",
+    premium: true
+  },
+  {
+    id: 'action-ou-verite',
+    name: 'Action ou vérité',
+    description: 'Le classique revisité avec des défis exclusifs.',
+    image: require('@/assets/images/snake_vs_fox.png'),
+    colors: ["rgba(0, 150, 136, 0.30)", "rgba(77, 182, 172, 0.40)"],
+    borderColor: "#26A69A",
+    shadowColor: "#26A69A", 
+    tag: 'NEW !',
+    tagColor: "#4CAF50",
+    premium: false
+  },
+  {
+    id: 'spicy',
+    name: 'Hot',
+    description: 'Pour pimenter vos soirées avec des questions osées.',
+    image: require('@/assets/images/vache.png'),
+    colors: ["rgba(211, 47, 47, 0.30)", "rgba(229, 115, 115, 0.40)"],
+    borderColor: "#E57373",
+    shadowColor: "#E57373",
+    tag: 'PREMIUM',
+    tagColor: "rgba(255, 193, 7, 0.8)",
+    premium: true
+  },
+  {
+    id: 'connais-tu-vraiment',
+    name: 'Connais-tu vraiment ?',
+    description: 'Testez votre connaissance de vos amis.',
+    image: require('@/assets/images/taupeTranspa.png'),
+    colors: ["rgba(63, 81, 181, 0.30)", "rgba(121, 134, 203, 0.40)"],
+    borderColor: "#7986CB",
+    shadowColor: "#7986CB",
+    tag: 'NEW !',
+    tagColor: "#4CAF50",
+    premium: false
+  },
+  {
+    id: 'blind-test',
+    name: 'Blind Test',
+    description: 'Devinez des titres à partir d\'extraits musicaux.',
+    image: require('@/assets/images/cochon.png'), // À remplacer par une image appropriée
+    colors: ["rgba(255, 87, 34, 0.30)", "rgba(255, 138, 101, 0.40)"],
+    borderColor: "#FF8A65",
+    shadowColor: "#FF8A65",
+    tag: 'COMING SOON',
+    tagColor: "#9C27B0",
+    premium: true
+  }
+];
+
+// Configuration des packs thématiques
+const themePacks = [
+  {
+    id: 'peches-mignons',
+    title: 'PÉCHÉS MIGNONS',
+    colors: ["rgba(30, 59, 141, 0.3)", "rgba(59, 95, 217, 0.3)"],
+    borderColor: "#3B5FD9",
+    shadowColor: "#3B5FD9",
+    illustrations: 3,
+  },
+  {
+    id: 'souvenirs-enfance',
+    title: 'SOUVENIRS D\'ENFANCE',
+    colors: ["rgba(106, 27, 154, 0.3)", "rgba(156, 39, 176, 0.3)"],
+    borderColor: "#9C27B0",
+    shadowColor: "#9C27B0",
+    singleIllustration: true,
+  },
+  {
+    id: 'saint-valentin',
+    title: 'SAINT-VALENTIN',
+    colors: ["rgba(196, 26, 95, 0.3)", "rgba(255, 82, 82, 0.3)"],
+    borderColor: "#FF5252",
+    shadowColor: "#FF5252",
+    illustrations: 1,
+  },
+  {
+    id: 'soiree-hot',
+    title: 'SOIRÉE HOT',
+    colors: ["rgba(21, 101, 192, 0.3)", "rgba(66, 165, 245, 0.3)"],
+    borderColor: "#42A5F5",
+    shadowColor: "#42A5F5",
+    illustrations: 1,
+  },
+];
 
 export default function HomeScreen() {
   const { user } = useAuth()
@@ -107,12 +215,89 @@ export default function HomeScreen() {
     );
   }
   
+  // Rendu des cartes thématiques
+  const renderThemeCard = (theme: any) => (
+    <TouchableOpacity key={theme.id} style={styles.categoryCard}>
+      <LinearGradient
+        colors={theme.colors}
+        style={[
+          styles.cardGradient, 
+          { 
+            borderColor: theme.borderColor,
+            shadowColor: theme.shadowColor,
+          },
+          styles.glowingCategoryBorder
+        ]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+      >
+        <View style={styles.cardContent}>
+          <View style={styles.illustrationsContainer}>
+            {theme.singleIllustration ? (
+              <Image source={{ uri: "/placeholder.svg?height=120&width=120" }} style={styles.memoriesImage} />
+            ) : (
+              Array.from({ length: theme.illustrations || 1 }).map((_, index) => (
+                <View key={index} style={styles.illustration}>
+                  <Image
+                    source={{ uri: "/placeholder.svg?height=60&width=60" }}
+                    style={styles.illustrationImage}
+                  />
+                </View>
+              ))
+            )}
+          </View>
+          <Text style={styles.cardTitle}>{theme.title}</Text>
+        </View>
+      </LinearGradient>
+    </TouchableOpacity>
+  );
+  
+  // Rendu des cartes de mode de jeu
+  const renderGameModeCard = (game: any) => (
+    <TouchableOpacity 
+      key={game.id}
+      style={styles.modeCard} 
+      onPress={() => createGameRoom(game.id)}
+    >
+      <LinearGradient
+        colors={game.colors}
+        style={[
+          styles.modeGradient, 
+          { 
+            borderColor: game.borderColor,
+            shadowColor: game.shadowColor
+          },
+          styles.glowingBorder
+        ]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        borderRadius={8}
+      >
+        <View style={styles.modeContent}>
+          <View style={styles.characterContainer}>
+            <Image 
+              source={game.image}
+              style={styles.characterImage}
+              resizeMode="contain"
+            />
+          </View>
+          <View style={styles.modeTextContainer}>
+            <Text style={styles.modeName}>{game.name}</Text>
+            <Text style={styles.modeDescription}>{game.description}</Text>
+          </View>
+          <View style={[styles.freeTagContainer, { backgroundColor: game.tagColor }]}>
+            <Text style={styles.freeTag}>{game.tag}</Text>
+          </View>
+        </View>
+      </LinearGradient>
+    </TouchableOpacity>
+  );
+  
   return (
     <View style={styles.container}>
       <LinearGradient
         colors={["#1A0938", "#2D1155"]}
         style={styles.background}
-       
       >
         <ScrollView 
           style={styles.scrollView}
@@ -131,221 +316,14 @@ export default function HomeScreen() {
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={styles.categorySlider}
             >
-              <TouchableOpacity style={styles.categoryCard}>
-                <LinearGradient
-                  colors={["rgba(30, 59, 141, 0.3)", "rgba(59, 95, 217, 0.3)"]}
-                  style={[styles.cardGradient, styles.glowingCategoryBorder]}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                >
-                  <View style={styles.cardContent}>
-                    <View style={styles.illustrationsContainer}>
-                      <View style={styles.illustration}>
-                        <Image
-                          source={{ uri: "/placeholder.svg?height=60&width=60" }}
-                          style={styles.illustrationImage}
-                        />
-                      </View>
-                      <View style={styles.illustration}>
-                        <Image
-                          source={{ uri: "/placeholder.svg?height=60&width=60" }}
-                          style={styles.illustrationImage}
-                        />
-                      </View>
-                      <View style={styles.illustration}>
-                        <Image
-                          source={{ uri: "/placeholder.svg?height=60&width=60" }}
-                          style={styles.illustrationImage}
-                        />
-                      </View>
-                    </View>
-                    <Text style={styles.cardTitle}>PÉCHÉS MIGNONS</Text>
-                  </View>
-                </LinearGradient>
-              </TouchableOpacity>
-
-              <TouchableOpacity style={styles.categoryCard}>
-                <LinearGradient
-                  colors={["rgba(106, 27, 154, 0.3)", "rgba(156, 39, 176, 0.3)"]}
-                  style={[styles.cardGradient, styles.glowingCategoryBorder]}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                >
-                  <View style={styles.cardContent}>
-                    <View style={styles.illustrationsContainer}>
-                      <Image source={{ uri: "/placeholder.svg?height=120&width=120" }} style={styles.memoriesImage} />
-                    </View>
-                    <Text style={styles.cardTitle}>SOUVENIRS D'ENFANCE</Text>
-                  </View>
-                </LinearGradient>
-              </TouchableOpacity>
-              
-              <TouchableOpacity style={styles.categoryCard}>
-                <LinearGradient
-                  colors={["rgba(196, 26, 95, 0.3)", "rgba(255, 82, 82, 0.3)"]}
-                  style={[styles.cardGradient, styles.glowingCategoryBorder]}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                >
-                  <View style={styles.cardContent}>
-                    <View style={styles.illustrationsContainer}>
-                      <View style={styles.illustration}>
-                        <Image
-                          source={{ uri: "/placeholder.svg?height=60&width=60" }}
-                          style={styles.illustrationImage}
-                        />
-                      </View>
-                    </View>
-                    <Text style={styles.cardTitle}>SAINT-VALENTIN</Text>
-                  </View>
-                </LinearGradient>
-              </TouchableOpacity>
-              
-              <TouchableOpacity style={styles.categoryCard}>
-                <LinearGradient
-                  colors={["rgba(21, 101, 192, 0.3)", "rgba(66, 165, 245, 0.3)"]}
-                  style={[styles.cardGradient, styles.glowingCategoryBorder]}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                >
-                  <View style={styles.cardContent}>
-                    <View style={styles.illustrationsContainer}>
-                      <View style={styles.illustration}>
-                        <Image
-                          source={{ uri: "/placeholder.svg?height=60&width=60" }}
-                          style={styles.illustrationImage}
-                        />
-                      </View>
-                    </View>
-                    <Text style={styles.cardTitle}>SOIRÉE HOT</Text>
-                  </View>
-                </LinearGradient>
-              </TouchableOpacity>
+              {themePacks.map(renderThemeCard)}
             </ScrollView>
 
             {/* Game Modes */}
             <Text style={styles.sectionTitle}>MODES DE JEU</Text>
             
-            {/* Game Mode Card with Single Color and Glowing Border */}
-            <TouchableOpacity 
-              style={styles.modeCard} 
-              onPress={() => createGameRoom('on-ecoute-mais-on-ne-juge-pas')}
-            >
-              <LinearGradient
-                colors={["rgba(42, 59, 181, 0.30)", "rgba(42, 59, 181, 0.30)"]} 
-                style={[styles.modeGradient, styles.glowingBorder]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                borderRadius={8}
-              >
-                <View style={styles.modeContent}>
-                  <View style={styles.characterContainer}>
-                    <Image 
-                      source={require('@/assets/images/taupeTranspa.png')} 
-                      style={styles.characterImage}
-                      resizeMode="contain"
-                    />
-                  </View>
-                  <View style={styles.modeTextContainer}>
-                    <Text style={styles.modeName}>On ecoute mais on ne juge pas</Text>
-                    <Text style={styles.modeDescription}>Un mode gratuit pour rigoler tranquillement entre potes.</Text>
-                  </View>
-                  <View style={styles.freeTagContainer}>
-                    <Text style={styles.freeTag}>NEW !</Text>
-                  </View>
-                </View>
-              </LinearGradient>
-            </TouchableOpacity>
-
-             <TouchableOpacity 
-              style={styles.modeCard} 
-              onPress={() => createGameRoom('soit-tu-sais-soit-tu-bois')}
-            >
-              <LinearGradient
-                colors={["rgba(156, 39, 176, 0.30)", "rgba(156, 39, 176, 0.30)"]} 
-                style={[styles.modeGradient, styles.glowingBorder]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                borderRadius={8}
-              >
-                <View style={styles.modeContent}>
-                  <View style={styles.characterContainer}>
-                    <Image 
-                      source={require('@/assets/images/cochon.png')}
-                      style={styles.characterImage}
-                      resizeMode="contain"
-                    />
-                  </View>
-                  <View style={styles.modeTextContainer}>
-                    <Text style={styles.modeName}>Soit tu sais soit tu bois</Text>
-                    <Text style={styles.modeDescription}>Un mode avancé avec encore plus de questions et de fun.</Text>
-                  </View>
-                  <View style={[styles.freeTagContainer, { backgroundColor: "rgba(255, 193, 7, 0.8)" }]}>
-                    <Text style={styles.freeTag}>PREMIUM</Text>
-                  </View>
-                </View>
-              </LinearGradient>
-            </TouchableOpacity>
-
-             <TouchableOpacity 
-              style={styles.modeCard} 
-              onPress={() => createGameRoom('action-ou-verite')}
-            >
-              <LinearGradient
-                colors={["rgba(156, 39, 176, 0.30)", "rgba(156, 39, 176, 0.30)"]} 
-                style={[styles.modeGradient, styles.glowingBorder]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                borderRadius={8}
-              >
-                <View style={styles.modeContent}>
-                  <View style={styles.characterContainer}>
-                    <Image 
-                      source={require('@/assets/images/snake_vs_fox.png')}
-                      style={styles.characterImage}
-                      resizeMode="contain"
-                    />
-                  </View>
-                  <View style={styles.modeTextContainer}>
-                    <Text style={styles.modeName}>Action ou vérité</Text>
-                    <Text style={styles.modeDescription}>Un mode avancé avec encore plus de questions et de fun.</Text>
-                  </View>
-                  <View style={[styles.freeTagContainer, { backgroundColor: "#4CAF50" }]}>
-                    <Text style={styles.freeTag}>NEW !</Text>
-                  </View>
-                </View>
-              </LinearGradient>
-            </TouchableOpacity>
-            
-            <TouchableOpacity 
-              style={styles.modeCard} 
-              onPress={() => createGameRoom('spicy')}
-            >
-              <LinearGradient
-                colors={["rgba(156, 39, 176, 0.30)", "rgba(156, 39, 176, 0.30)"]} 
-                style={[styles.modeGradient, styles.glowingBorder]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                borderRadius={8}
-              >
-                <View style={styles.modeContent}>
-                  <View style={styles.characterContainer}>
-                    <Image 
-                      source={require('@/assets/images/vache.png')}
-                      style={styles.characterImage}
-                      resizeMode="contain"
-                    />
-                  </View>
-                  <View style={styles.modeTextContainer}>
-                    <Text style={styles.modeName}>Hot</Text>
-                    <Text style={styles.modeDescription}>Un mode avancé avec encore plus de questions et de fun.</Text>
-                  </View>
-                  <View style={[styles.freeTagContainer, { backgroundColor: "rgba(255, 193, 7, 0.8)" }]}>
-                    <Text style={styles.freeTag}>PREMIUM</Text>
-                  </View>
-                </View>
-              </LinearGradient>
-            </TouchableOpacity>
+            {/* Game Mode Cards */}
+            {gameModes.map(renderGameModeCard)}
           </View>
         </ScrollView>
         
@@ -366,7 +344,9 @@ const styles = StyleSheet.create({
   scrollView: {
     flex: 1,
   },
- 
+  scrollViewContent: {
+    paddingBottom: 20,
+  },
   categoriesContainer: {
     padding: 20,
   },
@@ -392,16 +372,15 @@ const styles = StyleSheet.create({
   cardGradient: {
     flex: 1,
     padding: 15,
-    borderRadius: 12, 
-  },
-  glowingCategoryBorder: {
+    borderRadius: 12,
     borderWidth: 1.5,
-    borderColor: "#3B5FD9",
-    shadowColor: "#3B5FD9",
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.8,
     shadowRadius: 4,
     elevation: 8,
+  },
+  glowingCategoryBorder: {
+    // Propriétés spécifiques déplacées à l'inline style dans renderThemeCard
   },
   cardContent: {
     flex: 1,
@@ -412,6 +391,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     flex: 1,
+    flexWrap: "wrap",
   },
   illustration: {
     width: 60,
@@ -446,15 +426,14 @@ const styles = StyleSheet.create({
   modeGradient: {
     flex: 1,
     borderRadius: 12,
-  },
-  glowingBorder: {
     borderWidth: 1.5,
-    borderColor: "#5D6DFF",
-    shadowColor: "#5D6DFF",
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.8,
     shadowRadius: 5,
     elevation: 8,
+  },
+  glowingBorder: {
+    // Propriétés spécifiques déplacées à l'inline style dans renderGameModeCard
   },
   modeContent: {
     flex: 1,
@@ -490,7 +469,6 @@ const styles = StyleSheet.create({
     fontSize: 9,
   },
   freeTagContainer: {
-    backgroundColor: "rgba(156, 39, 176, 0.8)",
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 4,
