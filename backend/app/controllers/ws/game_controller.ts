@@ -936,17 +936,36 @@ export default class GamesController {
           .count('* as count')
           .first()
 
-        // Vérifier que nous sommes dans une phase valide ET qu'il y a eu des votes
-        const validPhases = ['results', 'vote']
+        // Vérifier si tous les joueurs ont répondu
+        const answersCount = await Answer.query()
+          .where('question_id', currentQuestion?.id)
+          .count('* as count')
+          .first()
+
+        const gameRoom = await Room.find(game.roomId)
+        const roomPlayers = gameRoom ? await gameRoom.related('players').query() : []
+        const totalPlayers = roomPlayers.length
+        const expectedAnswers = totalPlayers - 1 // -1 pour la cible
+        const allPlayersAnswered = answersCount
+          ? Number(answersCount.$extras.count) >= expectedAnswers
+          : false
+
+        // Vérifier que nous sommes dans une phase valide
+        const validPhases = ['results', 'vote', 'question']
         if (
           !validPhases.includes(game.currentPhase) ||
-          (game.currentPhase === 'vote' && (!hasVotes || hasVotes.$extras.count === '0'))
+          (game.currentPhase === 'vote' && (!hasVotes || hasVotes.$extras.count === '0')) ||
+          (game.currentPhase === 'question' && !allPlayersAnswered)
         ) {
           return response.badRequest({
-            error: 'Veuillez attendre la fin des votes avant de passer au tour suivant',
+            error:
+              game.currentPhase === 'question'
+                ? 'Veuillez attendre que tous les joueurs aient répondu avant de passer au tour suivant'
+                : 'Veuillez attendre la fin des votes avant de passer au tour suivant',
             details: {
               currentPhase: game.currentPhase,
               hasVotes: hasVotes ? Number(hasVotes.$extras.count) > 0 : false,
+              allPlayersAnswered,
             },
           })
         }
