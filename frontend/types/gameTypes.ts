@@ -121,6 +121,7 @@ export interface GameState {
   room?: Room | null;
   lastRefreshed?: number;
   error?: string;
+  allPlayersVoted?: boolean;
 }
 
 // Interface pour une action sur l'état du jeu

@@ -54,6 +54,9 @@ export default class Game extends BaseModel {
   })
   declare players: ManyToMany<typeof User>
 
+  @column()
+  declare scores: Record<number, number>
+
   @column.dateTime({ autoCreate: true })
   declare createdAt: DateTime
 

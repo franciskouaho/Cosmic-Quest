@@ -4,12 +4,28 @@ import { answerValidator, voteValidator } from '#validators/game'
 import socketService from '#services/socket_service'
 import questionService from '#services/question_service'
 import Redis from '@adonisjs/redis/services/main'
+import { Socket } from 'socket.io'
+import { inject } from '@adonisjs/core'
+import type { ManyToMany } from '@adonisjs/lucid/types/relations'
 
 import Game from '#models/game'
 import Question from '#models/question'
 import Answer from '#models/answer'
 import Vote from '#models/vote'
 import Room from '#models/room'
+import User from '#models/user'
+
+interface GameWithScores extends Game {
+  scores: Record<number, number>
+}
+
+interface AnswerWithUserId extends Answer {
+  userId: number
+}
+
+interface RoomWithPlayers extends Room {
+  players: ManyToMany<typeof User>
+}
 
 // Sélectionner un joueur cible aléatoire parmi les joueurs (sauf celui qui est déjà ciblé)
 const selectRandomTargetPlayer = async (gameId: number, currentTargetPlayerId: number | null) => {
@@ -37,7 +53,7 @@ export default class GamesController {
    */
   private async acquireLock(key: string, ttl: number = 30): Promise<boolean> {
     try {
-      const result = await Redis.set(key, Date.now().toString(), 'NX', 'EX', ttl)
+      const result = await Redis.setex(key, ttl, Date.now().toString())
       return result === 'OK'
     } catch (error) {
       console.error("❌ [Redis] Erreur lors de l'acquisition du lock:", error)
@@ -389,9 +405,13 @@ export default class GamesController {
         console.log(`✅ [submitAnswer] Réponse créée avec succès: ID=${answer.id}`)
 
         // Récupérer la salle pour les événements WebSocket
-        const room = await Room.find(game.roomId)
-        const players = await room.related('players').query()
-        const totalPlayers = players.length
+        const gameRoom = await Room.find(game.roomId)
+        const gamePlayers = gameRoom ? await gameRoom.related('players').query() : []
+
+        const hasVotes = await Vote.query()
+          .where('question_id', question.id)
+          .count('* as count')
+          .first()
 
         // Utiliser Socket.IO pour notifier les joueurs
         const io = socketService.getInstance()
@@ -448,10 +468,10 @@ export default class GamesController {
         return false
       }
 
-      // Si nous ne sommes pas en phase answer, pas besoin d'effectuer la vérification
-      if (game.currentPhase !== 'answer') {
+      // Si nous sommes déjà en phase vote ou ultérieure, ne rien faire
+      if (game.currentPhase === 'vote' || game.currentPhase === 'results') {
         console.log(
-          `ℹ️ [checkAndProgressPhase] Phase actuelle n'est pas 'answer' mais '${game.currentPhase}'`
+          `ℹ️ [checkAndProgressPhase] Déjà en phase ${game.currentPhase}, pas de progression nécessaire`
         )
         return false
       }
@@ -460,15 +480,15 @@ export default class GamesController {
       const question = await Question.findOrFail(questionId)
 
       // Récupérer la salle et les joueurs
-      const room = await Room.find(game.roomId)
-      const players = await room.related('players').query()
+      const gameRoom = await Room.find(game.roomId)
+      const gamePlayers = gameRoom ? await gameRoom.related('players').query() : []
 
       // Compter les réponses existantes pour cette question
       const answersCount = await Answer.query().where('question_id', questionId).count('* as count')
       const count = Number.parseInt(answersCount[0].$extras.count || '0', 10)
 
       // Calculer combien de joueurs peuvent répondre (tous sauf la cible)
-      const nonTargetPlayers = players.filter(
+      const nonTargetPlayers = gamePlayers.filter(
         (player) => player.id !== question.targetPlayerId
       ).length
 
@@ -476,8 +496,8 @@ export default class GamesController {
         `🔍 [checkAndProgressPhase] Réponses: ${count}/${nonTargetPlayers}, Phase: ${game.currentPhase}`
       )
 
-      // Si toutes les réponses attendues sont là et que nous sommes en phase answer, passer à vote
-      if (count >= nonTargetPlayers && game.currentPhase === 'answer') {
+      // Si toutes les réponses attendues sont là, passer à vote
+      if (count >= nonTargetPlayers) {
         console.log(
           `✅ [checkAndProgressPhase] Toutes les réponses reçues. Passage à la phase vote...`
         )
@@ -490,7 +510,7 @@ export default class GamesController {
         const io = socketService.getInstance()
 
         // Trouver le joueur cible pour lui envoyer une notification spéciale
-        const targetPlayer = players.find((player) => player.id === question.targetPlayerId)
+        const targetPlayer = gamePlayers.find((player) => player.id === question.targetPlayerId)
 
         if (targetPlayer) {
           console.log(
@@ -563,6 +583,11 @@ export default class GamesController {
         })
       }
 
+      // Charger la relation room
+      await game.load('room', (query) => {
+        query.preload('players')
+      })
+
       // Vérifier que l'utilisateur fait partie de la partie
       const room = await Room.find(game.roomId)
       const isUserInGame = await room.related('players').query().where('user_id', user.id).first()
@@ -607,150 +632,145 @@ export default class GamesController {
   }
 
   /**
-   * Voter pour une réponse
+   * Vérifier si tous les votes sont soumis et passer à la phase suivante si nécessaire
    */
-  async submitVote({ request, response, auth, params }: HttpContext) {
+  private async checkAndProgressToResults(
+    gameId: string | number,
+    questionId: number
+  ): Promise<void> {
     try {
-      const user = await auth.authenticate()
-      const gameId = params.id
-      const payload = await request.validateUsing(voteValidator)
-
-      // Trouver la partie
       const game = await Game.find(gameId)
-      if (!game) {
-        return response.notFound({
-          error: 'Partie non trouvée',
-        })
-      }
+      if (!game) return
 
-      // Vérifier que la partie est en cours
-      if (game.status !== 'in_progress') {
-        return response.badRequest({
-          error: "La partie n'est pas en cours",
-        })
-      }
-
-      // Vérifier que la phase actuelle est bien la phase de vote
-      // Assouplissement: accepter les votes même si la phase n'est pas 'vote'
-      if (game.currentPhase !== 'vote') {
-        console.log(
-          `⚠️ [submitVote] Vote reçu en phase '${game.currentPhase}' au lieu de 'vote' - tentative de récupération`
-        )
-
-        // Si nous ne sommes pas en phase vote, forcer le passage en phase vote
-        game.currentPhase = 'vote'
-        await game.save()
-
-        console.log(`✅ [submitVote] Phase corrigée à 'vote' - Game: ${gameId}`)
-      }
-
-      // Vérifier que la question existe
-      const question = await Question.query()
-        .where('id', payload.question_id)
-        .where('game_id', gameId)
-        .first()
-
-      if (!question) {
-        return response.notFound({
-          error: 'Question non trouvée',
-        })
-      }
-
-      // Vérifier que la réponse existe
-      const answer = await Answer.query()
-        .where('id', payload.answer_id)
-        .where('question_id', question.id)
-        .first()
-
-      if (!answer) {
-        return response.notFound({
-          error: 'Réponse non trouvée',
-        })
-      }
-
-      // Vérifier que l'utilisateur ne vote pas pour sa propre réponse
-      if (answer.userId === user.id) {
-        return response.badRequest({
-          error: 'Vous ne pouvez pas voter pour votre propre réponse',
-        })
-      }
-
-      // Vérifier que l'utilisateur n'a pas déjà voté
-      const existingVote = await Vote.query()
-        .where('question_id', question.id)
-        .where('voter_id', user.id)
-        .first()
-
-      if (existingVote) {
-        return response.conflict({
-          error: 'Vous avez déjà voté pour cette question',
-        })
-      }
-
-      // Créer le vote
-      await Vote.create({
-        questionId: question.id,
-        voterId: user.id,
-        answerId: answer.id,
-      })
-
-      // Incrémenter le compteur de votes sur la réponse
-      answer.votesCount += 1
-      await answer.save()
-
-      // Utiliser le service socket
-      const io = socketService.getInstance()
-      io.to(`game:${gameId}`).emit('game:update', {
-        type: 'new_vote',
-        vote: {
-          voterId: user.id,
-          answerId: answer.id,
-        },
-        instantTransition: true,
-      })
-
-      // Vérifier si tous les joueurs (sauf ceux qui ont donné une réponse) ont voté
+      const question = await Question.findOrFail(questionId)
       const room = await Room.find(game.roomId)
+      if (!room) return
+
       const players = await room.related('players').query()
-      const totalPlayers = players.length
+      const votesCount = await Vote.query()
+        .where('question_id', questionId)
+        .count('* as count')
+        .first()
 
-      const votesCount = await Vote.query().where('question_id', question.id).count('* as count')
-      const count = Number.parseInt(votesCount[0].$extras.count, 10)
+      const count = Number.parseInt(votesCount?.$extras.count || '0', 10)
+      const isSmallGame = players.length <= 2
+      const allPlayersVoted = isSmallGame ? count > 0 : count >= players.length - 1
 
-      // Amélioration pour les petites parties
-      const isSmallGame = totalPlayers <= 2
-      const targetPlayer = await players.find((p) => p.id === question.targetPlayerId)
-
-      console.log(
-        `🎮 [submitVote] Votes: ${count}/${isSmallGame ? 1 : players.length - 1} (joueurs pouvant voter)`
-      )
-
-      // Tous les joueurs ont voté OU dans une partie à 2, dès qu'il y a un vote, on peut continuer
-      if (count >= players.length - 1 || (isSmallGame && count > 0)) {
-        // Passer à la phase de résultats immédiatement
+      if (allPlayersVoted) {
         game.currentPhase = 'results'
         await game.save()
 
-        // Calculer les points et mettre à jour les scores
-        await this.calculateAndUpdateScores(question.id, game)
-
-        // Notifier tous les joueurs du changement de phase immédiatement
+        const io = socketService.getInstance()
         io.to(`game:${gameId}`).emit('game:update', {
           type: 'phase_change',
           phase: 'results',
-          scores: game.scores,
+          message: 'Tous les votes ont été soumis!',
           instantTransition: true,
         })
       }
+    } catch (error) {
+      console.error('❌ [checkAndProgressToResults] Erreur:', error)
+    }
+  }
 
-      return response.created({
+  /**
+   * Voter pour une réponse
+   */
+  public async submitVote(
+    { request, response, auth, params }: HttpContext,
+    {
+      answer_id,
+      question_id,
+    }: {
+      answer_id: number
+      question_id: number
+    }
+  ) {
+    try {
+      const user = await auth.authenticate()
+      const gameId = params.id
+
+      console.log(`Vote reçu pour le jeu ${gameId}, question ${question_id}, réponse ${answer_id}`)
+
+      // Vérifier que le jeu existe et est en cours
+      const game = await Game.find(gameId)
+      if (!game || game.status !== 'in_progress') {
+        console.error(`❌ [submitVote] Jeu invalide ou terminé: ${gameId}`)
+        return response.badRequest({
+          error: 'Le jeu est invalide ou terminé.',
+        })
+      }
+
+      // Vérifier que nous sommes en phase de vote
+      if (game.currentPhase !== 'vote') {
+        console.error(`❌ [submitVote] Phase incorrecte: ${game.currentPhase}`)
+        return response.badRequest({
+          error: "Ce n'est pas le moment de voter.",
+        })
+      }
+
+      // Récupérer la question
+      const question = await Question.findOrFail(question_id)
+
+      // Vérifier si le joueur a déjà voté
+      const existingVote = await Vote.query()
+        .where('question_id', question_id)
+        .where('user_id', user.id)
+        .first()
+
+      if (existingVote) {
+        console.error(`❌ [submitVote] Vote déjà soumis par le joueur ${user.id}`)
+        return response.conflict({
+          error: 'Vous avez déjà voté.',
+        })
+      }
+
+      // Si le joueur est la cible, il peut voter directement
+      const isTarget = user.id === question.targetPlayerId
+
+      if (!isTarget) {
+        // Pour les autres joueurs, vérifier qu'ils ont répondu
+        const hasAnswered = await Answer.query()
+          .where('question_id', question_id)
+          .where('user_id', user.id)
+          .first()
+
+        if (!hasAnswered) {
+          console.error(`❌ [submitVote] Le joueur ${user.id} n'a pas répondu à la question`)
+          return response.badRequest({
+            error: "Vous devez d'abord répondre à la question avant de voter.",
+          })
+        }
+      }
+
+      // Créer le vote
+      const vote = await Vote.create({
+        questionId: question_id,
+        voterId: user.id,
+        answerId: answer_id,
+      })
+
+      console.log(`✅ [submitVote] Vote enregistré: ${vote.id}`)
+
+      // Notifier tous les clients du nouveau vote
+      const io = socketService.getInstance()
+      io.to(`game:${gameId}`).emit('game:update', {
+        type: 'vote_submitted',
+        playerId: user.id,
+        message: `${user.displayName || user.username} a voté !`,
+      })
+
+      // Vérifier si tous les votes sont soumis
+      await this.checkAndProgressToResults(gameId, question_id)
+
+      return response.ok({
         status: 'success',
-        message: 'Vote soumis avec succès',
+        message: 'Vote enregistré avec succès',
       })
     } catch (error) {
-      console.error('Erreur lors de la soumission du vote:', error)
+      console.error('❌ [submitVote] Erreur:', error)
       return response.internalServerError({
-        error: 'Une erreur est survenue lors de la soumission du vote',
+        error: "Une erreur s'est produite lors du vote.",
       })
     }
   }
@@ -787,6 +807,11 @@ export default class GamesController {
             error: 'Partie non trouvée',
           })
         }
+
+        // Charger la relation room
+        await game.load('room', (query) => {
+          query.preload('players')
+        })
 
         console.log(
           `🎮 [nextRound] Partie trouvée: ${game.id}, Phase: ${game.currentPhase}, Round: ${game.currentRound}/${game.totalRounds}`
@@ -979,87 +1004,13 @@ export default class GamesController {
   }
 
   /**
-   * Méthode publique pour générer une question qui peut être utilisée par d'autres contrôleurs
-   */
-  public async generateQuestion(theme: string, playerName: string): Promise<string> {
-    return this.generateFallbackQuestion(theme, playerName)
-  }
-
-  /**
-   * Méthode privée pour générer une question de secours si la base de données échoue
-   */
-  private async generateFallbackQuestion(theme: string, playerName: string): Promise<string> {
-    // Récupérer une question directement depuis la base de données
-    try {
-      console.log(
-        `🔄 [generateFallbackQuestion] Tentative de récupération depuis la base de données pour le thème ${theme}`
-      )
-
-      // Utiliser le service de questions pour récupérer depuis la BD
-      const question = await questionService.getRandomQuestionByTheme(theme)
-
-      if (question && question.text) {
-        console.log(`✅ [generateFallbackQuestion] Question récupérée: ID=${question.id}`)
-        // Formater la question avec le nom du joueur
-        return questionService.formatQuestion(question.text, playerName)
-      }
-
-      // Si on n'a pas trouvé de question pour ce thème, essayer avec le thème standard
-      if (theme !== 'standard') {
-        console.log(`⚠️ [generateFallbackQuestion] Tentative avec le thème standard`)
-        const standardQuestion = await questionService.getRandomQuestionByTheme('standard')
-
-        if (standardQuestion && standardQuestion.text) {
-          return questionService.formatQuestion(standardQuestion.text, playerName)
-        }
-      }
-
-      // Si toujours rien, utiliser une question très basique
-      throw new Error('Aucune question trouvée en base de données')
-    } catch (error) {
-      console.error(
-        `❌ [generateFallbackQuestion] Échec de récupération depuis la base de données:`,
-        error
-      )
-      // Question vraiment de dernier recours, évitant tout contenu statique
-      return `Quelle est la chose la plus surprenante à propos de ${playerName} ?`
-    }
-  }
-
-  /**
-   * Méthode publique pour calculer et mettre à jour les scores
-   * Rendue publique pour être utilisée par le service WebSocket
-   */
-  public async calculateAndUpdateScores(questionId: number, game: Game) {
-    // Récupérer toutes les réponses avec leurs votes
-    const answers = await Answer.query().where('question_id', questionId).preload('votes')
-
-    // Pour chaque réponse, ajouter des points à l'auteur en fonction des votes
-    for (const answer of answers) {
-      const pointsPerVote = 10 // 10 points par vote reçu
-      const totalPoints = answer.votes.length * pointsPerVote
-
-      // Mettre à jour le score du joueur
-      if (totalPoints > 0) {
-        const userId = answer.userId
-        if (!game.scores[userId]) {
-          game.scores[userId] = 0
-        }
-
-        game.scores[userId] += totalPoints
-      }
-    }
-
-    // Sauvegarder les scores mis à jour
-    await game.save()
-  }
-
-  /**
    * Méthode privée pour mettre à jour les statistiques des joueurs
    */
   private async updatePlayerStats(roomId: number, game: Game) {
     // Récupérer tous les joueurs de la salle
     const room = await Room.find(roomId)
+    if (!room) return
+
     const players = await room.related('players').query()
 
     // Déterminer le gagnant (joueur avec le score le plus élevé)
@@ -1096,512 +1047,42 @@ export default class GamesController {
   }
 
   /**
-   * Traiter la soumission d'une réponse
+   * Méthode privée pour générer une question de secours
    */
-  public async handleAnswerSubmission(socket: Socket, data: any) {
-    try {
-      // ...existing code...
-
-      // Après avoir sauvegardé la réponse, vérifier si toutes les réponses sont soumises
-      const allAnswers = await this.checkAllAnswersSubmitted(data.gameId, data.questionId)
-
-      if (allAnswers) {
-        console.log(
-          `✅ Toutes les réponses ont été soumises pour le jeu ${data.gameId}, question ${data.questionId}`
-        )
-
-        // Passer à la phase de vote si nécessaire
-        await this.advanceToVotePhase(data.gameId, data.questionId)
-      }
-
-      // ...existing code...
-    } catch (error) {
-      // ...existing code...
-    }
-  }
-
-  /**
-   * Vérifier si toutes les réponses ont été soumises
-   */
-  private async checkAllAnswersSubmitted(
-    gameId: string | number,
-    questionId: string | number
-  ): Promise<boolean> {
-    try {
-      // Récupérer le jeu
-      const game = await Game.find(gameId)
-      if (!game) return false
-
-      // Récupérer la question
-      const question = await Question.findOrFail(questionId)
-
-      // Récupérer la salle et les joueurs
-      const room = await Room.find(game.roomId)
-      const players = await room.related('players').query()
-
-      // Compter les réponses existantes pour cette question
-      const answersCount = await Answer.query().where('question_id', questionId).count('* as count')
-      const count = Number.parseInt(answersCount[0].$extras.count || '0', 10)
-
-      // Calculer combien de joueurs peuvent répondre (tous sauf la cible)
-      const nonTargetPlayers = players.filter(
-        (player) => player.id !== question.targetPlayerId
-      ).length
-
-      console.log(
-        `📊 [checkAllAnswersSubmitted] Réponses: ${count}/${nonTargetPlayers}, Phase: ${game.currentPhase}`
-      )
-
-      // Vérifier si toutes les réponses attendues sont là
-      return count >= nonTargetPlayers
-    } catch (error) {
-      console.error('❌ Erreur lors de la vérification des réponses:', error)
-      return false
-    }
-  }
-
-  /**
-   * Faire passer le jeu à la phase de vote et envoyer une notification spéciale au joueur ciblé
-   */
-  private async advanceToVotePhase(
-    gameId: string | number,
-    questionId: string | number
-  ): Promise<boolean> {
-    try {
-      // Récupérer le jeu
-      const game = await Game.find(gameId)
-      if (!game) return false
-
-      // Si déjà en phase vote ou ultérieure, ne rien faire
-      if (game.currentPhase !== 'answer') {
-        return false
-      }
-
-      // Récupérer la question
-      const question = await Question.findOrFail(questionId)
-
-      // Récupérer la salle et les joueurs
-      const room = await Room.find(game.roomId)
-      const players = await room.related('players').query()
-
-      // Passer à la phase de vote
-      game.currentPhase = 'vote'
-      await game.save()
-
-      // Récupérer les réponses pour les envoyer au joueur ciblé
-      const answers = await Answer.query()
-        .where('question_id', questionId)
-        .preload('user')
-        .orderBy('created_at', 'asc')
-
-      // Formater les réponses pour l'envoi
-      const formattedAnswers = answers.map((answer) => ({
-        id: answer.id,
-        content: answer.content,
-        playerId: answer.userId,
-        playerName: answer.user?.displayName || answer.user?.username || 'Joueur anonyme',
-      }))
-
-      // Trouver le joueur cible
-      const targetPlayer = players.find((player) => player.id === question.targetPlayerId)
-
-      // Instance Socket.IO
-      const io = socketService.getInstance()
-
-      // Notification spécifique pour le joueur ciblé
-      if (targetPlayer) {
-        console.log(
-          `🎯 [advanceToVotePhase] Notification spéciale envoyée au joueur cible ${targetPlayer.id}`
-        )
-
-        // Émettre un événement spécial avec toutes les réponses pour le joueur ciblé
-        io.to(`user:${targetPlayer.id}`).emit('game:update', {
-          type: 'target_player_vote',
-          phase: 'vote',
-          message: "C'est à votre tour de voter pour une réponse!",
-          targetPlayerId: targetPlayer.id,
-          questionId: question.id,
-          answers: formattedAnswers,
-          instantTransition: true,
-        })
-      }
-
-      // Notification générale pour tous les joueurs
-      io.to(`game:${gameId}`).emit('game:update', {
-        type: 'phase_change',
-        phase: 'vote',
-        message: 'Toutes les réponses ont été reçues. Place au vote!',
-        targetPlayerId: question.targetPlayerId,
-        instantTransition: true,
-      })
-
-      return true
-    } catch (error) {
-      console.error('❌ Erreur lors du passage à la phase de vote:', error)
-      return false
-    }
-  }
-
-  /**
-   * Méthode pour récupérer l'état complet du jeu via WebSocket
-   * Cette méthode est appelée par le service socket pour le handler 'game:get_state'
-   */
-  public async getGameState(gameId: string | number, userId?: string | number) {
+  private async generateFallbackQuestion(theme: string, playerName: string): Promise<string> {
     try {
       console.log(
-        `🎮 [getGameState] Récupération de l'état du jeu ${gameId} pour l'utilisateur ${userId || 'anonyme'}`
+        `🔄 [generateFallbackQuestion] Tentative de récupération depuis la base de données pour le thème ${theme}`
       )
 
-      // Récupérer le jeu
-      const game = await Game.find(gameId)
-      if (!game) {
-        throw new Error('Partie non trouvée')
+      // Utiliser le service de questions pour récupérer depuis la BD
+      const question = await questionService.getRandomQuestionByTheme(theme)
+
+      if (question && question.text) {
+        console.log(`✅ [generateFallbackQuestion] Question récupérée: ID=${question.id}`)
+        // Formater la question avec le nom du joueur
+        return questionService.formatQuestion(question.text, playerName)
       }
 
-      // Récupérer la salle et les joueurs
-      let room
-      let players = []
+      // Si on n'a pas trouvé de question pour ce thème, essayer avec le thème standard
+      if (theme !== 'standard') {
+        console.log(`⚠️ [generateFallbackQuestion] Tentative avec le thème standard`)
+        const standardQuestion = await questionService.getRandomQuestionByTheme('standard')
 
-      try {
-        room = await Room.find(game.roomId)
-        players = await room.related('players').query()
-      } catch (roomError) {
-        console.warn(
-          `⚠️ [getGameState] Erreur lors de la récupération de la salle: ${roomError.message}`
-        )
-        // Continuer avec une liste vide si la salle n'existe plus
-      }
-
-      // Récupérer la question actuelle
-      let currentQuestion = null
-      try {
-        if (game.currentRound > 0) {
-          currentQuestion = await Question.query()
-            .where('game_id', game.id)
-            .where('round_number', game.currentRound)
-            .preload('targetPlayer')
-            .first()
-        }
-      } catch (questionError) {
-        console.error(
-          `❌ [getGameState] Erreur lors de la récupération de la question:`,
-          questionError
-        )
-        // Continuer avec currentQuestion = null
-      }
-
-      // Récupérer les réponses pour la question actuelle
-      let answers = []
-      try {
-        if (currentQuestion) {
-          // Récupérer les réponses avec les utilisateurs qui les ont écrites
-          answers = await Answer.query().where('question_id', currentQuestion.id).preload('user')
-
-          // Ajouter un marqueur pour identifier les propres réponses de l'utilisateur
-          if (userId) {
-            answers = answers.map((answer) => ({
-              ...answer.toJSON(),
-              isOwnAnswer: answer.userId === Number(userId),
-            }))
-          }
-        }
-      } catch (answersError) {
-        console.error(
-          `❌ [getGameState] Erreur lors de la récupération des réponses:`,
-          answersError
-        )
-        // Continuer avec answers = []
-      }
-
-      // Déterminer l'état actuel de l'utilisateur
-      let hasAnswered = false
-      let hasVoted = false
-      let isTargetPlayer = false
-
-      if (userId && currentQuestion) {
-        try {
-          // Vérifier si l'utilisateur a déjà répondu
-          hasAnswered =
-            (await Answer.query()
-              .where('question_id', currentQuestion.id)
-              .where('user_id', userId)
-              .first()) !== null
-
-          // Vérifier si l'utilisateur a déjà voté
-          hasVoted =
-            (await Vote.query()
-              .where('question_id', currentQuestion.id)
-              .where('voter_id', userId)
-              .first()) !== null
-
-          // Vérifier si l'utilisateur est la cible
-          isTargetPlayer = currentQuestion.targetPlayerId === Number(userId)
-
-          console.log(
-            `👤 [getGameState] État utilisateur ${userId}: isTarget=${isTargetPlayer}, hasAnswered=${hasAnswered}, hasVoted=${hasVoted}`
-          )
-        } catch (stateError) {
-          console.error(
-            `❌ [getGameState] Erreur lors de la récupération des états utilisateur:`,
-            stateError
-          )
-          // Garder les valeurs par défaut
+        if (standardQuestion && standardQuestion.text) {
+          return questionService.formatQuestion(standardQuestion.text, playerName)
         }
       }
 
-      // Calculer la durée restante pour la phase actuelle
-      const timer = this.calculateRemainingTime(game.currentPhase)
-
-      // Formater les joueurs pour inclure leurs scores
-      const formattedPlayers = players.map((player) => ({
-        id: player.id,
-        username: player.username,
-        displayName: player.displayName,
-        avatar: player.avatar,
-        score: game.scores?.[player.id] || 0,
-        isHost: room ? player.id === room.hostId : false,
-      }))
-
-      // Formater les réponses pour l'envoi
-      const formattedAnswers = answers.map((answer) => ({
-        id: answer.id,
-        content: answer.content,
-        playerId: answer.userId,
-        gameId: game.id, // Ajouter cette propriété utile pour le client
-        questionId: answer.questionId,
-        playerName: answer.user?.displayName || answer.user?.username || 'Joueur anonyme',
-        votesCount: answer.votesCount || 0,
-        isOwnAnswer: answer.isOwnAnswer || (userId && answer.userId === Number(userId)),
-      }))
-
-      // Construire et retourner l'état complet du jeu
-      return {
-        game: {
-          id: game.id,
-          roomId: game.roomId,
-          hostId: room?.hostId || null,
-          currentRound: game.currentRound,
-          totalRounds: game.totalRounds,
-          status: game.status,
-          gameMode: game.gameMode,
-          currentPhase: game.currentPhase,
-          scores: game.scores || {},
-          createdAt: game.createdAt,
-        },
-        room: room
-          ? {
-              id: room.id,
-              code: room.code,
-              name: room.name,
-              hostId: room.hostId,
-            }
-          : null,
-        players: formattedPlayers,
-        currentQuestion: currentQuestion
-          ? {
-              id: currentQuestion.id,
-              text: currentQuestion.text,
-              roundNumber: currentQuestion.roundNumber,
-              targetPlayer: currentQuestion.targetPlayer
-                ? {
-                    id: currentQuestion.targetPlayer.id,
-                    username: currentQuestion.targetPlayer.username,
-                    displayName: currentQuestion.targetPlayer.displayName,
-                    avatar: currentQuestion.targetPlayer.avatar,
-                  }
-                : null,
-            }
-          : null,
-        answers: formattedAnswers,
-        currentUserState: {
-          hasAnswered,
-          hasVoted,
-          isTargetPlayer,
-        },
-        timer,
-      }
+      // Si toujours rien, utiliser une question très basique
+      throw new Error('Aucune question trouvée en base de données')
     } catch (error) {
-      console.error(`❌ [getGameState] Erreur lors de la récupération de l'état du jeu:`, error)
-      throw error
-    }
-  }
-
-  /**
-   * Calcule le temps restant pour la phase actuelle - MODIFIÉ POUR SUPPRESSION DES TIMERS
-   */
-  private calculateRemainingTime(currentPhase: string) {
-    // Retourner null pour désactiver tous les timers
-    return null
-  }
-
-  /**
-   * Progression automatique des phases du jeu - MODIFIÉE POUR ÊTRE INSTANTANÉE
-   */
-  private async autoAdvanceGamePhase(gameId: number, currentPhase: string, duration: number) {
-    try {
-      // Avancer immédiatement sans délai
-      const game = await Game.find(gameId)
-      if (!game || game.currentPhase !== currentPhase) {
-        return // Le jeu n'existe plus ou la phase a déjà changé
-      }
-
-      // Pour la phase results, passer automatiquement au tour suivant
-      if (currentPhase === 'results') {
-        console.log(`🔄 Progression automatique depuis la phase results pour le jeu ${gameId}`)
-
-        const room = await Room.find(game.roomId)
-        if (!room) return
-
-        // Simuler une requête de l'hôte pour passer au tour suivant
-        const mockContext = {
-          params: { id: gameId },
-          auth: {
-            authenticate: async () => ({ id: room.hostId }),
-          },
-          response: {
-            // ...existing code...
-          },
-        }
-
-        await this.nextRound(mockContext)
-      }
-    } catch (error) {
-      console.error(`❌ Erreur lors de la progression automatique:`, error)
-    }
-  }
-
-  /**
-   * Forcer une transition de phase spécifique
-   * Cette méthode est appelée par le gestionnaire d'événements WebSocket
-   */
-  public async forcePhaseTransition(
-    gameId: string | number,
-    targetPhase: string
-  ): Promise<boolean> {
-    try {
-      console.log(
-        `🔄 [forcePhaseTransition] Tentative de forcer la phase ${targetPhase} pour le jeu ${gameId}`
+      console.error(
+        `❌ [generateFallbackQuestion] Échec de récupération depuis la base de données:`,
+        error
       )
-
-      // Récupérer le jeu
-      const game = await Game.find(gameId)
-      if (!game) {
-        console.error(`❌ [forcePhaseTransition] Jeu ${gameId} non trouvé`)
-        return false
-      }
-
-      // Vérifier si la phase cible est valide
-      const validPhases = ['question', 'answer', 'vote', 'results']
-      if (!validPhases.includes(targetPhase)) {
-        console.error(`❌ [forcePhaseTransition] Phase cible invalide: ${targetPhase}`)
-        return false
-      }
-
-      // Si déjà dans la phase cible, rien à faire
-      if (game.currentPhase === targetPhase) {
-        console.log(`ℹ️ [forcePhaseTransition] Déjà en phase ${targetPhase}`)
-        return true
-      }
-
-      // Obtenir la question actuelle
-      const question = await Question.query()
-        .where('game_id', gameId)
-        .where('round_number', game.currentRound)
-        .first()
-
-      if (!question) {
-        console.error(
-          `❌ [forcePhaseTransition] Question non trouvée pour le jeu ${gameId}, tour ${game.currentRound}`
-        )
-        return false
-      }
-
-      // Mettre à jour la phase
-      game.currentPhase = targetPhase
-      await game.save()
-
-      console.log(`✅ [forcePhaseTransition] Phase forcée à ${targetPhase} pour le jeu ${gameId}`)
-
-      // Notifier tous les clients du changement
-      const io = socketService.getInstance()
-      io.to(`game:${gameId}`).emit('game:update', {
-        type: 'phase_change',
-        phase: targetPhase,
-        message: `Phase de jeu mise à jour en ${targetPhase}`,
-        instantTransition: true,
-      })
-
-      return true
-    } catch (error) {
-      console.error(`❌ [forcePhaseTransition] Erreur:`, error)
-      return false
-    }
-  }
-
-  /**
-   * Forcer une phase spécifique du jeu
-   * Utilisé pour récupérer des jeux bloqués
-   */
-  async forceGamePhase(gameId: string | number, targetPhase: string) {
-    try {
-      console.log(
-        `🔄 [forceGamePhase] Tentative de forcer la phase ${targetPhase} pour le jeu ${gameId}`
-      )
-
-      // Récupérer le jeu
-      const game = await Game.find(gameId)
-      if (!game) {
-        console.error(`❌ [forceGamePhase] Jeu ${gameId} non trouvé`)
-        return {
-          success: false,
-          error: 'Jeu non trouvé',
-        }
-      }
-
-      // Vérifier si la phase cible est valide
-      const validPhases = ['question', 'answer', 'vote', 'results']
-      if (!validPhases.includes(targetPhase)) {
-        console.error(`❌ [forceGamePhase] Phase cible invalide: ${targetPhase}`)
-        return {
-          success: false,
-          error: 'Phase cible invalide',
-        }
-      }
-
-      // Si déjà dans la phase cible, rien à faire
-      if (game.currentPhase === targetPhase) {
-        console.log(`ℹ️ [forceGamePhase] Déjà en phase ${targetPhase}`)
-        return {
-          success: true,
-          message: `Déjà en phase ${targetPhase}`,
-        }
-      }
-
-      // Mettre à jour la phase
-      game.currentPhase = targetPhase
-      await game.save()
-
-      console.log(`✅ [forceGamePhase] Phase forcée à ${targetPhase} pour le jeu ${gameId}`)
-
-      // Notifier tous les clients du changement
-      const io = socketService.getInstance()
-      io.to(`game:${gameId}`).emit('game:update', {
-        type: 'phase_change',
-        phase: targetPhase,
-        message: `Phase de jeu mise à jour en ${targetPhase}`,
-        instantTransition: true,
-      })
-
-      return {
-        success: true,
-        message: `Phase ${targetPhase} appliquée avec succès`,
-      }
-    } catch (error) {
-      console.error(`❌ [forceGamePhase] Erreur:`, error)
-      return {
-        success: false,
-        error: error.message || 'Erreur lors du changement de phase',
-      }
+      // Question vraiment de dernier recours, évitant tout contenu statique
+      return `Quelle est la chose la plus surprenante à propos de ${playerName} ?`
     }
   }
 }

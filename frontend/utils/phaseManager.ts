@@ -22,68 +22,37 @@ export class PhaseManager {
     isTarget: boolean,
     hasAnswered: boolean,
     hasVoted: boolean
-  ): GamePhase | string {
+  ): string {
     console.log(`🎮 Détermination phase:
       - Phase serveur: ${serverPhase}
       - isTarget: ${isTarget}
       - hasAnswered: ${hasAnswered}
-      - hasVoted: ${hasVoted}
-      - Dernière phase calculée: ${this.lastPhase || 'aucune'}`
-    );
+      - hasVoted: ${hasVoted}`);
 
-    let effectivePhase: GamePhase;
+    // Si le joueur est la cible
+    if (isTarget) {
+      if (serverPhase === 'vote' && !hasVoted) {
+        return 'vote';
+      }
+      if (serverPhase === 'vote' && hasVoted) {
+        return 'waiting';
+      }
+      return 'waiting';
+    }
 
+    // Si le joueur n'est pas la cible
     switch (serverPhase) {
       case 'question':
-        effectivePhase = GamePhase.QUESTION;
-        break;
-        
+        return hasAnswered ? 'waiting' : 'question';
       case 'answer':
-        if (isTarget) {
-          effectivePhase = GamePhase.WAITING;  
-        } else {
-          effectivePhase = hasAnswered ? GamePhase.WAITING : GamePhase.ANSWER;
-        }
-        break;
-
+        return hasAnswered ? 'waiting' : 'question';
       case 'vote':
-        if (isTarget && !hasVoted) {
-          effectivePhase = GamePhase.VOTE;
-        } else {
-          effectivePhase = GamePhase.WAITING_FOR_VOTE;
-        }
-        break;
-
+        return hasVoted ? 'waiting' : 'waiting_for_vote';
       case 'results':
-        effectivePhase = GamePhase.RESULTS;
-        break;
-
+        return 'results';
       default:
-        console.warn(`⚠️ Phase serveur non reconnue: ${serverPhase}`);
-        
-        // En cas de phase non reconnue, garder la dernière phase connue ou utiliser WAITING
-        effectivePhase = this.lastPhase || GamePhase.WAITING;
-        
-        // Si la dernière phase est RESULTS, la maintenir
-        if (this.lastPhase === GamePhase.RESULTS) {
-          console.log(`ℹ️ Phase maintenue: results`);
-          effectivePhase = GamePhase.RESULTS;
-        }
+        return serverPhase;
     }
-
-    // Gérer les transitions non standards
-    if (this.lastPhase && this.lastPhase !== effectivePhase) {
-      // Détection des transitions anormales comme question -> results
-      if (this.lastPhase === GamePhase.QUESTION && effectivePhase === GamePhase.RESULTS) {
-        console.warn(`⚠️ Transition de phase non standard: question -> results`);
-        // Dans ce cas, on peut conserver la transition car results est une phase finale
-      }
-    }
-
-    // Stocker la dernière phase calculée
-    this.lastPhase = effectivePhase;
-    
-    return effectivePhase;
   }
 
   /**

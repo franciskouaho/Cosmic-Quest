@@ -757,6 +757,7 @@ export default function GameScreen() {
                 timer={null}
                 isTargetPlayer={true}
                 hasVoted={false}
+                allPlayersVoted={gameState.allPlayersVoted}
               />
             </View>
           );
@@ -768,8 +769,9 @@ export default function GameScreen() {
             question={gameState.currentQuestion}
             onVote={handleVote}
             timer={null}
-            isTargetPlayer={isTargetPlayer}
-            hasVoted={hasVoted}
+            isTargetPlayer={gameState.currentUserState?.isTargetPlayer || false}
+            hasVoted={gameState.currentUserState?.hasVoted || false}
+            allPlayersVoted={gameState.allPlayersVoted}
           />
         );
           

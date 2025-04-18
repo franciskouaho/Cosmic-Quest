@@ -15,7 +15,14 @@ export default class Question extends BaseModel {
   declare text: string
 
   @column()
-  declare theme: 'standard' | 'crazy' | 'fun' | 'dark' | 'personal'
+  declare theme:
+    | 'standard'
+    | 'crazy'
+    | 'fun'
+    | 'dark'
+    | 'personal'
+    | 'on-ecoute-mais-on-ne-juge-pas'
+    | undefined
 
   @column({ columnName: 'game_id' })
   declare gameId: number

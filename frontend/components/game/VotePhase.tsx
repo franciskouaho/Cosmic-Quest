@@ -18,6 +18,7 @@ type VotePhaseProps = {
   } | null;
   isTargetPlayer: boolean;
   hasVoted: boolean;
+  allPlayersVoted?: boolean;
 };
 
 const VotePhase: React.FC<VotePhaseProps> = ({ 
@@ -26,16 +27,37 @@ const VotePhase: React.FC<VotePhaseProps> = ({
   onVote, 
   timer,
   isTargetPlayer = false,
-  hasVoted = false
+  hasVoted = false,
+  allPlayersVoted = false
 }: VotePhaseProps) => {
   // Log de débogage pour tracer les états
   useEffect(() => {
-    console.log(`🎯 VotePhase: isTargetPlayer=${isTargetPlayer}, hasVoted=${hasVoted}, réponses disponibles=${answers.length}`);
-  }, [isTargetPlayer, hasVoted, answers.length]);
+    console.log(`🎯 VotePhase: isTargetPlayer=${isTargetPlayer}, hasVoted=${hasVoted}, allPlayersVoted=${allPlayersVoted}, réponses disponibles=${answers.length}`);
+  }, [isTargetPlayer, hasVoted, allPlayersVoted, answers.length]);
   
   // Filtrer les réponses pour ne pas afficher les propres réponses du joueur
   const votableAnswers = answers.filter(answer => !answer.isOwnAnswer);
   
+  // Si tout le monde a voté, afficher un message d'attente
+  if (allPlayersVoted) {
+    return (
+      <View style={styles.messageContainer}>
+        <Text style={styles.messageTitle}>Tous les votes sont enregistrés</Text>
+        <Text style={styles.messageText}>
+          Attendez que le jeu passe au tour suivant.
+        </Text>
+        {timer && (
+          <View style={styles.timerWrapper}>
+            <GameTimer 
+              duration={timer.duration}
+              startTime={timer.startTime}
+            />
+          </View>
+        )}
+      </View>
+    );
+  }
+
   // Si l'utilisateur n'est pas la cible, ou a déjà voté, afficher un message d'attente
   if (!isTargetPlayer || hasVoted) {
     return (

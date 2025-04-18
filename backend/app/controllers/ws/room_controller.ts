@@ -8,6 +8,7 @@ import Game from '#models/game'
 import UserRecentRoom from '#models/user_recent_room'
 import User from '#models/user'
 import Answer from '#models/answer'
+import Vote from '#models/vote'
 
 // Fonction utilitaire pour générer un code de salle aléatoire
 const generateRoomCode = (length = 6) => {
@@ -629,6 +630,94 @@ export default class RoomsController {
       console.error('Erreur lors du démarrage de la partie:', error)
       return response.internalServerError({
         error: 'Une erreur est survenue lors du démarrage de la partie',
+      })
+    }
+  }
+
+  /**
+   * Soumettre une réponse à une question
+   */
+  async submitAnswer({ request, response, auth, params }: HttpContext) {
+    try {
+      const user = await auth.authenticate()
+      const roomCode = params.code
+      const payload = await request.validateUsing(readyStatusValidator)
+
+      console.log(`Tentative de soumettre une réponse à la question pour la salle ${roomCode}`)
+
+      const room = await Room.findBy('code', roomCode)
+      if (!room) {
+        return response.notFound({ error: 'Salle non trouvée' })
+      }
+
+      // Vérifier si l'utilisateur est dans la salle
+      const isPlayerInRoom = await room.related('players').query().where('user_id', user.id).first()
+      if (!isPlayerInRoom) {
+        return response.badRequest({
+          error: "Vous n'êtes pas dans cette salle",
+        })
+      }
+
+      // Vérifier si le joueur est la cible
+      const isTarget = room.currentTargetPlayerId === user.id
+
+      // Si le joueur n'est pas la cible, vérifier s'il a répondu
+      if (!isTarget) {
+        const hasAnswered = await Answer.query()
+          .where('question_id', room.currentQuestionId)
+          .where('user_id', user.id)
+          .first()
+
+        if (!hasAnswered) {
+          return response.badRequest({
+            error: "Vous devez d'abord répondre à la question avant de pouvoir voter",
+          })
+        }
+      }
+
+      // Créer la réponse
+      const answer = await Answer.create({
+        text: payload.text,
+        questionId: room.currentQuestionId,
+        userId: user.id,
+      })
+
+      // Vérifier si le joueur a déjà voté
+      const existingVote = await Vote.query()
+        .where('answer_id', answer.id)
+        .where('user_id', user.id)
+        .first()
+
+      if (existingVote) {
+        return response.badRequest({
+          error: 'Vous avez déjà voté pour cette réponse',
+        })
+      }
+
+      // Créer le vote
+      const vote = await Vote.create({
+        answerId: answer.id,
+        userId: user.id,
+      })
+
+      // Notifier les autres joueurs via Socket.IO
+      const io = socketService.getInstance()
+      io.to(`room:${roomCode}`).emit('room:update', {
+        type: 'answer_submitted',
+        answerId: answer.id,
+      })
+
+      return response.ok({
+        status: 'success',
+        message: 'Réponse soumise avec succès',
+        data: {
+          answerId: answer.id,
+        },
+      })
+    } catch (error) {
+      console.error('Erreur lors de la soumission de la réponse:', error)
+      return response.internalServerError({
+        error: 'Une erreur est survenue lors de la soumission de la réponse',
       })
     }
   }
