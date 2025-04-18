@@ -657,14 +657,44 @@ export default class GamesController {
       const allPlayersVoted = isSmallGame ? count > 0 : count >= players.length - 1
 
       if (allPlayersVoted) {
+        // Récupérer tous les votes pour cette question
+        const votes = await Vote.query()
+          .where('question_id', questionId)
+          .preload('answer', (answerQuery) => {
+            answerQuery.preload('user')
+          })
+
+        // Calculer les scores
+        const scores = { ...game.scores }
+        votes.forEach((vote) => {
+          const answerUserId = vote.answer.userId
+          if (!scores[answerUserId]) {
+            scores[answerUserId] = 0
+          }
+          scores[answerUserId] += 1
+        })
+
+        // Mettre à jour les scores du jeu
+        game.scores = scores
         game.currentPhase = 'results'
         await game.save()
+
+        // Préparer les résultats pour l'affichage
+        const results = votes.map((vote) => ({
+          answerId: vote.answerId,
+          voterId: vote.voterId,
+          answerUserId: vote.answer.userId,
+          answerText: vote.answer.$extras.text,
+          voterName: vote.answer.user.displayName || vote.answer.user.username,
+        }))
 
         const io = socketService.getInstance()
         io.to(`game:${gameId}`).emit('game:update', {
           type: 'phase_change',
           phase: 'results',
           message: 'Tous les votes ont été soumis!',
+          results: results,
+          scores: scores,
           instantTransition: true,
         })
       }
@@ -676,21 +706,17 @@ export default class GamesController {
   /**
    * Voter pour une réponse
    */
-  public async submitVote(
-    { request, response, auth, params }: HttpContext,
-    {
-      answer_id,
-      question_id,
-    }: {
-      answer_id: number
-      question_id: number
-    }
-  ) {
+  @inject()
+  public async submitVote({ request, response, auth, params }: HttpContext) {
     try {
       const user = await auth.authenticate()
       const gameId = params.id
 
-      console.log(`Vote reçu pour le jeu ${gameId}, question ${question_id}, réponse ${answer_id}`)
+      // Validate the request payload
+      const payload = await request.validateUsing(voteValidator)
+      const { answer_id: answerId, question_id: questionId } = payload
+
+      console.log(`Vote reçu pour le jeu ${gameId}, question ${questionId}, réponse ${answerId}`)
 
       // Vérifier que le jeu existe et est en cours
       const game = await Game.find(gameId)
@@ -710,12 +736,12 @@ export default class GamesController {
       }
 
       // Récupérer la question
-      const question = await Question.findOrFail(question_id)
+      const question = await Question.findOrFail(questionId)
 
       // Vérifier si le joueur a déjà voté
       const existingVote = await Vote.query()
-        .where('question_id', question_id)
-        .where('user_id', user.id)
+        .where('question_id', questionId)
+        .where('voter_id', user.id)
         .first()
 
       if (existingVote) {
@@ -731,7 +757,7 @@ export default class GamesController {
       if (!isTarget) {
         // Pour les autres joueurs, vérifier qu'ils ont répondu
         const hasAnswered = await Answer.query()
-          .where('question_id', question_id)
+          .where('question_id', questionId)
           .where('user_id', user.id)
           .first()
 
@@ -745,9 +771,9 @@ export default class GamesController {
 
       // Créer le vote
       const vote = await Vote.create({
-        questionId: question_id,
+        questionId: questionId,
         voterId: user.id,
-        answerId: answer_id,
+        answerId: answerId,
       })
 
       console.log(`✅ [submitVote] Vote enregistré: ${vote.id}`)
@@ -761,7 +787,7 @@ export default class GamesController {
       })
 
       // Vérifier si tous les votes sont soumis
-      await this.checkAndProgressToResults(gameId, question_id)
+      await this.checkAndProgressToResults(gameId, questionId)
 
       return response.ok({
         status: 'success',
@@ -817,7 +843,7 @@ export default class GamesController {
           `🎮 [nextRound] Partie trouvée: ${game.id}, Phase: ${game.currentPhase}, Round: ${game.currentRound}/${game.totalRounds}`
         )
 
-        // Récupérer la salle pour vérifier que l'utilisateur est l'hôte
+        // Récupérer la salle pour vérifier que l'utilisateur est l'hôte ou la cible
         const room = await Room.find(game.roomId)
         if (!room) {
           console.error(`❌ [nextRound] Salle non trouvée: ${game.roomId}`)
@@ -862,13 +888,16 @@ export default class GamesController {
           })
         }
 
-        // Vérifier que l'utilisateur est bien l'hôte de la salle
-        if (room.hostId !== user.id) {
+        // Vérifier que l'utilisateur est bien l'hôte de la salle ou la cible actuelle
+        const isHost = room.hostId === user.id
+        const isTarget = currentQuestion?.targetPlayerId === user.id
+
+        if (!isHost && !isTarget) {
           console.error(
-            `❌ [nextRound] L'utilisateur n'est pas l'hôte: User=${user.id}, Hôte=${room.hostId}`
+            `❌ [nextRound] L'utilisateur n'est ni l'hôte ni la cible: User=${user.id}, Hôte=${room.hostId}, Cible=${currentQuestion?.targetPlayerId}`
           )
           return response.forbidden({
-            error: "Seul l'hôte peut passer au tour suivant",
+            error: "Seul l'hôte ou la cible peut passer au tour suivant",
           })
         }
 
@@ -980,26 +1009,27 @@ export default class GamesController {
 
           return {
             status: 'success',
-            message: 'Nouveau tour démarré',
+            message: 'Tour suivant lancé avec succès',
             data: {
-              currentRound: game.currentRound,
-              totalRounds: game.totalRounds,
-              question: {
-                id: question.id,
-                text: question.text,
+              round: game.currentRound,
+              phase: game.currentPhase,
+              targetPlayer: {
+                id: targetPlayer.id,
+                username: targetPlayer.username,
+                displayName: targetPlayer.displayName,
               },
             },
           }
         }
       } finally {
-        // Toujours libérer le lock
+        // Libérer le lock
         await this.releaseLock(lockKey)
       }
     } catch (error) {
       console.error('❌ [nextRound] Erreur:', error)
-      // S'assurer que le lock est libéré même en cas d'erreur
-      await this.releaseLock(lockKey)
-      throw error
+      return response.internalServerError({
+        error: "Une erreur s'est produite lors du passage au tour suivant",
+      })
     }
   }
 
@@ -1083,6 +1113,130 @@ export default class GamesController {
       )
       // Question vraiment de dernier recours, évitant tout contenu statique
       return `Quelle est la chose la plus surprenante à propos de ${playerName} ?`
+    }
+  }
+
+  /**
+   * Récupérer l'état du jeu pour un utilisateur spécifique
+   */
+  async getGameState(gameId: number, userId: number) {
+    try {
+      // Récupérer le jeu avec ses relations
+      const game = await Game.query()
+        .where('id', gameId)
+        .preload('room', (roomQuery) => {
+          roomQuery.preload('players')
+        })
+        .first()
+
+      if (!game) {
+        throw new Error('Partie non trouvée')
+      }
+
+      // Récupérer la question actuelle si elle existe
+      let currentQuestion = null
+      if (game.currentRound > 0) {
+        currentQuestion = await Question.query()
+          .where('game_id', game.id)
+          .where('round_number', game.currentRound)
+          .preload('targetPlayer')
+          .first()
+      }
+
+      // Récupérer toutes les réponses pour la question actuelle
+      let answers = []
+      if (currentQuestion) {
+        answers = await Answer.query()
+          .where('question_id', currentQuestion.id)
+          .preload('user')
+          .orderBy('created_at', 'asc')
+
+        // Ajouter un marqueur pour identifier les propres réponses de l'utilisateur
+        answers = answers.map((answer) => ({
+          ...answer.toJSON(),
+          isOwnAnswer: answer.userId === userId,
+        }))
+      }
+
+      // Déterminer si l'utilisateur actuel a déjà répondu et voté
+      let hasAnswered = false
+      let hasVoted = false
+      let isTargetPlayer = false
+
+      if (currentQuestion) {
+        hasAnswered =
+          (await Answer.query()
+            .where('question_id', currentQuestion.id)
+            .where('user_id', userId)
+            .first()) !== null
+
+        hasVoted =
+          (await Vote.query()
+            .where('question_id', currentQuestion.id)
+            .where('voter_id', userId)
+            .first()) !== null
+
+        isTargetPlayer = currentQuestion.targetPlayerId === userId
+      }
+
+      return {
+        game: {
+          id: game.id,
+          roomId: game.roomId,
+          currentRound: game.currentRound,
+          totalRounds: game.totalRounds,
+          status: game.status,
+          gameMode: game.gameMode,
+          currentPhase: game.currentPhase,
+          scores: game.scores || {},
+          createdAt: game.createdAt,
+        },
+        room: {
+          id: game.room.id,
+          code: game.room.code,
+          name: game.room.name,
+          hostId: game.room.hostId,
+        },
+        players: game.room.players.map((player) => ({
+          id: player.id,
+          username: player.username,
+          displayName: player.displayName,
+          avatar: player.avatar,
+          score: game.scores?.[player.id] || 0,
+          isHost: player.id === game.room.hostId,
+        })),
+        currentQuestion: currentQuestion
+          ? {
+              id: currentQuestion.id,
+              text: currentQuestion.text,
+              roundNumber: currentQuestion.roundNumber,
+              targetPlayer: currentQuestion.targetPlayer
+                ? {
+                    id: currentQuestion.targetPlayer.id,
+                    username: currentQuestion.targetPlayer.username,
+                    displayName: currentQuestion.targetPlayer.displayName,
+                    avatar: currentQuestion.targetPlayer.avatar,
+                  }
+                : null,
+            }
+          : null,
+        answers: answers.map((answer) => ({
+          id: answer.id,
+          content: answer.content,
+          playerId: answer.userId,
+          playerName: answer.user?.displayName || answer.user?.username || 'Joueur anonyme',
+          votesCount: answer.votesCount || 0,
+          isOwnAnswer: answer.isOwnAnswer || answer.userId === userId,
+        })),
+        currentUserState: {
+          hasAnswered,
+          hasVoted,
+          isTargetPlayer,
+        },
+      }
+    } catch (error) {
+      console.error('❌ [getGameState] Erreur:', error)
+      throw error
     }
   }
 }
