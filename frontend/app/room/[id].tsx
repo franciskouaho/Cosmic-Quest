@@ -107,8 +107,13 @@ export default function Room() {
         try {
           console.log(`🔌 Configuration de la connexion WebSocket pour la salle ${id}`);
           
-          // Utiliser getInstanceAsync au lieu de getInstance
-          const socket = await SocketService.getInstanceAsync();
+          // Activer l'initialisation automatique des sockets pour la durée de la salle
+          SocketService.setAutoInit(true);
+          
+          // Forcer l'initialisation du socket pour la salle
+          const socket = await SocketService.getInstanceAsync(true);
+          
+          console.log(`✅ Socket initialisé avec succès pour la salle ${id}`);
           
           // Essayer de rejoindre la salle avec des nouvelles tentatives automatiques
           try {
@@ -203,9 +208,17 @@ export default function Room() {
             // Tenter de quitter la salle
             await SocketService.leaveRoom(id as string);
             console.log(`✅ Déconnexion propre de la salle ${id}`);
+            
+            // Désactiver l'initialisation automatique des sockets après avoir quitté la salle
+            SocketService.setAutoInit(false);
+            
+            // Nettoyer complètement le socket quand on quitte la salle
+            await SocketService.cleanup();
           } catch (err) {
             console.error(`❌ Erreur lors de la déconnexion de la salle ${id}:`, err);
             // Nous pouvons ignorer cette erreur car nous nettoyons de toute façon
+            // Désactiver l'initialisation automatique des sockets même en cas d'erreur
+            SocketService.setAutoInit(false);
           }
         })();
       };

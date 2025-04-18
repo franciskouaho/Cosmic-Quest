@@ -32,8 +32,11 @@ class GameWebSocketService {
    */
   async ensureSocketConnection(gameId: string): Promise<boolean> {
     try {
+      // Activer l'initialisation automatique pour les jeux
+      SocketService.setAutoInit(true);
+      
       // Vérifier si un socket est déjà disponible et connecté
-      const socket = await SocketService.getInstanceAsync();
+      const socket = await SocketService.getInstanceAsync(true);
       
       if (!socket.connected) {
         console.log(`⚠️ [GameWebSocket] Socket non connecté, tentative de reconnexion...`);
@@ -335,6 +338,36 @@ class GameWebSocketService {
     } catch (error) {
       console.error(`❌ [GameWebSocket] Erreur lors de la tentative de rejoindre le jeu ${gameId}:`, error);
       throw error;
+    }
+  }
+
+  /**
+   * Nettoie les ressources liées à un jeu
+   */
+  async cleanupGameResources(gameId: string): Promise<void> {
+    try {
+      console.log(`🧹 [GameWebSocket] Nettoyage des ressources pour le jeu ${gameId}`);
+      
+      // Quitter le canal de jeu
+      if (this.joinedGames.has(gameId)) {
+        await this.leaveGameChannel(gameId);
+      }
+      
+      // Nettoyer le cache pour ce jeu
+      this.clearGameStateCache(gameId);
+      
+      // Supprimer les timestamps de phase
+      this.phaseChangeTimestamps.delete(gameId);
+      
+      // Si c'était le dernier jeu, désactiver l'initialisation automatique
+      if (this.joinedGames.size === 0) {
+        SocketService.setAutoInit(false);
+        console.log(`🔌 [GameWebSocket] Désactivation de l'initialisation auto (aucun jeu actif)`);
+      }
+      
+      console.log(`✅ [GameWebSocket] Ressources nettoyées pour le jeu ${gameId}`);
+    } catch (error) {
+      console.error(`❌ [GameWebSocket] Erreur lors du nettoyage des ressources:`, error);
     }
   }
 

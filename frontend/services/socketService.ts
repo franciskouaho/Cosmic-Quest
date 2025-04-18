@@ -12,11 +12,19 @@ class SocketService {
   private reconnectAttempts: number = 0;
   private readonly MAX_RECONNECT_ATTEMPTS = 5;
   private readonly RECONNECT_DELAY = 2000; // 2 secondes
+  private autoInit: boolean = false; // Nouvelle propriété pour contrôler l'initialisation auto
 
   /**
    * Initialise la connexion socket
+   * Si vous voulez éviter les connexions automatiques, passez forceInit=true
    */
-  async initialize(): Promise<Socket> {
+  async initialize(forceInit: boolean = false): Promise<Socket> {
+    // Si l'initialisation n'est pas forcée et autoInit est false, ne pas se connecter
+    if (!forceInit && !this.autoInit) {
+      console.log('🔌 Initialisation Socket.IO reportée (pas de forceInit)');
+      throw new Error('Socket.IO initialization postponed - explicit initialization required');
+    }
+
     // Si l'initialisation est déjà en cours, retourner la promesse existante
     if (this.initPromise) {
       console.log('🔌 Connexion Socket.IO déjà en cours, attente...');
@@ -134,6 +142,14 @@ class SocketService {
   }
 
   /**
+   * Active ou désactive l'initialisation automatique des sockets
+   */
+  setAutoInit(enabled: boolean): void {
+    this.autoInit = enabled;
+    console.log(`🔌 Initialisation automatique des sockets: ${enabled ? 'activée' : 'désactivée'}`);
+  }
+
+  /**
    * Récupère l'instance du socket (méthode synchrone)
    */
   getSocketInstance(): Socket | null {
@@ -142,14 +158,20 @@ class SocketService {
 
   /**
    * Récupère une instance socket de manière asynchrone (recommandé)
-   * Initialise la connexion si nécessaire
+   * Initialise la connexion si nécessaire et si autoInit ou forceInit est true
    */
-  async getInstanceAsync(): Promise<Socket> {
+  async getInstanceAsync(forceInit: boolean = false): Promise<Socket> {
     if (this.socket && this.socket.connected) {
       return this.socket;
     }
     
-    return this.initialize();
+    // Si l'initialisation n'est pas activée et pas forcée, renvoyer une erreur
+    if (!this.autoInit && !forceInit) {
+      console.log('🔌 Demande d\'instance socket sans initialisation forcée, connexion différée');
+      throw new Error('Socket not initialized and autoInit is disabled');
+    }
+    
+    return this.initialize(forceInit);
   }
 
   /**
@@ -609,13 +631,17 @@ class SocketService {
 // Création d'une instance unique
 const socketServiceInstance = new SocketService();
 
+// Désactiver l'initialisation automatique par défaut
+socketServiceInstance.setAutoInit(false);
+
 // Export des méthodes pour maintenir la compatibilité avec le code existant
 export default {
   // Méthodes d'instance
-  initialize: () => socketServiceInstance.initialize(),
+  initialize: (forceInit?: boolean) => socketServiceInstance.initialize(forceInit),
   getSocketInstance: () => socketServiceInstance.getSocketInstance(),
-  getInstanceAsync: () => socketServiceInstance.getInstanceAsync(),
+  getInstanceAsync: (forceInit?: boolean) => socketServiceInstance.getInstanceAsync(forceInit),
   isConnected: () => socketServiceInstance.isConnected(),
+  setAutoInit: (enabled: boolean) => socketServiceInstance.setAutoInit(enabled),
   reconnect: () => socketServiceInstance.reconnect(),
   reconnectToRoom: (roomCode: string, maxAttempts?: number) => 
     socketServiceInstance.reconnectToRoom(roomCode, maxAttempts),

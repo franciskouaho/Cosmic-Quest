@@ -14,7 +14,8 @@ export const testSocketConnection = async () => {
   
   try {
     // Utiliser la méthode asynchrone pour obtenir une instance valide
-    const socket = await SocketService.getInstanceAsync();
+    // Forcer l'initialisation du socket pour le test
+    const socket = await SocketService.getInstanceAsync(true);
     
     console.log(`🔌 URL WebSocket: ${SOCKET_URL}`);
     console.log(`🔌 Socket ID: ${socket.id || 'non connecté'}`);
@@ -62,7 +63,8 @@ export const testSocketConnection = async () => {
 export const testAndSubmitAnswer = async (gameId: string, questionId: string, content: string): Promise<boolean> => {
   try {
     // Utiliser la méthode asynchrone pour obtenir une instance valide
-    const socket = await SocketService.getInstanceAsync();
+    // Forcer l'initialisation du socket pour la soumission de réponse
+    const socket = await SocketService.getInstanceAsync(true);
     
     // Vérifier rapidement si le socket est connecté
     if (!socket.connected) {
