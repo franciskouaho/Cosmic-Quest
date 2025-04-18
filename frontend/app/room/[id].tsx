@@ -187,10 +187,8 @@ export default function Room() {
                     console.log(`👤 ID utilisateur ${user.id} défini avant redirection`);
                   }
                   
-                  // Attendre un peu avant de rediriger pour laisser le temps aux autres opérations
-                  setTimeout(() => {
-                    router.push(`/game/${data.gameId}`);
-                  }, 500);
+                  // Redirection immédiate
+                  router.push(`/game/${data.gameId}`);
                 }
                 break;
             }

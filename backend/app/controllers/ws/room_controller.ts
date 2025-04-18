@@ -516,13 +516,12 @@ export default class RoomsController {
           `✅ Première question générée pour le jeu ${game.id} avec le joueur cible ${targetPlayer.id}`
         )
 
-        // Définir les durées pour chaque phase
-        const isSmallGame = count <= 3 // Modifier pour considérer 3 joueurs ou moins comme "petite partie"
-        const questionPhaseDuration = isSmallGame ? 10 : 15 // Réduire à 10s pour les petites parties
-        const answerPhaseDuration = isSmallGame ? 25 : 45 // Réduire à 25s pour les petites parties
+        // Définir les durées pour chaque phase - TOUTES RÉDUITES À 1 SECONDE
+        const questionPhaseDuration = 1 // Réduit à 1s
+        const answerPhaseDuration = 1 // Réduit à 1s
         const io = socketService.getInstance()
 
-        // Notifier les clients du début de la phase question avec le compteur
+        // Notifier les clients du début de la phase question
         io.to(`game:${game.id}`).emit('game:update', {
           type: 'new_round',
           round: 1,
@@ -536,56 +535,50 @@ export default class RoomsController {
               displayName: targetPlayer.displayName,
             },
           },
-          timer: {
-            duration: questionPhaseDuration,
-            startTime: Date.now(),
-          },
+          instantTransition: true,
+          // Supprimer le timer
         })
 
-        // Passer à la phase de réponse après un délai
+        // Passer immédiatement à la phase de réponse (après 1 seconde)
         setTimeout(async () => {
           game.currentPhase = 'answer'
           await game.save()
 
-          // Notifier les joueurs du changement de phase avec le compteur
+          // Notifier les joueurs du changement de phase
           io.to(`game:${game.id}`).emit('game:update', {
             type: 'phase_change',
             phase: 'answer',
-            timer: {
-              duration: answerPhaseDuration,
-              startTime: Date.now(),
-            },
+            instantTransition: true,
+            // Supprimer le timer
           })
 
           console.log(`✅ Passage à la phase 'answer' pour le jeu ${game.id}`)
 
-          // NOUVEAU: Passer automatiquement à la phase vote après le délai de réponse
+          // NOUVEAU: Passer immédiatement à la phase vote (après 1 seconde)
           setTimeout(async () => {
             try {
-              // Vérifier si le jeu existe toujours et est encore en phase de réponse
+              // Vérifier si le jeu existe toujours
               const currentGame = await Game.find(game.id)
               if (currentGame && currentGame.currentPhase === 'answer') {
                 currentGame.currentPhase = 'vote'
                 await currentGame.save()
 
-                // Définir la durée de la phase de vote
-                const votePhaseDuration = isSmallGame ? 15 : 30
+                // Définir la durée de la phase de vote à 1 seconde
+                const votePhaseDuration = 1
 
                 // Notifier les joueurs du changement de phase
                 io.to(`game:${currentGame.id}`).emit('game:update', {
                   type: 'phase_change',
                   phase: 'vote',
-                  timer: {
-                    duration: votePhaseDuration,
-                    startTime: Date.now(),
-                  },
+                  instantTransition: true,
+                  // Supprimer le timer
                 })
 
                 console.log(
                   `✅ Progression automatique vers la phase 'vote' pour le jeu ${currentGame.id}`
                 )
 
-                // NOUVEAU: Passer automatiquement à la phase résultats après le délai de vote
+                // NOUVEAU: Passer immédiatement à la phase résultats (après 1 seconde)
                 setTimeout(async () => {
                   try {
                     const updatedGame = await Game.find(game.id)
@@ -597,6 +590,7 @@ export default class RoomsController {
                       io.to(`game:${updatedGame.id}`).emit('game:update', {
                         type: 'phase_change',
                         phase: 'results',
+                        instantTransition: true,
                       })
 
                       console.log(
@@ -609,13 +603,13 @@ export default class RoomsController {
                       error
                     )
                   }
-                }, votePhaseDuration * 1000)
+                }, 1000) // Réduit à 1 seconde
               }
             } catch (error) {
               console.error(`❌ Erreur lors de la progression vers la phase 'vote':`, error)
             }
-          }, answerPhaseDuration * 1000)
-        }, questionPhaseDuration * 1000) // Convertir en millisecondes
+          }, 1000) // Réduit à 1 seconde
+        }, 1000) // Réduit à 1 seconde
       } catch (questionError) {
         console.error('❌ Erreur lors de la génération de la première question:', questionError)
       }

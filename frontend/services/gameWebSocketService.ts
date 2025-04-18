@@ -41,15 +41,10 @@ class GameWebSocketService {
       if (!socket.connected) {
         console.log(`⚠️ [GameWebSocket] Socket non connecté, tentative de reconnexion...`);
         
-        // Essayer de reconnecter avec un délai d'expiration
-        const reconnectPromise = this.reconnect();
-        const timeoutPromise = new Promise<boolean>((resolve) => {
-          setTimeout(() => resolve(false), 2000);
-        });
-        
-        const reconnected = await Promise.race([reconnectPromise, timeoutPromise]);
+        // Tentative de reconnexion immédiate (sans délai)
+        const reconnected = await this.reconnect();
         if (!reconnected) {
-          console.error(`❌ [GameWebSocket] Échec de reconnexion dans le délai imparti`);
+          console.error(`❌ [GameWebSocket] Échec de reconnexion`);
           return false;
         }
       }
@@ -60,12 +55,9 @@ class GameWebSocketService {
         if (this.pendingJoinRequests.has(gameId)) {
           console.log(`🔄 [GameWebSocket] Jointure déjà en cours pour ${gameId}, attente...`);
           try {
-            await Promise.race([
-              this.pendingJoinRequests.get(gameId),
-              new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout de jointure')), 3000))
-            ]);
+            await this.pendingJoinRequests.get(gameId);
           } catch (timeoutError) {
-            console.warn(`⚠️ [GameWebSocket] Timeout lors de l'attente d'une jointure en cours`);
+            console.warn(`⚠️ [GameWebSocket] Erreur lors de l'attente d'une jointure en cours`);
             this.pendingJoinRequests.delete(gameId);
             return false;
           }
@@ -75,15 +67,9 @@ class GameWebSocketService {
           this.pendingJoinRequests.set(gameId, joinPromise);
           
           try {
-            // Utiliser Promise.race pour limiter le temps d'attente
-            await Promise.race([
-              joinPromise,
-              new Promise((_, reject) => 
-                setTimeout(() => reject(new Error('Timeout de jointure')), 3000)
-              )
-            ]);
+            await joinPromise;
           } catch (error) {
-            console.error(`❌ [GameWebSocket] Erreur ou timeout lors de la jointure au canal:`, error);
+            console.error(`❌ [GameWebSocket] Erreur lors de la jointure au canal:`, error);
             return false;
           } finally {
             // Supprimer la requête en attente
@@ -170,18 +156,11 @@ class GameWebSocketService {
       const socket = await this.ensureSocketConnection(gameId);
       
       return new Promise((resolve, reject) => {
-        // Définir un timeout de 5 secondes
-        const timeout = setTimeout(() => {
-          reject(new Error('Timeout dépassé pour la transition forcée'));
-        }, 5000);
-        
-        // Émettre l'événement pour forcer la phase answer
+        // Émettre immédiatement l'événement pour forcer la phase answer
         socket.emit('game:force_phase', {
           gameId,
           targetPhase: 'answer'
         }, (response: any) => {
-          clearTimeout(timeout);
-          
           if (response && response.success) {
             console.log(`✅ [GameWebSocket] Transition forcée réussie vers phase answer`);
             resolve(true);
@@ -270,13 +249,7 @@ class GameWebSocketService {
       // Si aucune information en cache, vérifier via le serveur
       const socket = await SocketService.getInstanceAsync();
       return new Promise<boolean>((resolve) => {
-        const timeoutId = setTimeout(() => {
-          console.warn(`⚠️ [GameWebSocket] Timeout lors de la vérification d'hôte, considéré comme non-hôte`);
-          resolve(false);
-        }, 3000);
-        
         socket.emit('game:check_host', { gameId }, (response: any) => {
-          clearTimeout(timeoutId);
           resolve(response?.isHost || false);
         });
       });
@@ -307,13 +280,7 @@ class GameWebSocketService {
       const userId = await UserIdManager.getUserId();
       
       return new Promise<void>((resolve, reject) => {
-        // Définir un timeout
-        const timeoutId = setTimeout(() => {
-          console.warn(`⚠️ [GameWebSocket] Timeout lors de la tentative de rejoindre le jeu ${gameId}`);
-          reject(new Error('Timeout de connexion'));
-        }, 5000);
-        
-        // Émettre l'événement pour rejoindre le jeu
+        // Émettre immédiatement l'événement pour rejoindre le jeu
         socket.emit('join-game', { 
           gameId,
           userId,
@@ -322,8 +289,6 @@ class GameWebSocketService {
         
         // Écouter la confirmation
         socket.once('game:joined', (data) => {
-          clearTimeout(timeoutId);
-          
           if (data && data.gameId === gameId) {
             console.log(`✅ [GameWebSocket] Jeu ${gameId} rejoint avec succès`);
             this.joinedGames.add(gameId);
@@ -334,6 +299,9 @@ class GameWebSocketService {
         });
         
         console.log(`📤 [GameWebSocket] Demande de rejoindre le jeu ${gameId} envoyée`);
+        
+        // Résoudre immédiatement pour ne pas bloquer
+        resolve();
       });
     } catch (error) {
       console.error(`❌ [GameWebSocket] Erreur lors de la tentative de rejoindre le jeu ${gameId}:`, error);
@@ -408,16 +376,8 @@ class GameWebSocketService {
           return;
         }
         
-        // Configurer un timeout
-        const timeoutId = setTimeout(() => {
-          console.warn(`⚠️ [GameWebSocket] Timeout lors de la récupération de l'état pour ${gameId}`);
-          reject(new Error("Timeout lors de la récupération de l'état du jeu"));
-        }, this.REQUEST_TIMEOUT);
-        
         // Émettre la requête
         socket.emit('game:get_state', { gameId, userId }, (response: any) => {
-          clearTimeout(timeoutId);
-          
           if (response && response.success) {
             // Sauvegarder dans le cache
             this.gameStateCache.set(gameId, {
@@ -474,16 +434,8 @@ class GameWebSocketService {
           return;
         }
         
-        // Configurer un timeout
-        const timeoutId = setTimeout(() => {
-          console.warn(`⚠️ [GameWebSocket] Timeout lors du force check pour ${gameId}`);
-          resolve(false);
-        }, 5000);
-        
         // Émettre la requête
         socket.emit('game:force_check', { gameId, userId }, (response: any) => {
-          clearTimeout(timeoutId);
-          
           if (response && response.success) {
             console.log(`✅ [GameWebSocket] Vérification forcée réussie pour ${gameId}`);
             
@@ -593,15 +545,7 @@ class InstantGameWebSocketService {
       const socket = await SocketService.getInstanceAsync();
       
       return new Promise<boolean>((resolve) => {
-        // Timeout rapide pour éviter de bloquer l'interface
-        const timeout = setTimeout(() => {
-          console.log(`⏱️ Timeout jointure au jeu ${gameId}`);
-          resolve(false);
-        }, this.REQUEST_TIMEOUT);
-        
         socket.emit('join-game', { gameId }, (response: any) => {
-          clearTimeout(timeout);
-          
           if (response?.success) {
             this.joinedGames.add(gameId);
             resolve(true);
@@ -632,14 +576,7 @@ class InstantGameWebSocketService {
       const socket = await SocketService.getInstanceAsync();
       
       return new Promise<boolean>((resolve) => {
-        // Timeout rapide
-        const timeout = setTimeout(() => {
-          this.joinedGames.delete(gameId);
-          resolve(true); // Considérer comme succès même en cas de timeout
-        }, this.REQUEST_TIMEOUT);
-        
         socket.emit('leave-game', { gameId }, () => {
-          clearTimeout(timeout);
           this.joinedGames.delete(gameId);
           resolve(true);
         });
@@ -679,16 +616,11 @@ class InstantGameWebSocketService {
       const socket = await SocketService.getInstanceAsync();
       
       // Créer une promesse avec timeout
-      const isHost = await Promise.race([
-        new Promise<boolean>((resolve) => {
-          socket.emit('game:check_host', { gameId, userId: effectiveUserId }, (response: any) => {
-            resolve(!!response?.isHost);
-          });
-        }),
-        new Promise<boolean>((resolve) => {
-          setTimeout(() => resolve(false), this.REQUEST_TIMEOUT);
-        })
-      ]);
+      const isHost = await new Promise<boolean>((resolve) => {
+        socket.emit('game:check_host', { gameId, userId: effectiveUserId }, (response: any) => {
+          resolve(!!response?.isHost);
+        });
+      });
       
       // Mettre en cache
       this.gameStateCache.set(cacheKey, { state: isHost, timestamp: Date.now() });
@@ -713,13 +645,7 @@ class InstantGameWebSocketService {
       }
       
       return new Promise<boolean>((resolve) => {
-        // Timeout rapide
-        const timeout = setTimeout(() => {
-          resolve(false);
-        }, this.REQUEST_TIMEOUT);
-        
         socket.emit('game:force_check', { gameId }, (response: any) => {
-          clearTimeout(timeout);
           resolve(!!response?.success);
         });
         
@@ -740,14 +666,7 @@ class InstantGameWebSocketService {
       const socket = await SocketService.getInstanceAsync();
       
       return new Promise<boolean>((resolve) => {
-        // Timeout ultra rapide
-        const timeout = setTimeout(() => {
-          console.log(`⏱️ Timeout soumission de réponse, considérant comme acceptée`);
-          resolve(true); // Considérer comme succès pour éviter de bloquer le joueur
-        }, this.REQUEST_TIMEOUT);
-        
         socket.emit('game:submit_answer', { gameId, questionId, content }, (response: any) => {
-          clearTimeout(timeout);
           resolve(!!response?.success);
         });
       });
@@ -765,14 +684,7 @@ class InstantGameWebSocketService {
       const socket = await SocketService.getInstanceAsync();
       
       return new Promise<boolean>((resolve) => {
-        // Timeout ultra rapide
-        const timeout = setTimeout(() => {
-          console.log(`⏱️ Timeout soumission de vote, considérant comme accepté`);
-          resolve(true); // Considérer comme succès pour éviter de bloquer le joueur
-        }, this.REQUEST_TIMEOUT);
-        
         socket.emit('game:submit_vote', { gameId, answerId, questionId }, (response: any) => {
-          clearTimeout(timeout);
           resolve(!!response?.success);
         });
       });

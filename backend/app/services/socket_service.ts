@@ -64,12 +64,12 @@ export class SocketService {
         },
         transports: ['websocket', 'polling'],
         allowEIO3: true,
-        pingTimeout: 10000, // Réduire de 20000 à 10000
-        pingInterval: 15000, // Réduire de 25000 à 15000
-        connectTimeout: 15000, // Réduire de 30000 à 15000
-        retries: 3,
-        reconnectionDelayMax: 5000,
-        reconnectionDelay: 1000,
+        pingTimeout: 1000, // Réduit à 1s
+        pingInterval: 1000, // Réduit à 1s
+        connectTimeout: 1000, // Réduit à 1s
+        retries: 1, // Réduit à 1 seul essai
+        reconnectionDelayMax: 100, // Réduit à 100ms
+        reconnectionDelay: 100, // Réduit à 100ms
         maxHttpBufferSize: 1e8, // 100 MB
       })
 
@@ -180,6 +180,14 @@ export class SocketService {
 
         // Nouveau gestionnaire pour le passage au tour suivant via WebSocket
         socket.on('game:next_round', async (data, callback) => {
+          // Répondre immédiatement au client sans attendre la fin du traitement
+          if (typeof callback === 'function') {
+            callback({
+              success: true,
+              message: 'Traitement du passage au tour suivant en cours...',
+            })
+          }
+
           try {
             console.log(
               `🎮 [WebSocket] Demande de passage au tour suivant pour le jeu ${data.gameId}`
@@ -342,14 +350,6 @@ export class SocketService {
             // Importer le contrôleur de jeu
             const GameController = (await import('#controllers/ws/game_controller')).default
             const controller = new GameController()
-
-            // Envoyer un acquittement immédiat pour éviter les timeouts
-            if (typeof callback === 'function') {
-              callback({
-                success: true,
-                message: 'Traitement du passage au tour suivant en cours...',
-              })
-            }
 
             try {
               // Tenter le passage au tour suivant directement via le contrôleur

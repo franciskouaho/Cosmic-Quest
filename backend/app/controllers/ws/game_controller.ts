@@ -375,19 +375,16 @@ export default class GamesController {
 
       try {
         // Répondre plus rapidement au client
-        response.response.socket?.setTimeout(2000)
+        response.response.socket?.setTimeout(0) // Pas de timeout
 
-        // Créer la réponse avec un timeout plus court
-        const answer = await Promise.race([
-          Answer.create({
-            questionId: question.id,
-            userId: user.id,
-            content: content,
-            votesCount: 0,
-            isSelected: false,
-          }),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('DB Timeout')), 3000)),
-        ])
+        // Créer la réponse immédiatement sans timeout
+        const answer = await Answer.create({
+          questionId: question.id,
+          userId: user.id,
+          content: content,
+          votesCount: 0,
+          isSelected: false,
+        })
 
         console.log(`✅ [submitAnswer] Réponse créée avec succès: ID=${answer.id}`)
 
@@ -1430,38 +1427,19 @@ export default class GamesController {
   }
 
   /**
-   * Calcule le temps restant pour la phase actuelle
+   * Calcule le temps restant pour la phase actuelle - MODIFIÉ POUR SUPPRESSION DES TIMERS
    */
   private calculateRemainingTime(currentPhase: string) {
-    // Durées par défaut pour chaque phase (en secondes)
-    const phaseDurations = {
-      question: 10,
-      answer: 30,
-      vote: 20,
-      results: 15,
-    }
-
-    // Phase actuelle et durée
-    const duration = phaseDurations[currentPhase as keyof typeof phaseDurations] || 10
-
-    // Simuler un temps de départ (temps actuel - un délai aléatoire entre 1 et durée)
-    const randomElapsed = Math.floor(Math.random() * (duration - 1)) + 1
-    const startTime = Date.now() - randomElapsed * 1000
-
-    return {
-      duration,
-      startTime,
-    }
+    // Retourner null pour désactiver tous les timers
+    return null
   }
 
   /**
-   * Progression automatique des phases du jeu
+   * Progression automatique des phases du jeu - MODIFIÉE POUR ÊTRE INSTANTANÉE
    */
   private async autoAdvanceGamePhase(gameId: number, currentPhase: string, duration: number) {
     try {
-      // Attendre la durée spécifiée
-      await new Promise((resolve) => setTimeout(resolve, duration * 1000))
-
+      // Avancer immédiatement sans délai
       const game = await Game.find(gameId)
       if (!game || game.currentPhase !== currentPhase) {
         return // Le jeu n'existe plus ou la phase a déjà changé

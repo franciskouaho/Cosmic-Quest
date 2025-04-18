@@ -95,36 +95,29 @@ class SocketService {
           }
         });
 
-        // Vérifier si le socket est connecté
-        if (this.socket.connected) {
-          console.log('✅ Socket.IO connecté immédiatement');
-          this.isInitializing = false;
-          resolve(this.socket);
-        } else {
-          console.log('⏳ En attente de connexion Socket.IO...');
-          
-          // Configurer un délai d'attente
-          const timeout = setTimeout(() => {
-            console.error('❌ Délai d\'attente de connexion dépassé');
-            this.isInitializing = false;
-            this.initPromise = null;
+        // Définir un délai pour attendre la connexion
+        const connectionTimeout = setTimeout(() => {
+          if (!this.socket?.connected) {
+            console.warn('⚠️ Délai d\'attente de connexion dépassé, mais on continue');
             
+            // Ne pas rejeter la promesse, résoudre avec le socket non connecté
+            // Le système essaiera plus tard de le reconnecter
             if (this.socket) {
-              this.socket.disconnect();
-              this.socket = null;
+              resolve(this.socket);
+            } else {
+              reject(new Error('Socket non créé après timeout'));
             }
-            
-            reject(new Error('Délai d\'attente de connexion dépassé'));
-          }, 10000);
-          
-          // Attendre la connexion
-          this.socket.once('connect', () => {
-            clearTimeout(timeout);
-            console.log('✅ Socket.IO connecté avec succès');
-            this.isInitializing = false;
-            resolve(this.socket!);
-          });
-        }
+          }
+        }, 5000);
+
+        // Attendre l'événement de connexion
+        this.socket.once('connect', () => {
+          clearTimeout(connectionTimeout);
+          console.log('✅ Socket.IO connecté avec succès');
+          this.isInitializing = false;
+          resolve(this.socket!);
+        });
+
       } catch (error) {
         console.error('❌ Erreur lors de l\'initialisation Socket.IO:', error);
         this.isInitializing = false;
@@ -139,6 +132,81 @@ class SocketService {
       this.initPromise = null;
       throw error;
     }
+  }
+
+  /**
+   * Assure qu'une connexion socket est établie
+   * Tente plusieurs fois de se connecter en cas d'échec
+   */
+  async ensureConnection(maxAttempts: number = 3): Promise<Socket> {
+    if (this.socket && this.socket.connected) {
+      return this.socket;
+    }
+
+    let attempts = 0;
+    let lastError: Error | null = null;
+
+    while (attempts < maxAttempts) {
+      attempts++;
+      console.log(`🔄 Tentative de connexion socket ${attempts}/${maxAttempts}`);
+
+      try {
+        // Activer l'auto-init pour cette tentative
+        this.autoInit = true;
+
+        // Si une initialisation est déjà en cours, attendre son résultat
+        if (this.initPromise) {
+          const socket = await this.initPromise;
+          if (socket.connected) {
+            console.log(`✅ Connexion socket réussie à la tentative ${attempts}`);
+            return socket;
+          }
+        }
+
+        // Sinon initialiser une nouvelle connexion
+        this.initPromise = null; // Réinitialiser pour forcer une nouvelle tentative
+        const socket = await this.initialize(true);
+        
+        // Si le socket existe mais n'est pas connecté, tenter de le connecter
+        if (socket && !socket.connected) {
+          console.log(`🔌 Socket créé mais pas connecté, tentative de connexion...`);
+          socket.connect();
+          
+          // Attendre la connexion avec un timeout
+          await new Promise<void>((resolve, reject) => {
+            const timeout = setTimeout(() => {
+              socket.off('connect');
+              reject(new Error('Timeout de connexion dépassé'));
+            }, 3000);
+            
+            socket.once('connect', () => {
+              clearTimeout(timeout);
+              resolve();
+            });
+          });
+        }
+        
+        if (socket.connected) {
+          console.log(`✅ Connexion socket établie avec succès`);
+          return socket;
+        }
+      } catch (error) {
+        console.warn(`⚠️ Échec de la tentative ${attempts}:`, error);
+        lastError = error instanceof Error ? error : new Error(String(error));
+        
+        // Attendre avant la prochaine tentative
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+
+    if (this.socket) {
+      // Retourner le socket même s'il n'est pas connecté
+      // comme dernier ressort
+      console.warn(`⚠️ Retourne le socket non connecté comme dernier ressort`);
+      return this.socket;
+    }
+
+    throw lastError || new Error('Impossible d\'établir une connexion socket après plusieurs tentatives');
   }
 
   /**
@@ -171,6 +239,12 @@ class SocketService {
       throw new Error('Socket not initialized and autoInit is disabled');
     }
     
+    // Si nous sommes dans un contexte critique (forceInit=true),
+    // utiliser ensureConnection pour être plus résilient
+    if (forceInit) {
+      return this.ensureConnection();
+    }
+    
     return this.initialize(forceInit);
   }
 
@@ -196,7 +270,8 @@ class SocketService {
       // Limiter les tentatives de reconnexion
       if (this.reconnectAttempts >= this.MAX_RECONNECT_ATTEMPTS) {
         console.error(`❌ Nombre maximum de tentatives de reconnexion atteint (${this.MAX_RECONNECT_ATTEMPTS})`);
-        throw new Error('Nombre maximum de tentatives de reconnexion atteint');
+        // Reset et essayer encore une fois au lieu de rejeter
+        this.reconnectAttempts = 0;
       }
       
       this.reconnectAttempts++;
@@ -204,8 +279,23 @@ class SocketService {
       // Si déjà en initialisation, attendre le résultat
       if (this.isInitializing && this.initPromise) {
         try {
-          await this.initPromise;
-          return true;
+          const socket = await this.initPromise;
+          if (socket.connected) return true;
+          
+          // Si le socket n'est pas connecté après l'initialisation, essayer de le connecter
+          socket.connect();
+          
+          // Attendre la connexion avec un timeout
+          return await new Promise((resolve) => {
+            const timeout = setTimeout(() => {
+              resolve(false);
+            }, 5000);
+            
+            socket.once('connect', () => {
+              clearTimeout(timeout);
+              resolve(true);
+            });
+          });
         } catch (error) {
           console.error('❌ Échec de l\'initialisation en cours:', error);
           // Continuer avec une nouvelle tentative
@@ -221,11 +311,10 @@ class SocketService {
           // Attendre la reconnexion
           return new Promise((resolve) => {
             const timeout = setTimeout(() => {
-              this.socket?.off('connect');
               resolve(false);
             }, 5000);
             
-            this.socket.once('connect', () => {
+            this.socket!.once('connect', () => {
               clearTimeout(timeout);
               console.log('✅ Socket reconnecté avec succès');
               resolve(true);
@@ -235,9 +324,15 @@ class SocketService {
         return true;
       }
       
-      // Sinon, initialiser une nouvelle connexion
-      await this.initialize();
-      return true;
+      // Sinon, initialiser une nouvelle connexion et essayer
+      // avec ensureConnection qui est plus robuste
+      try {
+        const socket = await this.ensureConnection();
+        return socket.connected;
+      } catch (e) {
+        console.error('❌ Échec de la connexion forcée:', e);
+        return false;
+      }
     } catch (error) {
       console.error('❌ Échec de reconnexion:', error);
       return false;
@@ -309,14 +404,7 @@ class SocketService {
       }
       
       return new Promise((resolve) => {
-        const timeout = setTimeout(() => {
-          console.warn(`⚠️ Timeout lors de la tentative de rejoindre la salle ${roomCode}`);
-          resolve(false);
-        }, 5000);
-        
         this.socket!.emit('join-room', { roomCode }, (response: any) => {
-          clearTimeout(timeout);
-          
           if (response && response.success !== false) {
             console.log(`✅ Salle ${roomCode} rejointe avec succès`);
             this.activeRooms.add(roomCode);
@@ -329,8 +417,6 @@ class SocketService {
         
         // Si pas de callback disponible, considérer comme succès avec un autre événement
         this.socket!.once('room:joined', (data) => {
-          clearTimeout(timeout);
-          
           if (data && data.roomCode === roomCode) {
             console.log(`✅ Salle ${roomCode} rejointe avec succès (via événement)`);
             this.activeRooms.add(roomCode);
@@ -358,15 +444,7 @@ class SocketService {
       }
       
       return new Promise((resolve) => {
-        const timeout = setTimeout(() => {
-          console.warn(`⚠️ Timeout lors de la tentative de quitter la salle ${roomCode}`);
-          this.activeRooms.delete(roomCode);
-          resolve(false);
-        }, 5000);
-        
         this.socket!.emit('leave-room', { roomCode }, (response: any) => {
-          clearTimeout(timeout);
-          
           this.activeRooms.delete(roomCode);
           
           if (response && response.success !== false) {
@@ -380,8 +458,6 @@ class SocketService {
         
         // Si pas de callback disponible, considérer comme succès avec un autre événement
         this.socket!.once('room:left', (data) => {
-          clearTimeout(timeout);
-          
           this.activeRooms.delete(roomCode);
           
           if (data && data.roomCode === roomCode) {
@@ -414,14 +490,7 @@ class SocketService {
       }
       
       return new Promise((resolve) => {
-        const timeout = setTimeout(() => {
-          console.warn(`⚠️ Timeout lors de la tentative de rejoindre le jeu ${gameId}`);
-          resolve(false);
-        }, 5000);
-        
         this.socket!.emit('join-game', { gameId }, (response: any) => {
-          clearTimeout(timeout);
-          
           if (response && response.success !== false) {
             console.log(`✅ Jeu ${gameId} rejoint avec succès`);
             resolve(true);
@@ -433,8 +502,6 @@ class SocketService {
         
         // Si pas de callback disponible, considérer comme succès avec un autre événement
         this.socket!.once('game:joined', (data) => {
-          clearTimeout(timeout);
-          
           if (data && data.gameId === gameId) {
             console.log(`✅ Jeu ${gameId} rejoint avec succès (via événement)`);
             resolve(true);
@@ -464,14 +531,7 @@ class SocketService {
       }
       
       return new Promise((resolve) => {
-        const timeout = setTimeout(() => {
-          console.warn(`⚠️ Timeout lors de la tentative de rejoindre le jeu ${gameId}`);
-          resolve(false);
-        }, 5000);
-        
         this.socket!.emit('join-game', { gameId }, (response: any) => {
-          clearTimeout(timeout);
-          
           if (response && response.success !== false) {
             console.log(`✅ Jeu ${gameId} rejoint avec succès`);
             resolve(true);
@@ -483,8 +543,6 @@ class SocketService {
         
         // Si pas de callback disponible, considérer comme succès avec un autre événement
         this.socket!.once('game:joined', (data) => {
-          clearTimeout(timeout);
-          
           if (data && data.gameId === gameId) {
             console.log(`✅ Jeu ${gameId} rejoint avec succès (via événement)`);
             resolve(true);
@@ -510,14 +568,7 @@ class SocketService {
       }
       
       return new Promise((resolve) => {
-        const timeout = setTimeout(() => {
-          console.warn(`⚠️ Timeout lors de la tentative de quitter le jeu ${gameId}`);
-          resolve(false);
-        }, 5000);
-        
         this.socket!.emit('leave-game', { gameId }, (response: any) => {
-          clearTimeout(timeout);
-          
           if (response && response.success !== false) {
             console.log(`✅ Jeu ${gameId} quitté avec succès`);
             resolve(true);
@@ -529,8 +580,6 @@ class SocketService {
         
         // Si pas de callback disponible, considérer comme succès avec un autre événement
         this.socket!.once('game:left', (data) => {
-          clearTimeout(timeout);
-          
           if (data && data.gameId === gameId) {
             console.log(`✅ Jeu ${gameId} quitté avec succès (via événement)`);
             resolve(true);
@@ -560,14 +609,7 @@ class SocketService {
       }
       
       return new Promise((resolve) => {
-        const timeout = setTimeout(() => {
-          console.warn(`⚠️ Timeout lors du forçage de vérification pour le jeu ${gameId}`);
-          resolve(false);
-        }, 5000);
-        
         this.socket!.emit('game:force_check', { gameId }, (response: any) => {
-          clearTimeout(timeout);
-          
           if (response && response.success !== false) {
             console.log(`✅ Vérification forcée avec succès pour le jeu ${gameId}`);
             resolve(true);

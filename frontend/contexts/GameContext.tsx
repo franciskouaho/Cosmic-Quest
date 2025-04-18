@@ -5,10 +5,10 @@ import SocketService from '../services/socketService';
 import { useAuth } from './AuthContext';
 import { Alert } from 'react-native';
 import Toast from '@/components/common/Toast';
-import { PhaseManager } from '../utils/phaseManager';
+import { PhaseManager } from '@/utils/phaseManager';
 import HostChecker from '../utils/hostChecker';
 import axios from 'axios';
-import { API_URL } from '../config/axios'; // Correction de l'importation pour utiliser le chemin correct
+import { API_URL } from '../config/axios';
 import UserIdManager from '../utils/userIdManager';
 
 type GameContextType = {
@@ -224,6 +224,11 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
       console.log('✅ GameContext: Jeu chargé avec succès');
 
+      // Vérifier immédiatement en cas de hasAnswered en phase Question
+      if (gameState.phase === GamePhase.QUESTION && gameState.currentUserState?.hasAnswered) {
+        checkGameProgress();
+      }
+
     } catch (error) {
       console.error('❌ GameContext: Erreur lors du chargement du jeu:', error);
       setError('Impossible de charger le jeu');
@@ -271,22 +276,17 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         
         showToast("Réponse soumise avec succès", "success");
         
-        // Forcer un rafraîchissement immédiat et un autre après un court délai
+        // Forcer un rafraîchissement immédiat - suppression des délais
         fetchGameData();
         
-        // Vérifier si une transition de phase est nécessaire après la réponse
-        setTimeout(async () => {
-          try {
-            // Importer dynamiquement pour éviter les dépendances circulaires
-            const { checkPhaseAfterAnswer } = await import('@/utils/socketTester');
-            checkPhaseAfterAnswer(gameId).catch(console.error);
-          } catch (error) {
-            console.error('❌ Erreur lors de la vérification post-réponse:', error);
-          }
-          
-          // Rafraîchir les données quelle que soit l'issue de la vérification
+        // Vérifier immédiatement si une transition de phase est nécessaire
+        try {
+          const { checkPhaseAfterAnswer } = await import('@/utils/socketTester');
+          checkPhaseAfterAnswer(gameId).catch(console.error);
           fetchGameData();
-        }, 2000);
+        } catch (error) {
+          console.error('❌ Erreur lors de la vérification post-réponse:', error);
+        }
       }
     } catch (error) {
       console.error('❌ GameContext: Erreur lors de la soumission:', error);
@@ -340,15 +340,14 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       console.log("🎮 Tentative de passage au tour suivant...");
       setIsSubmitting(true);
       
-      // Utiliser directement HTTP pour passer au tour suivant
       try {
         await gameService.nextRound(gameId as string);
         
         console.log("✅ Passage au tour suivant initié avec succès via HTTP");
         showToast("Tour suivant initié avec succès", "success");
         
-        // Forcer un rafraîchissement des données
-        setTimeout(() => fetchGameData(), 1000);
+        // Forcer un rafraîchissement immédiat des données
+        fetchGameData();
       } catch (error) {
         console.error("❌ Erreur lors du passage au tour suivant:", error);
         
@@ -362,14 +361,14 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             force_advance: true,
             retry: true
           }, {
-            headers: { 'X-Emergency': 'true' },
-            timeout: 15000
+            headers: { 'X-Emergency': 'true' }
+            // Suppression du timeout
           });
           
           if (response.data?.status === 'success') {
             console.log("✅ Passage au tour suivant réussi via méthode alternative");
             showToast("Tour suivant initié avec succès", "success");
-            setTimeout(() => fetchGameData(), 1200);
+            fetchGameData();
           } else {
             throw new Error("Échec de la tentative alternative");
           }
@@ -423,7 +422,7 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                   if (isTarget) {
                     console.log("🎯 Utilisateur cible détecté, passage direct en phase de vote");
                     // Charger immédiatement les données pour éviter les délais
-                    setTimeout(() => loadGame(gameState.game.id), 200);
+                    loadGame(gameState.game.id);
                     return {
                       ...prevState,
                       phase: GamePhase.VOTE,
@@ -459,7 +458,7 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 };
               });
               
-              setTimeout(() => loadGame(gameState.game.id), 800);
+              loadGame(gameState.game.id);
               break;
             
             case 'target_player_vote':
@@ -510,7 +509,7 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
               
             case 'new_answer':
             case 'new_vote':
-              setTimeout(() => loadGame(gameState.game.id), 500);
+              loadGame(gameState.game.id);
               break;
               
             case 'new_round':
@@ -546,7 +545,7 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 };
               });
               
-              setTimeout(() => loadGame(gameState.game.id), 1000);
+              loadGame(gameState.game.id);
               break;
           }
         };
@@ -576,7 +575,7 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       console.log(`🔄 Tentative de vérification forcée de phase pour le jeu ${gameId}`);
       await SocketService.forcePhaseCheck(gameId);
       
-      setTimeout(() => loadGame(gameId), 800);
+      loadGame(gameId);
       
       return true;
     } catch (error) {

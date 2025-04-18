@@ -45,18 +45,13 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
   const [isButtonDisabled, setIsButtonDisabled] = useState(false);
   const [isUserHost, setIsUserHost] = useState<boolean | null>(null);
   const [isCheckingHost, setIsCheckingHost] = useState(true);
-  const [canProceed, setCanProceed] = useState(false);
+  const [canProceed, setCanProceed] = useState(true); // Toujours permettre la progression immédiate
   
   // Flag indiquant si le jeu est en cours de synchronisation
   const [isSynchronizing, setIsSynchronizing] = useState(false);
   
   useEffect(() => {
-    // Attendre un court moment avant de permettre le passage au tour suivant
-    const timer = setTimeout(() => {
-      setCanProceed(true);
-    }, 2000);
-    
-    return () => clearTimeout(timer);
+    setCanProceed(true);
   }, []);
   
   // Vérifier si l'utilisateur est l'hôte de la partie en utilisant uniquement WebSocket
@@ -104,15 +99,8 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
     
     checkIfUserIsHost();
     
-    // Re-vérifier périodiquement le statut d'hôte au cas où il y a un changement
-    const refreshHostInterval = setInterval(() => {
-      if (!isSynchronizing) {
-        checkIfUserIsHost();
-      }
-    }, 15000); // Toutes les 15 secondes
-    
     return () => {
-      clearInterval(refreshHostInterval);
+      // Nettoyage
     };
   }, [gameId, answers, isSynchronizing]);
   

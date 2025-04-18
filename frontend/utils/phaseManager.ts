@@ -259,16 +259,15 @@ export class PhaseManager {
     // Détection spécifique en fonction de la phase
     switch (serverPhase) {
       case 'question':
-        // Si l'utilisateur a répondu mais est toujours en phase 'question'
-        return hasAnswered && secondsSinceLastChange > 5;
+        // Bloqé si hasAnswered est true mais encore en phase question
+        return hasAnswered && secondsSinceLastChange > 10;
       
       case 'answer':
-        // Si tout le monde a répondu mais est bloqué en phase 'answer'
-        // Cette logique doit être gérée ailleurs avec une connaissance de tous les joueurs
-        return secondsSinceLastChange > 30;
+        // Bloqué si tous ont répondu mais encore en phase réponse
+        return hasAnswered && secondsSinceLastChange > 15;
         
       case 'vote':
-        // Si la cible a voté mais le jeu est bloqué en phase 'vote'
+        // Bloqué si la cible a voté mais encore en phase vote
         return isTarget && hasVoted && secondsSinceLastChange > 10;
         
       default:
