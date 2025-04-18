@@ -4,6 +4,7 @@ import NetInfo from '@react-native-community/netinfo';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import UserIdManager from '@/utils/userIdManager';
 import GameWebSocketService from '../gameWebSocketService';
+import GameStateHelper from '@/utils/gameStateHelper';
 
 class GameService {
   // Cache pour stocker temporairement les états des jeux
@@ -460,6 +461,30 @@ class GameService {
     } catch (error) {
       console.error(`❌ Erreur lors du passage au tour suivant:`, error);
       throw error;
+    }
+  }
+
+  /**
+   * Force une transition de phase spécifique
+   */
+  async forcePhaseTransition(gameId: string, targetPhase: string): Promise<boolean> {
+    try {
+      console.log(`🔄 [GameService] Tentative de forcer la phase ${targetPhase} pour le jeu ${gameId}`);
+      
+      // Utiliser notre utilitaire de transition de phase
+      const success = await GameStateHelper.forcePhaseTransition(gameId, targetPhase);
+      
+      if (success) {
+        // Invalider le cache
+        this.gameStateCache.delete(gameId);
+        // Recharger les données
+        await this.getGameState(gameId, 0, 1, true);
+      }
+      
+      return success;
+    } catch (error) {
+      console.error(`❌ [GameService] Erreur lors de la transition forcée:`, error);
+      return false;
     }
   }
 
