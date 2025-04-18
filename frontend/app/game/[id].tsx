@@ -696,6 +696,7 @@ export default function GameScreen() {
           timer={null}
           gameId={id}
           isTargetPlayer={gameState.currentUserState?.isTargetPlayer || false}
+          currentPhase={gameState.game?.currentPhase}
         />
       );
     }

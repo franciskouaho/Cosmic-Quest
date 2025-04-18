@@ -111,7 +111,20 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
   }, [gameId, answers, isSynchronizing]);
   
   const handleNextRound = useCallback(async () => {
-    if (isButtonDisabled || isSynchronizing) return;
+    console.log('🎮 Tentative de passage au tour suivant:', {
+      phase: currentPhase,
+      isButtonDisabled,
+      isSynchronizing,
+      isUserHost,
+      isTargetPlayer,
+      hasVotes: answers.some(a => a.votesCount && a.votesCount > 0),
+      answersCount: answers.length
+    });
+
+    if (isButtonDisabled || isSynchronizing) {
+      console.log('❌ Action bloquée: bouton désactivé ou synchronisation en cours');
+      return;
+    }
     
     setIsButtonDisabled(true);
     setIsSynchronizing(true);
@@ -119,15 +132,25 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
     try {
       // Vérifier que nous sommes dans une phase valide
       if (currentPhase !== 'results' && currentPhase !== 'vote') {
+        console.log('⚠️ Phase invalide:', {
+          currentPhase,
+          validPhases: ['results', 'vote']
+        });
         Alert.alert(
           "Action impossible",
-          "Vous ne pouvez pas passer au tour suivant pendant la phase de question."
+          `Vous ne pouvez pas passer au tour suivant pendant la phase ${currentPhase}.`
         );
         return;
       }
       
       // Si on est en phase vote, vérifier qu'il y a des votes
       if (currentPhase === 'vote' && answers.every(a => !a.votesCount || a.votesCount === 0)) {
+        console.log('⚠️ Aucun vote détecté:', {
+          answers: answers.map(a => ({
+            id: a.id,
+            votes: a.votesCount
+          }))
+        });
         Alert.alert(
           "Action impossible",
           "Veuillez attendre que les votes soient terminés avant de passer au tour suivant."
@@ -137,11 +160,21 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
       
       // Utiliser la méthode nextRound du GameService via HTTP
       if (gameId) {
+        console.log('🔄 Appel nextRound avec gameId:', gameId);
         await GameService.nextRound(String(gameId));
+        console.log('✅ Tour suivant initié avec succès');
         // Rafraîchir l'état du jeu après le passage au tour suivant
         await onNextRound();
+      } else {
+        console.log('❌ Pas de gameId disponible');
       }
     } catch (error: any) {
+      console.error('❌ Erreur lors du passage au tour suivant:', {
+        error: error?.response?.data || error,
+        phase: currentPhase,
+        gameId
+      });
+      
       let errorMessage = "Le passage au tour suivant a échoué. Essayez à nouveau.";
       
       if (error.response?.data?.error) {
