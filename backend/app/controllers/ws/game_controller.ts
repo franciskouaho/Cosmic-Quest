@@ -876,6 +876,7 @@ export default class GamesController {
       const lockAcquired = await this.acquireLock(lockKey, 30)
 
       if (!lockAcquired) {
+        console.log('🔒 [nextRound] Lock non acquis:', { gameId, lockKey })
         return response.conflict({
           error: 'Une transition de phase est déjà en cours',
         })
@@ -931,50 +932,84 @@ export default class GamesController {
           .where('round_number', game.currentRound)
           .first()
 
+        console.log('❓ [nextRound] Question actuelle:', {
+          questionId: currentQuestion?.id,
+          roundNumber: game.currentRound,
+        })
+
         const hasVotes = await Vote.query()
           .where('question_id', currentQuestion?.id)
           .count('* as count')
           .first()
 
-        // Vérifier si tous les joueurs ont répondu
-        const answersCount = await Answer.query()
-          .where('question_id', currentQuestion?.id)
-          .count('* as count')
+        console.log('🗳️ [nextRound] État des votes:', {
+          hasVotes: hasVotes?.$extras.count,
+          questionId: currentQuestion?.id,
+        })
+
+        // Vérifier que tous les joueurs ont répondu (sauf le joueur cible)
+        if (!currentQuestion) {
+          return response.badRequest({ error: 'Aucune question en cours' })
+        }
+
+        // Récupérer toutes les réponses pour la question actuelle
+        const answers = await Answer.query()
+          .where('question_id', currentQuestion.id)
+          .count('* as total')
           .first()
 
-        const gameRoom = await Room.find(game.roomId)
-        const roomPlayers = gameRoom ? await gameRoom.related('players').query() : []
-        const totalPlayers = roomPlayers.length
-        const expectedAnswers = totalPlayers - 1 // -1 pour la cible
-        const allPlayersAnswered = answersCount
-          ? Number(answersCount.$extras.count) >= expectedAnswers
-          : false
+        if (!game.room) {
+          return response.badRequest({ error: 'Aucune salle associée à la partie' })
+        }
 
-        // Vérifier que nous sommes dans une phase valide
-        const validPhases = ['results', 'vote', 'question']
-        if (
-          !validPhases.includes(game.currentPhase) ||
-          (game.currentPhase === 'vote' && (!hasVotes || hasVotes.$extras.count === '0')) ||
-          (game.currentPhase === 'question' && !allPlayersAnswered)
-        ) {
+        // Calculer le nombre de joueurs qui peuvent répondre (tous sauf la cible)
+        const expectedAnswers = game.room.players.length - 1
+        const receivedAnswers = Number(answers?.$extras.total || 0)
+
+        console.log(
+          `🔍 [nextRound] Vérification des réponses:`,
+          `\n- Nombre total de joueurs: ${game.room.players.length}`,
+          `\n- Joueur cible: ${currentQuestion.targetPlayerId}`,
+          `\n- Réponses attendues: ${expectedAnswers}`,
+          `\n- Réponses reçues: ${receivedAnswers}`
+        )
+
+        if (receivedAnswers !== expectedAnswers) {
+          console.log(
+            `❌ [nextRound] Pas toutes les réponses reçues. Attendu: ${expectedAnswers}, Reçu: ${receivedAnswers}`
+          )
           return response.badRequest({
-            error:
-              game.currentPhase === 'question'
-                ? 'Veuillez attendre que tous les joueurs aient répondu avant de passer au tour suivant'
-                : 'Veuillez attendre la fin des votes avant de passer au tour suivant',
+            error: 'Tous les joueurs doivent avoir répondu avant de passer au tour suivant',
             details: {
-              currentPhase: game.currentPhase,
-              hasVotes: hasVotes ? Number(hasVotes.$extras.count) > 0 : false,
-              allPlayersAnswered,
+              expectedAnswers,
+              receivedAnswers,
+              targetPlayerId: currentQuestion.targetPlayerId,
             },
           })
         }
 
-        // Vérifier que l'utilisateur est bien l'hôte de la salle ou la cible actuelle
-        const isHost = String(room.hostId) === String(user.id)
-        const isTarget = currentQuestion?.targetPlayerId
-          ? String(currentQuestion.targetPlayerId) === String(user.id)
-          : false
+        // Vérifier que l'utilisateur est l'hôte ou la cible
+        const isHost = room.hostId === user.id
+        const isTarget = game.targetPlayerId === user.id
+
+        console.log('👑 [nextRound] Vérification des droits:', {
+          userId: user.id,
+          hostId: room.hostId,
+          targetId: game.targetPlayerId,
+          isHost,
+          isTarget,
+        })
+
+        if (!isHost && !isTarget) {
+          console.log('❌ [nextRound] Droits insuffisants:', {
+            userId: user.id,
+            hostId: room.hostId,
+            targetId: game.targetPlayerId,
+          })
+          return response.unauthorized({
+            error: "Seul l'hôte ou la cible peut passer au tour suivant",
+          })
+        }
 
         // Mettre à jour le cache Redis pour le statut d'hôte
         await Redis.setex(`game:${gameId}:host`, 300, room.hostId)

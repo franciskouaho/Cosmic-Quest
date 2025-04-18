@@ -111,7 +111,7 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
   }, [gameId, answers, isSynchronizing]);
   
   const handleNextRound = useCallback(async () => {
-    console.log('🎮 Tentative de passage au tour suivant:', {
+    console.log('🎮 [ResultsPhase] Début handleNextRound:', {
       phase: currentPhase,
       isButtonDisabled,
       isSynchronizing,
@@ -119,11 +119,16 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
       isTargetPlayer,
       hasVotes: answers.some(a => a.votesCount && a.votesCount > 0),
       answersCount: answers.length,
-      playersCount: players.length
+      playersCount: players.length,
+      gameId,
+      isLastRound
     });
 
     if (isButtonDisabled || isSynchronizing) {
-      console.log('❌ Action bloquée: bouton désactivé ou synchronisation en cours');
+      console.log('❌ [ResultsPhase] Action bloquée:', {
+        isButtonDisabled,
+        isSynchronizing
+      });
       return;
     }
     
@@ -133,7 +138,7 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
     try {
       // Vérifier que nous sommes dans une phase valide
       if (currentPhase !== 'results' && currentPhase !== 'vote') {
-        console.log('⚠️ Phase invalide:', {
+        console.log('⚠️ [ResultsPhase] Phase invalide:', {
           currentPhase,
           validPhases: ['results', 'vote']
         });
@@ -152,7 +157,7 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
       
       // Si on est en phase vote, vérifier qu'il y a des votes
       if (currentPhase === 'vote' && answers.every(a => !a.votesCount || a.votesCount === 0)) {
-        console.log('⚠️ Aucun vote détecté:', {
+        console.log('⚠️ [ResultsPhase] Aucun vote détecté:', {
           answers: answers.map(a => ({
             id: a.id,
             votes: a.votesCount
@@ -169,15 +174,20 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
       const expectedAnswers = players.length - 1; // -1 pour la cible qui ne répond pas
       const actualAnswers = answers.length;
       
-      console.log('📊 Vérification des réponses:', {
+      console.log('📊 [ResultsPhase] Vérification des réponses:', {
         expectedAnswers,
         actualAnswers,
         playersCount: players.length,
-        targetPlayerId: targetPlayer?.id
+        targetPlayerId: targetPlayer?.id,
+        answers: answers.map(a => ({
+          id: a.id,
+          playerId: a.playerId,
+          content: a.content
+        }))
       });
       
       if (actualAnswers < expectedAnswers) {
-        console.log('⚠️ Nombre insuffisant de réponses:', {
+        console.log('⚠️ [ResultsPhase] Nombre insuffisant de réponses:', {
           answersCount: actualAnswers,
           expectedAnswers,
           playersCount: players.length
@@ -191,16 +201,27 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
       
       // Utiliser la méthode nextRound du GameService via HTTP
       if (gameId) {
-        console.log('🔄 Appel nextRound avec gameId:', gameId);
+        console.log('🔄 [ResultsPhase] Appel nextRound avec gameId:', {
+          gameId,
+          currentPhase,
+          isLastRound,
+          forceAdvance: isLastRound
+        });
+        
         await GameService.nextRound(String(gameId));
-        console.log('✅ Tour suivant initié avec succès');
+        console.log('✅ [ResultsPhase] Tour suivant initié avec succès');
         // Rafraîchir l'état du jeu après le passage au tour suivant
         await onNextRound();
       } else {
-        console.log('❌ Pas de gameId disponible');
+        console.log('❌ [ResultsPhase] Pas de gameId disponible');
       }
     } catch (error: any) {
-      console.error('❌ Erreur lors du passage au tour suivant:', error?.response?.data || error);
+      console.error('❌ [ResultsPhase] Erreur lors du passage au tour suivant:', {
+        error: error?.response?.data || error,
+        status: error?.response?.status,
+        phase: currentPhase,
+        gameId
+      });
       
       let errorMessage = "Le passage au tour suivant a échoué.";
       
@@ -211,6 +232,8 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
         // Ajouter des détails supplémentaires si disponibles
         if (error.response.data.details) {
           const details = error.response.data.details;
+          console.log('📝 [ResultsPhase] Détails de l\'erreur:', details);
+          
           if (!details.allPlayersAnswered) {
             errorMessage = "Veuillez attendre que tous les joueurs (sauf la cible) aient répondu avant de passer au tour suivant.";
           } else if (!details.hasVotes && details.currentPhase === 'vote') {
@@ -226,8 +249,9 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
     } finally {
       setIsButtonDisabled(false);
       setIsSynchronizing(false);
+      console.log('🏁 [ResultsPhase] Fin handleNextRound');
     }
-  }, [onNextRound, isButtonDisabled, isSynchronizing, currentPhase, answers, gameId, players.length, targetPlayer?.id]);
+  }, [onNextRound, isButtonDisabled, isSynchronizing, currentPhase, answers, gameId, players.length, targetPlayer?.id, isLastRound]);
 
   const getPlayerName = (playerId: string | number) => {
     const searchId = String(playerId);
