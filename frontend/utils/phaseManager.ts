@@ -30,6 +30,9 @@ export class PhaseManager {
   
   // Seuil à partir duquel on force une resynchronisation
   private static readonly RESYNC_THRESHOLD: number = 3;
+  
+  // Timestamps de la dernière phase pour détecter les blocages
+  private static phaseTimestamps: Map<string, number> = new Map();
 
   /**
    * Vérifie si une phase est valide
@@ -76,6 +79,7 @@ export class PhaseManager {
   static resetState(): void {
     this.lastCalculatedPhase = null;
     this.inconsistentTransitions = 0;
+    this.phaseTimestamps.clear();
   }
 
   /**
@@ -120,7 +124,8 @@ export class PhaseManager {
     switch (serverPhase) {
       case 'question':
         // Si la cible, attendre - sinon phase question
-        effectivePhase = isTarget ? GamePhase.WAITING : GamePhase.QUESTION;
+        // MODIFICATION: Si a déjà répondu, passer en attente
+        effectivePhase = isTarget || hasAnswered ? GamePhase.WAITING : GamePhase.QUESTION;
         break;
       
       case 'answer':
@@ -176,6 +181,34 @@ export class PhaseManager {
       }
     }
     
+    // Détecter les blocages potentiels de phase
+    const now = Date.now();
+    const lastTimestamp = this.phaseTimestamps.get(serverPhase);
+    
+    if (lastTimestamp) {
+      const duration = now - lastTimestamp;
+      // Si bloqué dans la même phase serveur pendant plus de 30 secondes
+      if (duration > 30000) {
+        console.warn(`⚠️ Potentiel blocage détecté: phase ${serverPhase} active depuis ${Math.round(duration/1000)}s`);
+        
+        // Pour les phases question et answer, essayer une approche plus agressive
+        if ((serverPhase === 'question' && hasAnswered) || 
+            (serverPhase === 'answer' && hasAnswered)) {
+          console.log(`🔄 Forçage de transition depuis phase ${serverPhase} due à un blocage`);
+          
+          // Tentative de déblocage automatique
+          import('@/utils/socketTester').then(({ checkAndUnblockGame }) => {
+            // Utilisez l'ID du jeu si disponible, sinon tentez de le récupérer d'une autre manière
+            const gameId = window.currentGameId; // À définir dans votre application
+            if (gameId) {
+              checkAndUnblockGame(gameId).catch(console.error);
+            }
+          }).catch(console.error);
+        }
+      }
+    }
+    this.phaseTimestamps.set(serverPhase, now);
+    
     // Sauvegarder la nouvelle phase calculée
     this.lastCalculatedPhase = effectivePhase;
     
@@ -213,5 +246,33 @@ export class PhaseManager {
     
     const key = `${oldPhase}_to_${newPhase}`;
     return messages[key] || "Phase de jeu mise à jour";
+  }
+  
+  // Nouvelle méthode pour détecter si une phase est bloquée
+  static isPhaseBlocked(
+    serverPhase: string, 
+    hasAnswered: boolean, 
+    hasVoted: boolean,
+    isTarget: boolean,
+    secondsSinceLastChange: number
+  ): boolean {
+    // Détection spécifique en fonction de la phase
+    switch (serverPhase) {
+      case 'question':
+        // Si l'utilisateur a répondu mais est toujours en phase 'question'
+        return hasAnswered && secondsSinceLastChange > 5;
+      
+      case 'answer':
+        // Si tout le monde a répondu mais est bloqué en phase 'answer'
+        // Cette logique doit être gérée ailleurs avec une connaissance de tous les joueurs
+        return secondsSinceLastChange > 30;
+        
+      case 'vote':
+        // Si la cible a voté mais le jeu est bloqué en phase 'vote'
+        return isTarget && hasVoted && secondsSinceLastChange > 10;
+        
+      default:
+        return false;
+    }
   }
 }

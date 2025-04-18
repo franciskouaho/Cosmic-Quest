@@ -3,6 +3,7 @@ import SocketService from '@/services/socketService';
 import { SOCKET_URL, API_URL } from '@/config/axios';
 import UserIdManager from './userIdManager';
 import GameWebSocketService from '@/services/gameWebSocketService';
+import gameService from '@/services/queries/game';
 import { Alert } from 'react-native';
 
 /**
@@ -32,19 +33,13 @@ export const testSocketConnection = async () => {
     // Envoyer un ping pour tester la communication bidirectionnelle
     console.log('🏓 Envoi d\'un ping au serveur...');
     
-    // Utiliser une promesse avec timeout court pour test rapide
-    const pingResult = await Promise.race([
-      new Promise<boolean>((resolve) => {
-        socket.emit('ping', (response) => {
-          console.log('✅ Réponse ping (callback) reçue:', response);
-          resolve(true);
-        });
-      }),
-      new Promise<boolean>((resolve) => setTimeout(() => {
-        console.log('⚠️ Timeout ping, considérant la connexion comme instable');
-        resolve(false);
-      }, 1000)) // Timeout à 1 seconde pour plus de réactivité
-    ]);
+    // Simplifier la promesse sans timeout
+    const pingResult = await new Promise<boolean>((resolve) => {
+      socket.emit('ping', (response) => {
+        console.log('✅ Réponse ping (callback) reçue:', response);
+        resolve(true);
+      });
+    });
     
     // Nettoyer les écouteurs immédiatement
     socket.off('pong');
@@ -121,10 +116,9 @@ const submitAnswerViaHttp = async (gameId: string, questionId: string, content: 
  */
 export const checkAndUnblockGame = async (gameId: string): Promise<boolean> => {
   try {
-    console.log(`🔍 Vérification de blocage pour le jeu ${gameId}...`);
-    
     // Récupérer l'état complet du jeu
-    const gameState = await GameWebSocketService.getInstance().getGameState(gameId, true);
+    // Utiliser gameService.getGameState au lieu de GameWebSocketService.getInstance().getGameState
+    const gameState = await gameService.getGameState(gameId, true);
     
     if (!gameState) {
       console.error("❌ Impossible de récupérer l'état du jeu");
@@ -150,7 +144,7 @@ export const checkAndUnblockGame = async (gameId: string): Promise<boolean> => {
         console.log(`⚠️ Blocage potentiel détecté: Toutes les réponses soumises mais toujours en phase answer`);
         
         // Tenter de forcer une vérification de phase sur le serveur
-        await GameWebSocketService.getInstance().forceCheckPhase(gameId);
+        await gameService.forcePhaseCheck(gameId);
         console.log(`🔄 Tentative de déblocage effectuée pour le jeu ${gameId}`);
         return true;
       }
@@ -166,7 +160,7 @@ export const checkAndUnblockGame = async (gameId: string): Promise<boolean> => {
         console.log(`⚠️ Blocage potentiel détecté: Phase vote active depuis plus de 2 minutes`);
         
         // Tenter de forcer une vérification de phase sur le serveur
-        await GameWebSocketService.getInstance().forceCheckPhase(gameId);
+        await gameService.forcePhaseCheck(gameId);
         console.log(`🔄 Tentative de déblocage effectuée pour le jeu ${gameId}`);
         return true;
       }
@@ -176,6 +170,38 @@ export const checkAndUnblockGame = async (gameId: string): Promise<boolean> => {
     return false;
   } catch (error) {
     console.error(`❌ Erreur lors de la vérification de blocage:`, error);
+    return false;
+  }
+};
+
+// Nouvelle fonction pour débloquer un jeu après une réponse
+export const checkPhaseAfterAnswer = async (gameId: string): Promise<boolean> => {
+  try {
+    console.log(`🔍 Vérification de phase après réponse pour le jeu ${gameId}`);
+    
+    // Attendre un court délai pour laisser le temps au serveur de traiter
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    
+    // Récupérer l'état du jeu via gameService au lieu de GameWebSocketService
+    const gameState = await gameService.getGameState(gameId, true);
+    
+    if (!gameState) {
+      console.error("❌ Impossible de récupérer l'état du jeu");
+      return false;
+    }
+    
+    // Si toujours en phase question alors que l'utilisateur a répondu, forcer le passage
+    if (gameState.game?.currentPhase === 'question' && gameState.currentUserState?.hasAnswered) {
+      console.log(`⚠️ Blocage détecté: A répondu mais toujours en phase question`);
+      
+      // Forcer un passage en phase answer via gameService
+      await gameService.forceTransitionToAnswer(gameId);
+      return true;
+    }
+    
+    return false;
+  } catch (error) {
+    console.error(`❌ Erreur lors de la vérification après réponse:`, error);
     return false;
   }
 };

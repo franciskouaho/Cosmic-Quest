@@ -1,27 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 interface LoadingOverlayProps {
   message?: string;
   showSpinner?: boolean;
-  retryFunction?: () => void;
   errorMessage?: string;
-  isRetrying?: boolean;
-  showRetryButton?: boolean;
 }
 
 const LoadingOverlay: React.FC<LoadingOverlayProps> = ({
   message = 'Chargement...',
   showSpinner = true,
-  retryFunction,
   errorMessage,
-  isRetrying = false,
-  showRetryButton = true,
 }) => {
-  const [showRetry, setShowRetry] = useState(false);
   const [dots, setDots] = useState('');
-  const [waitTime, setWaitTime] = useState(0);
 
   // Animation des points pour montrer l'activité
   useEffect(() => {
@@ -32,24 +24,10 @@ const LoadingOverlay: React.FC<LoadingOverlayProps> = ({
       });
     }, 500);
 
-    // Compter le temps d'attente pour montrer automatiquement le bouton après un certain délai
-    const waitTimer = setInterval(() => {
-      setWaitTime(prev => prev + 1);
-    }, 1000);
-
-    // Après un délai plus court (5 secondes), afficher le bouton de rafraîchissement
-    const retryTimer = setTimeout(() => {
-      if (retryFunction && showRetryButton) {
-        setShowRetry(true);
-      }
-    }, 5000);
-
     return () => {
       clearInterval(timer);
-      clearInterval(waitTimer);
-      clearTimeout(retryTimer);
     };
-  }, [retryFunction, showRetryButton]);
+  }, []);
 
   return (
     <View style={styles.container}>
@@ -59,33 +37,11 @@ const LoadingOverlay: React.FC<LoadingOverlayProps> = ({
       
       <Text style={styles.message}>{message}{dots}</Text>
       
-      {waitTime > 10 && (
-        <Text style={styles.waitTimeText}>En attente depuis {waitTime} secondes...</Text>
-      )}
-      
       {errorMessage && (
         <View style={styles.errorContainer}>
           <MaterialCommunityIcons name="alert-circle" size={24} color="#ff6b6b" />
           <Text style={styles.errorText}>{errorMessage}</Text>
         </View>
-      )}
-      
-      {(showRetry || waitTime > 15) && retryFunction && (
-        <TouchableOpacity 
-          style={styles.retryButton}
-          onPress={retryFunction}
-          disabled={isRetrying}
-        >
-          <Text style={styles.retryButtonText}>
-            {isRetrying ? 'Tentative en cours...' : 'Rafraîchir'}
-          </Text>
-        </TouchableOpacity>
-      )}
-
-      {waitTime > 30 && (
-        <Text style={styles.tipText}>
-          Astuce: Si l'attente persiste, essayez de quitter et rejoindre la partie.
-        </Text>
       )}
     </View>
   );
@@ -107,12 +63,6 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     textAlign: 'center',
   },
-  waitTimeText: {
-    fontSize: 14,
-    color: '#b3a5d9',
-    marginBottom: 20,
-    textAlign: 'center',
-  },
   errorContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -125,27 +75,7 @@ const styles = StyleSheet.create({
     color: '#ff6b6b',
     marginLeft: 10,
     flex: 1,
-  },
-  retryButton: {
-    backgroundColor: '#5D6DFF',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 8,
-    marginTop: 10,
-  },
-  retryButtonText: {
-    color: 'white',
-    fontWeight: '600',
-  },
-  tipText: {
-    fontSize: 14,
-    color: '#b3a5d9',
-    marginTop: 20,
-    textAlign: 'center',
-  },
+  }
 });
 
 export default LoadingOverlay;

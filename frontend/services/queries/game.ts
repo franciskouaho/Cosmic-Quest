@@ -489,6 +489,47 @@ class GameService {
   }
 
   /**
+   * Force la transition vers la phase answer
+   */
+  async forceTransitionToAnswer(gameId: string): Promise<boolean> {
+    try {
+      console.log(`🔄 [GameService] Tentative de forcer la phase answer pour le jeu ${gameId}`);
+      
+      // S'assurer que la connexion WebSocket est active
+      await this.ensureSocketConnection(gameId);
+      
+      // Utiliser directement socketService au lieu de GameWebSocketService
+      const socket = await SocketService.getInstanceAsync();
+      
+      return new Promise((resolve, reject) => {
+        // Définir un timeout de 5 secondes
+        const timeout = setTimeout(() => {
+          reject(new Error('Timeout dépassé pour la transition forcée'));
+        }, 5000);
+        
+        // Émettre l'événement pour forcer la phase answer
+        socket.emit('game:force_phase', {
+          gameId,
+          targetPhase: 'answer'
+        }, (response: any) => {
+          clearTimeout(timeout);
+          
+          if (response && response.success) {
+            console.log(`✅ [GameService] Transition forcée réussie vers phase answer`);
+            resolve(true);
+          } else {
+            console.error(`❌ [GameService] Échec de la transition forcée:`, response?.error || 'Raison inconnue');
+            resolve(false);
+          }
+        });
+      });
+    } catch (error) {
+      console.error(`❌ [GameService] Erreur lors de la transition forcée:`, error);
+      return false;
+    }
+  }
+
+  /**
    * Nettoyer le cache interne
    */
   clearCache(gameId?: string) {

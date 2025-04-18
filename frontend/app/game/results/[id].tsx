@@ -18,26 +18,23 @@ export default function GameResultsScreen() {
   const [confettiRef, setConfettiRef] = useState<any>(null);
   
   useEffect(() => {
-    // Simuler le chargement des données
-    setTimeout(() => {
-      const mockPlayers: PlayerScore[] = [
-        { id: '1', name: 'Francis', avatar: 'avatar1', isReady: true, score: 3 },
-        { id: '2', name: 'Sophie', avatar: 'avatar2', isReady: true, score: 5 },
-        { id: '3', name: 'Thomas', avatar: 'avatar3', isReady: true, score: 2 },
-        { id: '4', name: 'Emma', avatar: 'avatar4', isReady: true, score: 4 },
-      ];
-      
-      // Trier les joueurs par score (décroissant)
-      mockPlayers.sort((a, b) => b.score - a.score);
-      
-      setPlayers(mockPlayers);
-      setLoading(false);
-      
-      // Démarrer la confetti pour le gagnant
-      if (confettiRef) {
-        confettiRef.startConfetti();
-      }
-    }, 1000);
+    const mockPlayers: PlayerScore[] = [
+      { id: '1', name: 'Francis', avatar: 'avatar1', isReady: true, score: 3 },
+      { id: '2', name: 'Sophie', avatar: 'avatar2', isReady: true, score: 5 },
+      { id: '3', name: 'Thomas', avatar: 'avatar3', isReady: true, score: 2 },
+      { id: '4', name: 'Emma', avatar: 'avatar4', isReady: true, score: 4 },
+    ];
+    
+    // Trier les joueurs par score (décroissant)
+    mockPlayers.sort((a, b) => b.score - a.score);
+    
+    setPlayers(mockPlayers);
+    setLoading(false);
+    
+    // Version simplifiée avec les confettis pour le gagnant
+    if (confettiRef) {
+      confettiRef.startConfetti();
+    }
     
     // Arrêter les confettis lors du nettoyage
     return () => {

@@ -1491,4 +1491,139 @@ export default class GamesController {
       console.error(`❌ Erreur lors de la progression automatique:`, error)
     }
   }
+
+  /**
+   * Forcer une transition de phase spécifique
+   * Cette méthode est appelée par le gestionnaire d'événements WebSocket
+   */
+  public async forcePhaseTransition(
+    gameId: string | number,
+    targetPhase: string
+  ): Promise<boolean> {
+    try {
+      console.log(
+        `🔄 [forcePhaseTransition] Tentative de forcer la phase ${targetPhase} pour le jeu ${gameId}`
+      )
+
+      // Récupérer le jeu
+      const game = await Game.find(gameId)
+      if (!game) {
+        console.error(`❌ [forcePhaseTransition] Jeu ${gameId} non trouvé`)
+        return false
+      }
+
+      // Vérifier si la phase cible est valide
+      const validPhases = ['question', 'answer', 'vote', 'results']
+      if (!validPhases.includes(targetPhase)) {
+        console.error(`❌ [forcePhaseTransition] Phase cible invalide: ${targetPhase}`)
+        return false
+      }
+
+      // Si déjà dans la phase cible, rien à faire
+      if (game.currentPhase === targetPhase) {
+        console.log(`ℹ️ [forcePhaseTransition] Déjà en phase ${targetPhase}`)
+        return true
+      }
+
+      // Obtenir la question actuelle
+      const question = await Question.query()
+        .where('game_id', gameId)
+        .where('round_number', game.currentRound)
+        .first()
+
+      if (!question) {
+        console.error(
+          `❌ [forcePhaseTransition] Question non trouvée pour le jeu ${gameId}, tour ${game.currentRound}`
+        )
+        return false
+      }
+
+      // Mettre à jour la phase
+      game.currentPhase = targetPhase
+      await game.save()
+
+      console.log(`✅ [forcePhaseTransition] Phase forcée à ${targetPhase} pour le jeu ${gameId}`)
+
+      // Notifier tous les clients du changement
+      const io = socketService.getInstance()
+      io.to(`game:${gameId}`).emit('game:update', {
+        type: 'phase_change',
+        phase: targetPhase,
+        message: `Phase de jeu mise à jour en ${targetPhase}`,
+        instantTransition: true,
+      })
+
+      return true
+    } catch (error) {
+      console.error(`❌ [forcePhaseTransition] Erreur:`, error)
+      return false
+    }
+  }
+
+  /**
+   * Forcer une phase spécifique du jeu
+   * Utilisé pour récupérer des jeux bloqués
+   */
+  async forceGamePhase(gameId: string | number, targetPhase: string) {
+    try {
+      console.log(
+        `🔄 [forceGamePhase] Tentative de forcer la phase ${targetPhase} pour le jeu ${gameId}`
+      )
+
+      // Récupérer le jeu
+      const game = await Game.find(gameId)
+      if (!game) {
+        console.error(`❌ [forceGamePhase] Jeu ${gameId} non trouvé`)
+        return {
+          success: false,
+          error: 'Jeu non trouvé',
+        }
+      }
+
+      // Vérifier si la phase cible est valide
+      const validPhases = ['question', 'answer', 'vote', 'results']
+      if (!validPhases.includes(targetPhase)) {
+        console.error(`❌ [forceGamePhase] Phase cible invalide: ${targetPhase}`)
+        return {
+          success: false,
+          error: 'Phase cible invalide',
+        }
+      }
+
+      // Si déjà dans la phase cible, rien à faire
+      if (game.currentPhase === targetPhase) {
+        console.log(`ℹ️ [forceGamePhase] Déjà en phase ${targetPhase}`)
+        return {
+          success: true,
+          message: `Déjà en phase ${targetPhase}`,
+        }
+      }
+
+      // Mettre à jour la phase
+      game.currentPhase = targetPhase
+      await game.save()
+
+      console.log(`✅ [forceGamePhase] Phase forcée à ${targetPhase} pour le jeu ${gameId}`)
+
+      // Notifier tous les clients du changement
+      const io = socketService.getInstance()
+      io.to(`game:${gameId}`).emit('game:update', {
+        type: 'phase_change',
+        phase: targetPhase,
+        message: `Phase de jeu mise à jour en ${targetPhase}`,
+        instantTransition: true,
+      })
+
+      return {
+        success: true,
+        message: `Phase ${targetPhase} appliquée avec succès`,
+      }
+    } catch (error) {
+      console.error(`❌ [forceGamePhase] Erreur:`, error)
+      return {
+        success: false,
+        error: error.message || 'Erreur lors du changement de phase',
+      }
+    }
+  }
 }

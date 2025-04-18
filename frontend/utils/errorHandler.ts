@@ -37,58 +37,20 @@ export const handleSocketError = async (error: any, context: string, gameId?: st
     Alert.alert(
       'Délai d\'attente dépassé',
       'Le serveur met trop de temps à répondre. Nous allons tenter de rétablir la connexion.',
-      [
-        { 
-          text: 'OK', 
-          onPress: async () => {
-            if (gameId) {
-              await GameDebugger.repairGame(gameId);
-            }
-          }
-        }
-      ]
+      [{ text: 'OK' }]
     );
   } else if (error.message?.includes('socket') || !socketConnected) {
     Alert.alert(
-      'Problème de connexion WebSocket',
+      'Problème de connexion',
       'La connexion temps réel est interrompue. Cela peut affecter la synchronisation du jeu.',
-      [
-        { 
-          text: 'Reconnecter', 
-          onPress: async () => {
-            try {
-              await SocketService.reconnect();
-              if (gameId) {
-                await GameDebugger.repairGame(gameId);
-              }
-            } catch (reconnectError) {
-              console.error('❌ Échec de reconnexion:', reconnectError);
-            }
-          }
-        },
-        { text: 'Ignorer' }
-      ]
+      [{ text: 'OK' }]
     );
   } else {
     // Erreurs génériques
     const errorMessage = error.message || 'Une erreur inconnue est survenue';
     
-    // Ajouter des options différentes en fonction du contexte
-    if (gameId) {
-      Alert.alert(
-        'Erreur',
-        `${errorMessage}\n\nVoulez-vous diagnostiquer le problème?`,
-        [
-          { 
-            text: 'Diagnostiquer', 
-            onPress: () => GameDebugger.diagnoseGameState(gameId)
-          },
-          { text: 'Ignorer' }
-        ]
-      );
-    } else {
-      Alert.alert('Erreur', errorMessage, [{ text: 'OK' }]);
-    }
+    // Message simple sans options
+    Alert.alert('Erreur', errorMessage, [{ text: 'OK' }]);
   }
 };
 
@@ -111,20 +73,7 @@ export const handleAnswerSubmissionError = async (error: any, gameId: string, re
     message = error.response.data.error;
   }
   
-  // Si une fonction de nouvel essai est fournie, proposer de réessayer
-  if (retry) {
-    Alert.alert(
-      'Erreur',
-      message,
-      [
-        { text: 'Réessayer', onPress: () => retry() },
-        { text: 'Diagnostiquer', onPress: () => GameDebugger.diagnoseGameState(gameId) },
-        { text: 'Annuler' }
-      ]
-    );
-  } else {
-    Alert.alert('Erreur', message, [{ text: 'OK' }]);
-  }
+  Alert.alert('Erreur', message, [{ text: 'OK' }]);
 };
 
 /**

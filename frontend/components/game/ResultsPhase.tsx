@@ -117,7 +117,7 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
   }, [gameId, answers, isSynchronizing]);
   
   const handleNextRound = useCallback(() => {
-    if (isButtonDisabled || !canProceed || isSynchronizing) return;
+    if (isButtonDisabled || isSynchronizing) return;
     
     setIsButtonDisabled(true);
     setIsSynchronizing(true);
@@ -125,34 +125,32 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
     try {
       console.log("🎮 ResultsPhase: Tentative de passage au tour suivant...");
       
-      // Réduire le délai minimal et augmenter le timeout
-      const minDelay = new Promise(resolve => setTimeout(resolve, 500));
-      
-      Promise.race([
-        Promise.all([onNextRound(), minDelay]),
-        new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Timeout dépassé')), 12000)
-        )
-      ]).then(() => {
-        console.log("✅ ResultsPhase: Passage au tour suivant initié");
-      }).catch((error) => {
-        console.error("❌ ResultsPhase: Erreur:", error);
-        Alert.alert(
-          "Erreur",
-          "Le passage au tour suivant a échoué. Nous réessayons automatiquement.",
-          [{ text: "OK" }]
-        );
-      }).finally(() => {
-        setTimeout(() => {
+      onNextRound()
+        .then(() => {
+          console.log("✅ ResultsPhase: Passage au tour suivant initié");
+        })
+        .catch((error) => {
+          console.error("❌ ResultsPhase: Erreur:", error);
+          Alert.alert(
+            "Erreur",
+            "Le passage au tour suivant a échoué. Essayez à nouveau."
+          );
+        })
+        .finally(() => {
           setIsButtonDisabled(false);
           setIsSynchronizing(false);
-        }, 1000);
-      });
+        });
     } catch (error) {
+      console.error("❌ ResultsPhase: Erreur non gérée:", error);
       setIsButtonDisabled(false);
       setIsSynchronizing(false);
+      
+      Alert.alert(
+        "Erreur",
+        "Une erreur inattendue s'est produite. Veuillez réessayer."
+      );
     }
-  }, [onNextRound, isButtonDisabled, canProceed, isSynchronizing]);
+  }, [onNextRound, isButtonDisabled, isSynchronizing]);
 
   // Obtenir le nom du joueur correspondant à chaque réponse
   const getPlayerName = (playerId: string | number) => {

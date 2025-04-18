@@ -155,6 +155,46 @@ class GameWebSocketService {
   }
   
   /**
+   * Force la transition vers la phase answer pour corriger les blocages
+   * @param gameId ID du jeu à modifier
+   * @returns Promise<boolean> indiquant si l'opération a réussi
+   */
+  async forceTransitionToAnswer(gameId: string): Promise<boolean> {
+    try {
+      console.log(`🔄 [GameWebSocket] Tentative de forcer la phase answer pour le jeu ${gameId}`);
+      
+      // Attendre que le socket soit connecté
+      const socket = await this.ensureSocketConnection(gameId);
+      
+      return new Promise((resolve, reject) => {
+        // Définir un timeout de 5 secondes
+        const timeout = setTimeout(() => {
+          reject(new Error('Timeout dépassé pour la transition forcée'));
+        }, 5000);
+        
+        // Émettre l'événement pour forcer la phase answer
+        socket.emit('game:force_phase', {
+          gameId,
+          targetPhase: 'answer'
+        }, (response: any) => {
+          clearTimeout(timeout);
+          
+          if (response && response.success) {
+            console.log(`✅ [GameWebSocket] Transition forcée réussie vers phase answer`);
+            resolve(true);
+          } else {
+            console.error(`❌ [GameWebSocket] Échec de la transition forcée:`, response?.error || 'Raison inconnue');
+            resolve(false);
+          }
+        });
+      });
+    } catch (error) {
+      console.error(`❌ [GameWebSocket] Erreur lors de la transition forcée:`, error);
+      return false;
+    }
+  }
+
+  /**
    * Amélioration: Tente de récupérer d'un blocage de phase
    */
   async recoverFromPhaseLock(gameId: string): Promise<boolean> {
@@ -172,16 +212,7 @@ class GameWebSocketService {
       
       // 3. Forcer l'obtention d'un nouvel état
       await this.getGameState(gameId);
-      
-      // 4. Réinitialiser le timestamp de changement de phase
-      const currentState = this.gameStateCache.get(gameId)?.state;
-      if (currentState?.game?.currentPhase) {
-        this.phaseChangeTimestamps.set(gameId, { 
-          phase: currentState.game.currentPhase, 
-          timestamp: Date.now() 
-        });
-      }
-      
+
       console.log(`✅ [GameWebSocket] Récupération de blocage tentée pour ${gameId}`);
       return true;
     } catch (error) {

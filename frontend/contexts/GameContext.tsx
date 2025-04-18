@@ -258,17 +258,35 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       );
 
       if (success) {
+        // Mise à jour immédiate de l'UI
         setGameState(prev => ({
           ...prev,
           currentUserState: {
             ...prev.currentUserState,
             hasAnswered: true
-          }
+          },
+          // Passer immédiatement en phase d'attente
+          phase: GamePhase.WAITING
         }));
+        
         showToast("Réponse soumise avec succès", "success");
         
-        // Forcer un rafraîchissement après un court délai
-        setTimeout(() => fetchGameData(), 500);
+        // Forcer un rafraîchissement immédiat et un autre après un court délai
+        fetchGameData();
+        
+        // Vérifier si une transition de phase est nécessaire après la réponse
+        setTimeout(async () => {
+          try {
+            // Importer dynamiquement pour éviter les dépendances circulaires
+            const { checkPhaseAfterAnswer } = await import('@/utils/socketTester');
+            checkPhaseAfterAnswer(gameId).catch(console.error);
+          } catch (error) {
+            console.error('❌ Erreur lors de la vérification post-réponse:', error);
+          }
+          
+          // Rafraîchir les données quelle que soit l'issue de la vérification
+          fetchGameData();
+        }, 2000);
       }
     } catch (error) {
       console.error('❌ GameContext: Erreur lors de la soumission:', error);
@@ -306,41 +324,12 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       showToast("Vote enregistré avec succès", "success");
       console.log('✅ GameContext: Vote soumis avec succès');
       
-      // Rafraîchir l'état du jeu pour confirmer le vote
-      setTimeout(() => fetchGameData(), 1000);
+      // Rafraîchir l'état du jeu sans timeout
+      fetchGameData();
     } catch (error) {
       console.error('❌ GameContext: Erreur lors de la soumission du vote:', error);
       setError('Erreur lors de la soumission du vote');
       showToast("Impossible d'enregistrer votre vote. Veuillez réessayer.", "error");
-      
-      // Essayer une dernier fois avec testVoteSubmission comme solution de secours
-      try {
-        console.log('🔄 GameContext: Tentative de secours avec testVoteSubmission...');
-        const { testVoteSubmission } = await import('@/utils/socketTester');
-        const result = await testVoteSubmission(gameId, answerId, gameState.currentQuestion.id.toString());
-        
-        if (result) {
-          setGameState(prev => ({
-            ...prev,
-            currentUserState: {
-              ...prev.currentUserState,
-              hasVoted: true,
-            },
-            phase: GamePhase.WAITING,
-          }));
-          
-          showToast("Vote enregistré avec succès", "success");
-          console.log('✅ GameContext: Vote soumis avec succès via solution de secours');
-          
-          // Rafraîchir l'état du jeu pour confirmer le vote
-          setTimeout(() => fetchGameData(), 1000);
-          return;
-        }
-      } catch (fallbackError) {
-        console.error('❌ GameContext: Échec de la solution de secours:', fallbackError);
-      }
-      
-      throw error;
     } finally {
       setIsSubmitting(false);
     }

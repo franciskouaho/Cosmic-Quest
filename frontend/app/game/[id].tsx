@@ -359,29 +359,55 @@ export default function GameScreen() {
     };
   }, [id, user, router, fetchGameData]);
 
-  // Dans le composant GameScreen, simplifions l'effet pour supprimer les vérifications de blocage
+  // Dans le composant GameScreen, ajoutons un effet pour détecter les blocages
   useEffect(() => {
     // Ne pas exécuter pendant le chargement initial
     if (!isReady || !gameState || !id) return;
     
-    // Au lieu de vérifier périodiquement, on force une récupération des données
-    // si on détecte une désynchronisation
-    const checkSync = () => {
-      // Si nous sommes en phase d'attente depuis trop longtemps, force refresh
-      if (gameState.phase === GamePhase.WAITING || gameState.phase === GamePhase.WAITING_FOR_VOTE) {
-        console.log(`🔄 Force refresh pour éviter les blocages en phase ${gameState.phase}`);
-        fetchGameData();
+    // Fonction de vérification périodique de blocage
+    const checkGameProgress = async () => {
+      try {
+        // Si le gameState a une phase "question" mais l'utilisateur a déjà répondu
+        if (gameState.phase === GamePhase.QUESTION && gameState.currentUserState?.hasAnswered) {
+          console.log(`🔄 Détection d'incohérence: en phase QUESTION mais a déjà répondu`);
+          
+          const { checkPhaseAfterAnswer } = await import('@/utils/socketTester');
+          const result = await checkPhaseAfterAnswer(id as string);
+          
+          if (result) {
+            console.log(`🔄 Correction appliquée, rafraîchissement des données...`);
+            setTimeout(() => fetchGameData(), 500);
+          }
+        }
+        
+        // Si phase 'waiting' pendant trop longtemps, vérifier l'état
+        if (gameState.phase === GamePhase.WAITING || gameState.phase === GamePhase.WAITING_FOR_VOTE) {
+          const { checkAndUnblockGame } = await import('@/utils/socketTester');
+          const result = await checkAndUnblockGame(id as string);
+          
+          if (result) {
+            console.log(`🔄 Blocage potentiel corrigé, rafraîchissement des données...`);
+            setTimeout(() => fetchGameData(), 500);
+          }
+        }
+      } catch (error) {
+        console.error(`❌ Erreur lors de la vérification de progression:`, error);
       }
     };
     
-    // Vérifier une seule fois après 3 secondes
-    const syncCheck = setTimeout(checkSync, 3000);
+    // Vérifier immédiatement en cas de hasAnswered en phase Question
+    if (gameState.phase === GamePhase.QUESTION && gameState.currentUserState?.hasAnswered) {
+      checkGameProgress();
+    }
+    
+    // Vérifier périodiquement les blocages potentiels
+    const progressCheck = setInterval(checkGameProgress, 10000); // toutes les 10 secondes
     
     return () => {
-      clearTimeout(syncCheck);
+      clearInterval(progressCheck);
     };
   }, [isReady, gameState, id, fetchGameData]);
-  
+
   const handleSubmitAnswer = async (answer: string) => {
     // Vérifier l'ID utilisateur avant de soumettre
     const userId = await UserIdManager.getUserId();
@@ -643,12 +669,6 @@ export default function GameScreen() {
           <Text style={styles.messageText}>
             Le jeu est en cours de synchronisation. Veuillez patienter un instant.
           </Text>
-          <TouchableOpacity
-            style={styles.refreshButton}
-            onPress={() => fetchGameData()}
-          >
-            <Text style={styles.refreshButtonText}>Rafraîchir</Text>
-          </TouchableOpacity>
         </View>
       );
     }
@@ -727,14 +747,12 @@ export default function GameScreen() {
             <LoadingOverlay 
               message={`Attente des autres joueurs...`}
               showSpinner={true}
-              retryFunction={fetchGameData}
             />
             {gameState.timer && (
               <View style={styles.timerContainer}>
                 <GameTimer 
                   duration={gameState.timer.duration}
                   startTime={gameState.timer.startTime}
-                  onComplete={() => fetchGameData()}
                 />
               </View>
             )}
@@ -790,14 +808,12 @@ export default function GameScreen() {
             <LoadingOverlay 
               message="Attente du vote..."
               showSpinner={true}
-              retryFunction={fetchGameData}
             />
             {gameState.timer && (
               <View style={styles.timerContainer}>
                 <GameTimer 
                   duration={gameState.timer.duration}
                   startTime={gameState.timer.startTime}
-                  onComplete={() => fetchGameData()}
                 />
               </View>
             )}
@@ -922,6 +938,8 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingHorizontal: 20,
     borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   refreshButtonText: {
     color: 'white',

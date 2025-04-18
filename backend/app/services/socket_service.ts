@@ -519,6 +519,60 @@ export class SocketService {
           }
         })
 
+        // Ajouter un nouveau gestionnaire pour forcer une phase spécifique
+        socket.on('game:force_phase', async (data, callback) => {
+          try {
+            console.log(
+              `🔄 [WebSocket] Demande de transition forcée vers ${data.targetPhase} pour le jeu ${data.gameId}`
+            )
+
+            // Vérifier les données minimales requises
+            if (!data.gameId || !data.targetPhase) {
+              console.error(`❌ [WebSocket] Données manquantes pour force_phase`)
+              if (typeof callback === 'function') {
+                callback({
+                  success: false,
+                  error: 'Données manquantes (gameId ou targetPhase)',
+                })
+              }
+              return
+            }
+
+            // Importer le contrôleur de jeu
+            const GameController = (await import('#controllers/ws/game_controller')).default
+            const controller = new GameController()
+
+            // Exécuter la transition forcée
+            const result = await controller.forceGamePhase(data.gameId, data.targetPhase)
+
+            if (result.success) {
+              console.log(`✅ [WebSocket] Transition forcée réussie vers ${data.targetPhase}`)
+              if (typeof callback === 'function') {
+                callback({
+                  success: true,
+                  message: `Phase ${data.targetPhase} appliquée avec succès`,
+                })
+              }
+            } else {
+              console.error(`❌ [WebSocket] Échec de la transition forcée: ${result.error}`)
+              if (typeof callback === 'function') {
+                callback({
+                  success: false,
+                  error: result.error || 'Impossible de forcer la transition de phase',
+                })
+              }
+            }
+          } catch (error) {
+            console.error(`❌ [WebSocket] Erreur lors de la transition forcée:`, error)
+            if (typeof callback === 'function') {
+              callback({
+                success: false,
+                error: error.message || 'Erreur lors de la transition forcée',
+              })
+            }
+          }
+        })
+
         // Événement pour tester la connexion
         socket.on('ping', (callback) => {
           if (typeof callback === 'function') {

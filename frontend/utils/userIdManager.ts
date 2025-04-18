@@ -59,8 +59,8 @@ class UserIdManager {
       this.currentUserId = null;
       await AsyncStorage.removeItem('@current_user_id');
       
-      // Supprimer des headers d'API
-      if (api.defaults.headers && 'userId' in api.defaults.headers) {
+      // Supprimer des headers d'API de manière simplifiée
+      if (api.defaults.headers) {
         delete api.defaults.headers.userId;
       }
     } catch (error) {
