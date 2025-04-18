@@ -89,7 +89,7 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
         
         console.log(`🔍 Vérification d'hôte pour la partie ${effectiveGameId}`);
         
-        // Utiliser GameWebSocketService pour la vérification d'hôte
+        // Corriger l'appel à la méthode isUserHost
         const isHost = await GameWebSocketService.isUserHost(String(effectiveGameId));
         
         console.log(`👑 Résultat vérification hôte: ${isHost ? 'EST' : 'N\'EST PAS'} l'hôte`);

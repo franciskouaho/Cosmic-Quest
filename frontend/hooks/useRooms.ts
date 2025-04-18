@@ -111,14 +111,13 @@ export const useJoinRoom = () => {
         // S'assurer que le socket est initialisé avant de tenter de rejoindre une salle
         try {
           await SocketService.initialize();
+          // Essayer de rejoindre la salle via WebSocket
+          await SocketService.joinRoom(code);
+          console.log(`✅ Demande WebSocket pour rejoindre la salle ${code} envoyée`);
         } catch (socketError) {
-          console.warn('⚠️ Erreur lors de l\'initialisation du socket, tentative de continuer:', socketError);
+          console.warn('⚠️ Erreur lors de la communication WebSocket, continuons avec HTTP uniquement:', socketError);
+          // On continue même en cas d'erreur WebSocket, l'API HTTP est prioritaire
         }
-
-        // Attendre que le socket soit configuré avant de rejoindre la salle
-        console.log(`🚪 Tentative de rejoindre la salle ${code}`);
-        await SocketService.joinRoom(code);
-        console.log(`✅ Demande WebSocket pour rejoindre la salle ${code} envoyée`);
         
         // Appeler l'API pour rejoindre la salle
         console.log(`🎮 useJoinRoom: Envoi de la requête pour rejoindre ${code}`);

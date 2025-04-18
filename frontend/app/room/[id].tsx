@@ -112,13 +112,13 @@ export default function Room() {
           
           // Essayer de rejoindre la salle avec des nouvelles tentatives automatiques
           try {
-            // Utiliser la méthode reconnectToRoom qui gère automatiquement les tentatives
-            const joinSuccess = await SocketService.reconnectToRoom(id as string, 3);
+            // Utiliser joinRoom directement car reconnectToRoom pourrait ne pas être disponible
+            const joinSuccess = await SocketService.joinRoom(id as string);
             
             if (joinSuccess) {
               console.log(`✅ Salle ${id} rejointe avec succès via WebSocket`);
             } else {
-              console.warn(`⚠️ Impossible de rejoindre la salle ${id} après plusieurs tentatives`);
+              console.warn(`⚠️ Impossible de rejoindre la salle ${id}`);
               // Continuer quand même pour permettre le fonctionnement via API REST
             }
           } catch (joinError) {
@@ -196,21 +196,18 @@ export default function Room() {
       // Nettoyage lors du démontage
       return () => {
         console.log(`🔌 Nettoyage de la connexion WebSocket pour la salle ${id}`);
-        // Utiliser leaveRoom sans await car nous sommes dans une fonction de cleanup
-        SocketService.leaveRoom(id as string)
-          .then(() => console.log(`✅ Déconnexion propre de la salle ${id}`))
-          .catch(err => {
+        
+        // Utiliser une IIFE pour permettre l'utilisation d'async/await dans la fonction de nettoyage
+        (async () => {
+          try {
+            // Tenter de quitter la salle
+            await SocketService.leaveRoom(id as string);
+            console.log(`✅ Déconnexion propre de la salle ${id}`);
+          } catch (err) {
             console.error(`❌ Erreur lors de la déconnexion de la salle ${id}:`, err);
-            // Nettoyage manuel pour s'assurer que tout est bien nettoyé même en cas d'erreur
-            try {
-              // Vider les salles actives directement si le service est accessible
-              if (SocketService.diagnose) {
-                console.log(`🧹 Nettoyage manuel des salles actives`);
-              }
-            } catch (cleanupError) {
-              console.error(`❌ Erreur lors du nettoyage manuel:`, cleanupError);
-            }
-          });
+            // Nous pouvons ignorer cette erreur car nous nettoyons de toute façon
+          }
+        })();
       };
     }
   }, [id, user, router, redirectingToGame]);

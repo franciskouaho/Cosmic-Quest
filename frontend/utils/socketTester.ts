@@ -167,38 +167,42 @@ export const checkAndUnblockGame = async (gameId: string): Promise<boolean> => {
         p.id !== String(currentQuestion?.targetPlayer?.id)
       ).length;
       
-      const answersCount = answers?.length || 0;
+      // Compter les réponses déjà soumises
+      const answersSubmitted = answers?.length || 0;
       
-      // Si toutes les réponses sont fournies mais la phase n'a pas changé
-      if (answersCount >= nonTargetPlayers && nonTargetPlayers > 0) {
-        console.log(`⚠️ Blocage détecté: ${answersCount}/${nonTargetPlayers} réponses, mais toujours en phase answer`);
+      console.log(`🔍 Phase answer: ${answersSubmitted}/${nonTargetPlayers} réponses soumises`);
+      
+      // Si toutes les réponses sont soumises mais nous sommes toujours en phase answer
+      if (answersSubmitted >= nonTargetPlayers && nonTargetPlayers > 0) {
+        console.log(`⚠️ Blocage potentiel détecté: Toutes les réponses soumises mais toujours en phase answer`);
         
-        // Tenter une action de déblocage via serveur
-        try {
-          const userId = await UserIdManager.getUserId();
-          await axios.post(`${API_URL}/games/${gameId}/force-check-phase`, {
-            user_id: userId
-          });
-          
-          console.log('✅ Demande de déblocage envoyée avec succès');
-          
-          // Attendre un peu puis vérifier l'état mis à jour
-          setTimeout(async () => {
-            await GameWebSocketService.getInstance().getGameState(gameId, true);
-          }, 2000);
-          
-          return true;
-        } catch (actionError) {
-          console.error('❌ Erreur lors de la tentative de déblocage:', actionError);
-          return false;
-        }
+        // Tenter de forcer une vérification de phase sur le serveur
+        await GameWebSocketService.getInstance().forceCheckPhase(gameId);
+        console.log(`🔄 Tentative de déblocage effectuée pour le jeu ${gameId}`);
+        return true;
       }
     }
     
-    console.log('✅ Aucun blocage détecté, jeu en phase normale');
+    // Vérifier si nous sommes potentiellement bloqués en phase vote
+    if (game?.currentPhase === 'vote') {
+      // Vérifier si le temps écoulé est excessif (plus de 2 minutes)
+      const currentTime = Date.now();
+      const phaseStartTime = game?.phaseStartTime || 0;
+      
+      if (phaseStartTime && (currentTime - phaseStartTime > 120000)) {
+        console.log(`⚠️ Blocage potentiel détecté: Phase vote active depuis plus de 2 minutes`);
+        
+        // Tenter de forcer une vérification de phase sur le serveur
+        await GameWebSocketService.getInstance().forceCheckPhase(gameId);
+        console.log(`🔄 Tentative de déblocage effectuée pour le jeu ${gameId}`);
+        return true;
+      }
+    }
+    
+    console.log(`✅ Aucun blocage détecté pour le jeu ${gameId}`);
     return false;
   } catch (error) {
-    console.error('❌ Erreur lors de la vérification de blocage:', error);
+    console.error(`❌ Erreur lors de la vérification de blocage:`, error);
     return false;
   }
 };

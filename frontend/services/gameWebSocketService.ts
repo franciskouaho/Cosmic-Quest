@@ -17,6 +17,15 @@ class GameWebSocketService {
   private cacheTimeout = 2000; // 2 secondes de cache
   private cacheData: Map<string, { data: any, timestamp: number }> = new Map();
   private phaseChangeTimestamps: Map<string, { phase: string, timestamp: number }> = new Map();
+  private static instance: GameWebSocketService;
+
+  // Méthode pour accéder à l'instance singleton
+  public static getInstance(): GameWebSocketService {
+    if (!GameWebSocketService.instance) {
+      GameWebSocketService.instance = new GameWebSocketService();
+    }
+    return GameWebSocketService.instance;
+  }
 
   /**
    * S'assure que la connexion Socket est établie et que l'utilisateur a rejoint le canal du jeu
@@ -91,7 +100,13 @@ class GameWebSocketService {
    * Reconnecte le socket si nécessaire
    */
   async reconnect(): Promise<boolean> {
-    return SocketService.reconnect();
+    try {
+      console.log(`⚡ [GameWebSocket] Tentative de reconnexion...`);
+      return await SocketService.reconnect();
+    } catch (error) {
+      console.error(`❌ [GameWebSocket] Erreur lors de la reconnexion:`, error);
+      return false;
+    }
   }
   
   /**
@@ -188,11 +203,10 @@ class GameWebSocketService {
    * Vérifie si l'utilisateur actuel est l'hôte de la partie
    * Amélioration pour utiliser les infos en cache si disponibles
    */
-  static async isUserHost(gameId: string): Promise<boolean> {
+  async isUserHost(gameId: string): Promise<boolean> {
     try {
       // Vérifier d'abord dans le cache en mémoire
-      const instance = GameWebSocketService.getInstance();
-      const cachedState = instance.gameStateCache.get(gameId)?.state;
+      const cachedState = this.gameStateCache.get(gameId)?.state;
       
       if (cachedState) {
         const userId = await UserIdManager.getUserId();
@@ -237,6 +251,218 @@ class GameWebSocketService {
       return false;
     }
   }
+
+  /**
+   * Rejoint le canal d'un jeu spécifique
+   * @param gameId ID du jeu à rejoindre
+   * @returns Promise résolu quand le jeu est rejoint
+   */
+  async joinGameChannel(gameId: string): Promise<void> {
+    try {
+      console.log(`🎮 [GameWebSocket] Tentative de rejoindre le jeu ${gameId}`);
+      
+      // S'assurer que la connexion socket est établie
+      const socket = await SocketService.getInstanceAsync();
+      
+      if (!socket.connected) {
+        console.warn(`⚠️ [GameWebSocket] Socket non connecté, tentative de reconnexion...`);
+        await this.reconnect();
+      }
+      
+      // Récupérer l'ID utilisateur
+      const userId = await UserIdManager.getUserId();
+      
+      return new Promise<void>((resolve, reject) => {
+        // Définir un timeout
+        const timeoutId = setTimeout(() => {
+          console.warn(`⚠️ [GameWebSocket] Timeout lors de la tentative de rejoindre le jeu ${gameId}`);
+          reject(new Error('Timeout de connexion'));
+        }, 5000);
+        
+        // Émettre l'événement pour rejoindre le jeu
+        socket.emit('join-game', { 
+          gameId,
+          userId,
+          timestamp: Date.now()
+        });
+        
+        // Écouter la confirmation
+        socket.once('game:joined', (data) => {
+          clearTimeout(timeoutId);
+          
+          if (data && data.gameId === gameId) {
+            console.log(`✅ [GameWebSocket] Jeu ${gameId} rejoint avec succès`);
+            this.joinedGames.add(gameId);
+            resolve();
+          } else {
+            reject(new Error('Données de confirmation incorrectes'));
+          }
+        });
+        
+        console.log(`📤 [GameWebSocket] Demande de rejoindre le jeu ${gameId} envoyée`);
+      });
+    } catch (error) {
+      console.error(`❌ [GameWebSocket] Erreur lors de la tentative de rejoindre le jeu ${gameId}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Récupère l'état complet d'un jeu
+   * @param gameId ID du jeu
+   * @param forceRefresh Forcer une actualisation (ignorer le cache)
+   * @returns Promise avec l'état du jeu
+   */
+  async getGameState(gameId: string, forceRefresh: boolean = false): Promise<any> {
+    try {
+      console.log(`🎮 [GameWebSocket] Récupération de l'état du jeu ${gameId}${forceRefresh ? ' (forcée)' : ''}`);
+      
+      // Vérifier le cache si on ne force pas le rafraîchissement
+      if (!forceRefresh) {
+        const cachedState = this.gameStateCache.get(gameId);
+        if (cachedState && Date.now() - cachedState.timestamp < this.CACHE_TTL) {
+          console.log(`🗄️ [GameWebSocket] Utilisation du cache pour le jeu ${gameId}`);
+          return cachedState.state;
+        }
+      }
+      
+      // Assurer que le socket est connecté
+      await this.ensureSocketConnection(gameId);
+      
+      // Récupérer l'ID utilisateur
+      const userId = await UserIdManager.getUserId();
+      if (!userId) {
+        throw new Error("ID utilisateur non disponible");
+      }
+      
+      // Émettre une requête pour obtenir l'état du jeu
+      return new Promise((resolve, reject) => {
+        const socket = SocketService.getSocketInstance();
+        
+        if (!socket) {
+          reject(new Error("Socket non disponible"));
+          return;
+        }
+        
+        // Configurer un timeout
+        const timeoutId = setTimeout(() => {
+          console.warn(`⚠️ [GameWebSocket] Timeout lors de la récupération de l'état pour ${gameId}`);
+          reject(new Error("Timeout lors de la récupération de l'état du jeu"));
+        }, this.REQUEST_TIMEOUT);
+        
+        // Émettre la requête
+        socket.emit('game:get_state', { gameId, userId }, (response: any) => {
+          clearTimeout(timeoutId);
+          
+          if (response && response.success) {
+            // Sauvegarder dans le cache
+            this.gameStateCache.set(gameId, {
+              state: response.data,
+              timestamp: Date.now()
+            });
+            
+            // Stocker les informations d'hôte si disponibles
+            if (response.data?.game?.hostId) {
+              this.storeHostInfo(gameId, response.data.game.hostId);
+            }
+            
+            // Mettre à jour le timestamp de phase
+            if (response.data?.game?.currentPhase) {
+              this.phaseChangeTimestamps.set(gameId, {
+                phase: response.data.game.currentPhase,
+                timestamp: Date.now()
+              });
+            }
+            
+            resolve(response.data);
+          } else {
+            reject(new Error(response?.error || "Échec de récupération de l'état du jeu"));
+          }
+        });
+      });
+    } catch (error) {
+      console.error(`❌ [GameWebSocket] Erreur lors de la récupération de l'état du jeu:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Force une vérification de phase du jeu côté serveur
+   * @param gameId ID du jeu
+   * @returns Promise<boolean> indiquant si l'opération a réussi
+   */
+  async forceCheckPhase(gameId: string): Promise<boolean> {
+    try {
+      console.log(`🔄 [GameWebSocket] Forçage de vérification de phase pour le jeu ${gameId}`);
+      
+      // Assurer que le socket est connecté
+      await this.ensureSocketConnection(gameId);
+      
+      // Récupérer l'ID utilisateur
+      const userId = await UserIdManager.getUserId();
+      
+      return new Promise<boolean>((resolve) => {
+        const socket = SocketService.getSocketInstance();
+        
+        if (!socket) {
+          console.error(`❌ [GameWebSocket] Socket non disponible pour force check`);
+          resolve(false);
+          return;
+        }
+        
+        // Configurer un timeout
+        const timeoutId = setTimeout(() => {
+          console.warn(`⚠️ [GameWebSocket] Timeout lors du force check pour ${gameId}`);
+          resolve(false);
+        }, 5000);
+        
+        // Émettre la requête
+        socket.emit('game:force_check', { gameId, userId }, (response: any) => {
+          clearTimeout(timeoutId);
+          
+          if (response && response.success) {
+            console.log(`✅ [GameWebSocket] Vérification forcée réussie pour ${gameId}`);
+            
+            // Nettoyer le cache pour forcer un rafraîchissement
+            this.clearGameStateCache(gameId);
+            
+            resolve(true);
+          } else {
+            console.warn(`⚠️ [GameWebSocket] Échec de la vérification forcée: ${response?.error || 'Raison inconnue'}`);
+            resolve(false);
+          }
+        });
+      });
+    } catch (error) {
+      console.error(`❌ [GameWebSocket] Erreur lors du forçage de vérification:`, error);
+      return false;
+    }
+  }
+
+  /**
+   * Stocke les informations d'hôte localement
+   */
+  private async storeHostInfo(gameId: string, hostId: string | number): Promise<void> {
+    try {
+      const userId = await UserIdManager.getUserId();
+      const isHost = String(hostId) === String(userId);
+      
+      await AsyncStorage.setItem(`@game_host_${gameId}`, JSON.stringify({
+        hostId: String(hostId),
+        timestamp: Date.now(),
+        isHost
+      }));
+    } catch (error) {
+      console.warn(`⚠️ [GameWebSocket] Erreur lors du stockage des infos d'hôte:`, error);
+    }
+  }
 }
 
-export default new GameWebSocketService();
+// Modification de l'export pour utiliser à la fois l'instance et les méthodes statiques
+const gameWebSocketService = new GameWebSocketService();
+export default gameWebSocketService;
+
+// Ajout des fonctions statiques pour maintenir la compatibilité avec le code existant
+export const isUserHost = async (gameId: string): Promise<boolean> => {
+  return await gameWebSocketService.isUserHost(gameId);
+};

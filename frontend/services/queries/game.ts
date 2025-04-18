@@ -369,33 +369,9 @@ class GameService {
    * Soumettre un vote pour une réponse directement via HTTP REST
    */
   async submitVote(gameId: string, answerId: string, questionId: string) {
-    console.log(`🎮 GameService: Vote pour la réponse ${answerId} dans le jeu ${gameId}`);
-    
     try {
-      // Récupérer l'ID utilisateur
       const userId = await UserIdManager.getUserId();
-      console.log(`👤 GameService: Soumission de vote par utilisateur ${userId}`);
       
-      // Vérifier d'abord la phase actuelle du jeu
-      const gameState = await this.getGameState(gameId, 0, 1, true);
-      
-      if (gameState.game.currentPhase !== 'vote') {
-        console.warn(`⚠️ Tentative de vote dans une phase incorrecte: ${gameState.game.currentPhase}`);
-        
-        // Si le jeu est déjà en phase results, nous devons retourner immédiatement
-        if (gameState.game.currentPhase === 'results') {
-          console.log('🔄 Le jeu est déjà passé à la phase results, vote ignoré');
-          return false;
-        }
-      }
-      
-      // Utiliser directement HTTP REST pour une fiabilité maximale
-      console.log('🌐 Envoi du vote via HTTP REST...');
-      
-      // Ajouter des logs supplémentaires pour le debugging
-      console.log(`📝 Données du vote: answerId=${answerId}, questionId=${questionId}, userId=${userId}`);
-      
-      // Augmenter la priorité de la requête
       const response = await api.post(`/games/${gameId}/vote`, {
         answer_id: answerId,
         question_id: questionId,
@@ -418,73 +394,11 @@ class GameService {
         // Forcer une mise à jour de l'état du jeu après le vote
         setTimeout(() => this.getGameState(gameId, 0, 1, true), 300);
         setTimeout(() => this.getGameState(gameId, 0, 1, true), 1000);
-        
-        return true;
       } else {
-        console.error('❌ Réponse du serveur inattendue:', response.data);
-        throw new Error(response.data?.error || 'Échec de la soumission via HTTP');
+        throw new Error(response.data?.message || "Erreur inconnue lors du vote");
       }
     } catch (error) {
-      console.error('❌ GameService: Erreur lors de la soumission du vote:', error);
-      
-      // Essayer une fois de plus avec un délai si l'erreur semble être un problème réseau
-      if (error.message && (error.message.includes('timeout') || error.message.includes('network'))) {
-        console.log('🔄 Tentative supplémentaire après erreur réseau...');
-        
-        try {
-          await new Promise(resolve => setTimeout(resolve, 1000));
-          
-          const userId = await UserIdManager.getUserId();
-          const retryResponse = await api.post(`/games/${gameId}/vote`, {
-            answer_id: answerId,
-            question_id: questionId,
-            voter_id: userId,
-            is_retry: true,       // Indiquer qu'il s'agit d'une tentative de récupération
-            prevent_auto_progress: true  // Empêcher la progression automatique
-          }, {
-            timeout: 15000,
-            headers: {
-              'X-Retry-Attempt': 'true',
-              'X-Priority': 'critical'
-            }
-          });
-          
-          if (retryResponse.data?.status === 'success') {
-            console.log('✅ Vote soumis avec succès après nouvelle tentative');
-            
-            // Forcer deux rafraîchissements à intervalles différents
-            this.gameStateCache.delete(gameId);
-            setTimeout(() => this.getGameState(gameId, 0, 1, true), 500);
-            setTimeout(() => this.getGameState(gameId, 0, 1, true), 1500);
-            
-            return true;
-          }
-        } catch (retryError) {
-          console.error('❌ Échec de la seconde tentative:', retryError);
-        }
-      }
-      
-      // En dernier recours, essayer une approche plus directe
-      try {
-        console.log('🔧 Tentative de solution de dernier recours...');
-        
-        // Essayer avec des paramètres simplifiés et un autre endpoint
-        const fallbackResponse = await api.post(`/games/${gameId}/vote_fallback`, {
-          answer_id: answerId,
-          question_id: questionId,
-          voter_id: await UserIdManager.getUserId()
-        }, {
-          timeout: 20000
-        });
-        
-        if (fallbackResponse.data?.success) {
-          console.log('✅ Vote enregistré via solution de dernier recours');
-          return true;
-        }
-      } catch (lastResortError) {
-        console.error('❌ Échec de la solution de dernier recours:', lastResortError);
-      }
-      
+      console.error('❌ Erreur lors de la soumission du vote:', error);
       throw error;
     }
   }
@@ -499,8 +413,8 @@ class GameService {
       // S'assurer que la connexion WebSocket est active
       await GameWebSocketService.ensureSocketConnection(String(gameId));
       
-      // Utiliser la méthode WebSocket qui a déjà toute la logique nécessaire
-      return await GameWebSocketService.isUserHost(String(gameId));
+      // Utiliser la méthode d'instance au lieu de la méthode statique
+      return await gameWebSocketService.isUserHost(String(gameId));
     } catch (error) {
       console.error(`❌ Erreur lors de la vérification de l'hôte:`, error);
       return false;

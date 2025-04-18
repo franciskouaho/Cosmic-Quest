@@ -159,6 +159,22 @@ Si certains joueurs voient des phases différentes:
 - Utiliser le endpoint `/api/v1/games/:id/force-check-phase` pour resynchroniser l'état du jeu
 - Le bouton de rafraîchissement manuel est disponible en cas de besoin extrême
 
+#### Problème: Erreur "joinGameChannel is not a function"
+
+**Solution**: Cette erreur se produit lorsque la méthode n'est pas correctement implémentée dans le service GameWebSocketService. Vérifiez que la méthode joinGameChannel existe dans la classe GameWebSocketService et qu'elle est bien exportée.
+
+#### Problème: Désynchronisation entre client et serveur
+
+**Solution**: Utilisez la fonction forceCheckPhase() pour forcer une vérification de l'état du jeu côté serveur. Vous pouvez également appeler gameService.forcePhaseCheck(gameId) pour déclencher une synchronisation.
+
+#### Problème: WebSocket déconnecté
+
+**Solution**: Le service tente automatiquement de se reconnecter. Pour forcer une reconnexion, utilisez SocketService.reconnect(). Si la connexion persiste à échouer, l'application basculera automatiquement sur les requêtes HTTP.
+
+#### Problème: Jeu bloqué dans une phase
+
+**Solution**: Utilisez l'utilitaire checkAndUnblockGame(gameId) pour détecter et débloquer un jeu potentiellement bloqué. Cette fonction vérifie si toutes les conditions sont remplies pour passer à la phase suivante et force la progression si nécessaire.
+
 ## Outils de débogage et récupération
 
 Cosmic Quest intègre désormais des outils avancés pour diagnostiquer et résoudre les problèmes de synchronisation.

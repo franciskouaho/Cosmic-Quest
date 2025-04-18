@@ -64,13 +64,22 @@ export async function generateQuestionObject(theme: GameTheme, playerName: strin
  * @returns Un objet Question basique
  */
 function createEmergencyQuestion(theme: GameTheme, playerName: string): Question {
-  // Questions d'urgence très basiques, une par thème
+  // Questions d'urgence plus variées selon le thème
   let questionText = `À propos de ${playerName}, que pensez-vous de cette personne?`;
   
-  // Légère customisation selon le thème
+  // Légère customisation selon le thème avec plus de variété
   switch(theme) {
     case 'on-ecoute-mais-on-ne-juge-pas':
-      questionText = `Quel est le secret le mieux gardé de ${playerName}?`;
+      // Tableau de questions de secours
+      const emergencyQuestions = [
+        `Quel est le secret le mieux gardé de ${playerName}?`,
+        `Quelle situation fait le plus douter ${playerName} de ses capacités?`,
+        `Qu'est-ce que ${playerName} n'avouerait jamais, même sous la torture?`,
+        `Quelle est la pire bêtise que ${playerName} ait faite et que personne ne connaît?`
+      ];
+      // Sélection aléatoire d'une question
+      const randomIndex = Math.floor(Math.random() * emergencyQuestions.length);
+      questionText = emergencyQuestions[randomIndex];
       break;
   }
 

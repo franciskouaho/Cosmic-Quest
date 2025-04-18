@@ -12,7 +12,6 @@ import { useCreateRoom } from '@/hooks/useCreateRoom';
 import LoadingOverlay from '@/components/common/LoadingOverlay';
 import {Socket} from "socket.io-client";
 
-// Configuration des modes de jeu
 const gameModes = [
   {
     id: 'on-ecoute-mais-on-ne-juge-pas',

@@ -1,5 +1,5 @@
-import api from '../../config/axios';
-import { Question } from '../../types/gameTypes';
+import api from '@/config/axios';
+import { Question } from '@/types/gameTypes';
 
 class QuestionService {
   /**
@@ -51,10 +51,11 @@ class QuestionService {
    * @returns Le texte de la question formaté
    */
   formatQuestion(questionText: string, playerName: string): string {
-    // Support pour les deux formats possibles de placeholder
+    // Support pour tous les formats possibles de placeholder
     return questionText
       .replace(/\{playerName\}/g, playerName) // Format {playerName}
-      .replace(/\${playerName}/g, playerName); // Format ${playerName}
+      .replace(/\${playerName}/g, playerName) // Format ${playerName}
+      .replace(/%playerName%/g, playerName);  // Format %playerName%
   }
 }
 
