@@ -6,6 +6,8 @@ import socketService from '#services/socket_service'
 import Room from '#models/room'
 import Game from '#models/game'
 import UserRecentRoom from '#models/user_recent_room'
+import User from '#models/user'
+import Answer from '#models/answer'
 
 // Fonction utilitaire pour générer un code de salle aléatoire
 const generateRoomCode = (length = 6) => {
@@ -549,67 +551,62 @@ export default class RoomsController {
             type: 'phase_change',
             phase: 'answer',
             instantTransition: true,
-            // Supprimer le timer
           })
 
           console.log(`✅ Passage à la phase 'answer' pour le jeu ${game.id}`)
 
-          // NOUVEAU: Passer immédiatement à la phase vote (après 1 seconde)
-          setTimeout(async () => {
-            try {
-              // Vérifier si le jeu existe toujours
-              const currentGame = await Game.find(game.id)
-              if (currentGame && currentGame.currentPhase === 'answer') {
-                currentGame.currentPhase = 'vote'
-                await currentGame.save()
-
-                // Définir la durée de la phase de vote à 1 seconde
-                const votePhaseDuration = 1
-
-                // Notifier les joueurs du changement de phase
-                io.to(`game:${currentGame.id}`).emit('game:update', {
-                  type: 'phase_change',
-                  phase: 'vote',
-                  instantTransition: true,
-                  // Supprimer le timer
-                })
-
-                console.log(
-                  `✅ Progression automatique vers la phase 'vote' pour le jeu ${currentGame.id}`
-                )
-
-                // NOUVEAU: Passer immédiatement à la phase résultats (après 1 seconde)
-                setTimeout(async () => {
-                  try {
-                    const updatedGame = await Game.find(game.id)
-                    if (updatedGame && updatedGame.currentPhase === 'vote') {
-                      updatedGame.currentPhase = 'results'
-                      await updatedGame.save()
-
-                      // Notifier les joueurs du changement de phase
-                      io.to(`game:${updatedGame.id}`).emit('game:update', {
-                        type: 'phase_change',
-                        phase: 'results',
-                        instantTransition: true,
-                      })
-
-                      console.log(
-                        `✅ Progression automatique vers la phase 'results' pour le jeu ${updatedGame.id}`
-                      )
-                    }
-                  } catch (error) {
-                    console.error(
-                      `❌ Erreur lors de la progression vers la phase 'results':`,
-                      error
-                    )
-                  }
-                }, 1000) // Réduit à 1 seconde
-              }
-            } catch (error) {
-              console.error(`❌ Erreur lors de la progression vers la phase 'vote':`, error)
+          // Attendre que toutes les réponses soient reçues avant de passer à vote
+          const checkAnswersInterval = setInterval(async () => {
+            const currentGame = await Game.find(game.id)
+            if (!currentGame) {
+              clearInterval(checkAnswersInterval)
+              return
             }
-          }, 1000) // Réduit à 1 seconde
-        }, 1000) // Réduit à 1 seconde
+
+            const gameId = currentGame.id
+            const currentRound = currentGame.currentRound
+
+            const answersQuery = await Answer.query()
+              .join('questions', 'questions.id', 'answers.question_id')
+              .where('questions.game_id', gameId)
+              .where('questions.round_number', currentRound)
+              .count('* as count')
+
+            const answersCount = Number(answersQuery[0].$extras.count)
+            const currentRoom = await Room.find(currentGame.roomId)
+            if (!currentRoom) {
+              clearInterval(checkAnswersInterval)
+              return
+            }
+            const roomPlayersQuery = await currentRoom
+              .related('players')
+              .query()
+              .count('* as count')
+            const totalPlayers = Number(roomPlayersQuery[0].$extras.count)
+            const expectedAnswers = totalPlayers - 1 // -1 pour la cible
+
+            if (answersCount >= expectedAnswers) {
+              clearInterval(checkAnswersInterval)
+
+              currentGame.currentPhase = 'vote'
+              await currentGame.save()
+
+              // Notifier les joueurs du changement de phase
+              io.to(`game:${gameId}`).emit('game:update', {
+                type: 'phase_change',
+                phase: 'vote',
+                instantTransition: true,
+              })
+
+              console.log(`✅ Passage à la phase 'vote' pour le jeu ${gameId}`)
+            }
+          }, 1000) // Vérifier toutes les secondes
+
+          // Arrêter la vérification après 2 minutes
+          setTimeout(() => {
+            clearInterval(checkAnswersInterval)
+          }, 120000)
+        }, 1000)
       } catch (questionError) {
         console.error('❌ Erreur lors de la génération de la première question:', questionError)
       }

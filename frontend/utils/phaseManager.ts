@@ -50,7 +50,7 @@ export class PhaseManager {
         if (isTarget && !hasVoted) {
           effectivePhase = GamePhase.VOTE;
         } else {
-          effectivePhase = hasVoted ? GamePhase.WAITING : GamePhase.WAITING_FOR_VOTE;
+          effectivePhase = GamePhase.WAITING_FOR_VOTE;
         }
         break;
 

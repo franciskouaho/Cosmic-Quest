@@ -668,6 +668,87 @@ class SocketService {
       hasListeners: this.socket ? Object.keys(this.socket.listeners).length > 0 : false,
     };
   }
+
+  private async connectWithRetry(maxRetries = 3, retryDelay = 5000) {
+    let retryCount = 0;
+    
+    const connect = async () => {
+      try {
+        if (this.socket?.connected) {
+          console.log('🔌 Socket déjà connecté');
+          return;
+        }
+
+        console.log(`🔄 Tentative de connexion socket ${retryCount + 1}/${maxRetries}`);
+        
+        // Vérifier la connexion internet avant de tenter la connexion
+        const netInfo = await NetInfo.fetch();
+        if (!netInfo.isConnected) {
+          throw new Error('Pas de connexion internet');
+        }
+
+        this.socket = io(SOCKET_URL, {
+          transports: ['websocket'],
+          reconnection: true,
+          reconnectionAttempts: maxRetries,
+          reconnectionDelay: retryDelay,
+          timeout: 10000,
+          forceNew: true, // Forcer une nouvelle connexion
+        });
+
+        this.socket.on('connect', () => {
+          console.log('✅ Socket connecté');
+          retryCount = 0;
+        });
+
+        this.socket.on('connect_error', (error) => {
+          console.error('❌ Erreur de connexion Socket.IO:', error);
+          
+          if (retryCount < maxRetries) {
+            retryCount++;
+            console.log(`⏳ Nouvelle tentative dans ${retryDelay/1000} secondes...`);
+            setTimeout(connect, retryDelay);
+          } else {
+            console.error('❌ Nombre maximum de tentatives atteint');
+          }
+        });
+
+        this.socket.on('disconnect', (reason) => {
+          console.warn('🔌 Socket.IO déconnecté:', reason);
+          
+          if (reason === 'io server disconnect' || reason === 'transport close') {
+            // Le serveur a déconnecté le socket, on peut essayer de se reconnecter
+            this.socket?.connect();
+          }
+        });
+
+        // Attendre la connexion avec un timeout
+        await new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => {
+            reject(new Error('Timeout de connexion'));
+          }, 10000);
+
+          this.socket?.once('connect', () => {
+            clearTimeout(timeout);
+            resolve(true);
+          });
+        });
+
+      } catch (error) {
+        console.error('❌ Erreur lors de la connexion socket:', error);
+        
+        if (retryCount < maxRetries) {
+          retryCount++;
+          console.log(`⏳ Nouvelle tentative dans ${retryDelay/1000} secondes...`);
+          setTimeout(connect, retryDelay);
+        } else {
+          throw error;
+        }
+      }
+    };
+
+    await connect();
+  }
 }
 
 // Création d'une instance unique

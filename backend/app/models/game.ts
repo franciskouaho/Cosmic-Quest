@@ -1,6 +1,6 @@
 import { DateTime } from 'luxon'
-import { BaseModel, column, belongsTo, hasMany } from '@adonisjs/lucid/orm'
-import type { BelongsTo, HasMany } from '@adonisjs/lucid/types/relations'
+import { BaseModel, column, belongsTo, hasMany, manyToMany } from '@adonisjs/lucid/orm'
+import type { BelongsTo, HasMany, ManyToMany } from '@adonisjs/lucid/types/relations'
 
 import Room from '#models/room'
 import User from '#models/user'
@@ -45,6 +45,14 @@ export default class Game extends BaseModel {
 
   @hasMany(() => Question)
   declare questions: HasMany<typeof Question>
+
+  @manyToMany(() => User, {
+    pivotTable: 'room_players',
+    pivotColumns: ['is_ready', 'score', 'joined_at', 'left_at'],
+    relatedKey: 'user_id',
+    foreignKey: 'room_id',
+  })
+  declare players: ManyToMany<typeof User>
 
   @column.dateTime({ autoCreate: true })
   declare createdAt: DateTime
