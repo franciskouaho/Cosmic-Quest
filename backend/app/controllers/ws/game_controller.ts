@@ -971,8 +971,21 @@ export default class GamesController {
         }
 
         // Vérifier que l'utilisateur est bien l'hôte de la salle ou la cible actuelle
-        const isHost = room.hostId === user.id
-        const isTarget = currentQuestion?.targetPlayerId === user.id
+        const isHost = String(room.hostId) === String(user.id)
+        const isTarget = currentQuestion?.targetPlayerId
+          ? String(currentQuestion.targetPlayerId) === String(user.id)
+          : false
+
+        // Mettre à jour le cache Redis pour le statut d'hôte
+        await Redis.setex(`game:${gameId}:host`, 300, room.hostId)
+
+        console.log(`👑 [nextRound] Vérification des droits:
+          - User ID: ${user.id} (${typeof user.id})
+          - Host ID: ${room.hostId} (${typeof room.hostId})
+          - Target ID: ${currentQuestion?.targetPlayerId} (${typeof currentQuestion?.targetPlayerId})
+          - Est hôte: ${isHost}
+          - Est cible: ${isTarget}
+        `)
 
         if (!isHost && !isTarget) {
           console.error(

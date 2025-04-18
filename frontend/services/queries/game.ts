@@ -3,7 +3,7 @@ import { Answer, GameState } from '@/types/gameTypes';
 import NetInfo from '@react-native-community/netinfo';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import UserIdManager from '@/utils/userIdManager';
-import GameWebSocketService from '../gameWebSocketService';
+import gameWebSocketService from '../gameWebSocketService';
 import GameStateHelper from '@/utils/gameStateHelper';
 
 class GameService {
@@ -81,10 +81,10 @@ class GameService {
       if (this.socketEnabled || forceWebSocket) {
         try {
           // Vérifier que la connexion WebSocket est bien établie avant de continuer
-          await GameWebSocketService.ensureSocketConnection(gameId);
+          await gameWebSocketService.ensureSocketConnection(gameId);
           
           console.log(`🔌 Tentative de récupération via WebSocket pour ${gameId}`);
-          const gameData = await GameWebSocketService.getGameState(gameId);
+          const gameData = await gameWebSocketService.getGameState(gameId);
           
           // Réinitialiser le compteur d'échecs puisque ça a fonctionné
           this.socketFailCounter = 0;
@@ -412,7 +412,7 @@ class GameService {
       console.log(`👑 Vérification si utilisateur ${userId} est l'hôte de ${gameId}`);
       
       // S'assurer que la connexion WebSocket est active
-      await GameWebSocketService.ensureSocketConnection(String(gameId));
+      await gameWebSocketService.ensureSocketConnection(String(gameId));
       
       // Utiliser la méthode d'instance au lieu de la méthode statique
       return await gameWebSocketService.isUserHost(String(gameId));
@@ -515,7 +515,7 @@ class GameService {
   // Ressynchroniser la connection WebSocket si nécessaire
   async ensureSocketConnection(gameId: string) {
     try {
-      return await GameWebSocketService.ensureSocketConnection(gameId);
+      return await gameWebSocketService.ensureSocketConnection(gameId);
     } catch (error) {
       console.error('❌ Erreur lors de la vérification de la connexion WebSocket:', error);
       return false;
@@ -528,9 +528,9 @@ class GameService {
   async forcePhaseCheck(gameId: string): Promise<boolean> {
     try {
       // S'assurer que la connexion WebSocket est active
-      await GameWebSocketService.ensureSocketConnection(gameId);
+      await gameWebSocketService.ensureSocketConnection(gameId);
       
-      return await GameWebSocketService.forceCheckPhase(gameId);
+      return await gameWebSocketService.forceCheckPhase(gameId);
     } catch (error) {
       console.error('❌ Erreur lors de la vérification forcée de la phase:', error);
       return false;

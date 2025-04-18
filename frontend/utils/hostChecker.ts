@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import SocketService from '@/services/socketService';
-import GameWebSocketService from '@/services/gameWebSocketService';
+import gameWebSocketService from '@/services/gameWebSocketService';
 
 /**
  * Utilitaire pour vérifier si l'utilisateur est l'hôte d'une partie ou d'une salle
@@ -37,7 +37,7 @@ class HostChecker {
       
       // Essayer d'abord via GameWebSocketService qui est optimisé
       try {
-        const result = await GameWebSocketService.isUserHost(String(gameId));
+        const result = await gameWebSocketService.isUserHost(String(gameId));
         
         // Mettre en cache les deux résultats
         const cacheData = {

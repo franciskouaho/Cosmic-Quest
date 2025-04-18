@@ -2,7 +2,7 @@ import { Alert } from 'react-native';
 import axios from 'axios';
 import { API_URL, SOCKET_URL } from '@/config/axios';
 import SocketService from '@/services/socketService';
-import GameWebSocketService from '@/services/gameWebSocketService';
+import gameWebSocketService from '@/services/gameWebSocketService';
 import UserIdManager from './userIdManager';
 
 /**
