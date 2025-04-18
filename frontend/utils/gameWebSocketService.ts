@@ -1,18 +1,47 @@
-import socketService from '../services/socketService';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import SocketService from '@/services/socketService';
+import UserIdManager from '@/utils/userIdManager';
 
 class GameWebSocketService {
-  private gameHostCache: Map<string, {hostId: string, timestamp: number}> = new Map();
-  
   /**
    * Rejoint le canal de jeu avec Socket.IO
    */
   async joinGameChannel(gameId: string): Promise<boolean> {
     try {
-      console.log(`🎮 [GameWebSocket] Tentative de rejoindre le jeu ${gameId}`);
-      return await socketService.joinGameChannel(gameId);
+      console.log(`🎮 GameWebSocketService: Tentative de rejoindre le canal de jeu ${gameId}`);
+      
+      // Nous activons l'initialisation automatique des sockets pour les jeux
+      SocketService.setAutoInit(true);
+      
+      // Récupérer une instance du socket (avec forceInit=true pour s'assurer qu'elle est disponible)
+      const socket = await SocketService.getInstanceAsync(true);
+      
+      if (!socket) {
+        console.error('❌ Socket non disponible après tentative d\'initialisation');
+        return false;
+      }
+      
+      return new Promise((resolve) => {
+        // Définir un délai d'attente
+        const timeout = setTimeout(() => {
+          console.error(`⏱️ Délai d'attente dépassé pour rejoindre le jeu ${gameId}`);
+          resolve(false);
+        }, 5000);
+        
+        // Émettre l'événement pour rejoindre le jeu
+        socket.emit('join-game', { gameId }, (response: any) => {
+          clearTimeout(timeout);
+          
+          if (response && response.success !== false) {
+            console.log(`✅ Jeu ${gameId} rejoint avec succès`);
+            resolve(true);
+          } else {
+            console.warn(`⚠️ Échec de rejoindre le jeu ${gameId}:`, response?.error || 'Raison inconnue');
+            resolve(false);
+          }
+        });
+      });
     } catch (error) {
-      console.error(`❌ [GameWebSocket] Erreur lors de la connexion au jeu:`, error);
+      console.error(`❌ Erreur lors de la tentative de rejoindre le jeu ${gameId}:`, error);
       return false;
     }
   }
@@ -22,10 +51,42 @@ class GameWebSocketService {
    */
   async leaveGameChannel(gameId: string): Promise<boolean> {
     try {
-      console.log(`🎮 [GameWebSocket] Tentative de quitter le jeu ${gameId}`);
-      return await socketService.leaveGameChannel(gameId);
+      console.log(`🎮 GameWebSocketService: Tentative de quitter le canal de jeu ${gameId}`);
+      
+      // On vérifie d'abord si le socket est connecté
+      if (!SocketService.isConnected()) {
+        console.log(`ℹ️ Socket déjà déconnecté, rien à faire pour quitter ${gameId}`);
+        return true;
+      }
+      
+      const socket = SocketService.getSocketInstance();
+      if (!socket) {
+        console.warn('⚠️ Socket non disponible, considéré comme déjà quitté');
+        return true;
+      }
+      
+      return new Promise((resolve) => {
+        // Définir un délai d'attente
+        const timeout = setTimeout(() => {
+          console.warn(`⚠️ Timeout lors de la tentative de quitter le jeu ${gameId}`);
+          resolve(false);
+        }, 5000);
+        
+        // Émettre l'événement pour quitter le jeu
+        socket.emit('leave-game', { gameId }, (response: any) => {
+          clearTimeout(timeout);
+          
+          if (response && response.success !== false) {
+            console.log(`✅ Jeu ${gameId} quitté avec succès`);
+            resolve(true);
+          } else {
+            console.warn(`⚠️ Échec de quitter le jeu ${gameId}:`, response?.error || 'Raison inconnue');
+            resolve(false);
+          }
+        });
+      });
     } catch (error) {
-      console.error(`❌ [GameWebSocket] Erreur lors de la déconnexion du jeu:`, error);
+      console.error(`❌ Erreur lors de la tentative de quitter le jeu ${gameId}:`, error);
       return false;
     }
   }
@@ -33,64 +94,44 @@ class GameWebSocketService {
   /**
    * Vérifie si l'utilisateur est l'hôte du jeu
    */
-  async isUserHost(gameId: string, userId: string): Promise<boolean> {
+  async isUserHost(gameId: string): Promise<boolean> {
     try {
-      console.log(`🔍 Vérification d'hôte pour la partie ${gameId}`);
+      console.log(`🎮 GameWebSocketService: Vérification si l'utilisateur est l'hôte du jeu ${gameId}`);
       
-      // Vérifier si nous avons des informations en cache
-      const cacheKey = `@game_host_${gameId}`;
-      const cachedInfo = await AsyncStorage.getItem(cacheKey);
-      
-      if (cachedInfo) {
-        const cached = JSON.parse(cachedInfo);
-        const cacheAge = Date.now() - cached.timestamp;
-        
-        // Si le cache est récent (moins de 5 minutes)
-        if (cacheAge < 5 * 60 * 1000) {
-          console.log(`🗄️ [GameWebSocket] Utilisation des informations d'hôte en cache pour ${gameId}: ${cached.hostId === userId}`);
-          const isHost = cached.hostId === userId;
-          console.log(`👑 Résultat vérification hôte: ${isHost ? 'EST' : "N'EST PAS"} l'hôte`);
-          return isHost;
-        }
+      // Récupérer l'ID utilisateur
+      const userId = await UserIdManager.getUserId();
+      if (!userId) {
+        console.error('❌ ID utilisateur non disponible');
+        return false;
       }
       
-      // Si pas de cache ou cache expiré, tenter de vérifier via Socket.IO
-      const socket = await socketService.getInstanceAsync();
+      // Si le socket n'est pas connecté, on ne peut pas vérifier
+      if (!SocketService.isConnected()) {
+        console.warn('⚠️ Socket non connecté, impossible de vérifier le statut d\'hôte');
+        return false;
+      }
       
-      return new Promise<boolean>((resolve) => {
+      const socket = SocketService.getSocketInstance();
+      if (!socket) {
+        console.warn('⚠️ Socket non disponible, impossible de vérifier le statut d\'hôte');
+        return false;
+      }
+      
+      return new Promise((resolve) => {
+        // Définir un délai d'attente
         const timeout = setTimeout(() => {
-          console.log(`⏱️ Timeout lors de la vérification d'hôte, retourne false`);
+          console.warn(`⚠️ Timeout lors de la vérification du statut d'hôte pour ${gameId}`);
           resolve(false);
-        }, 3000);
+        }, 5000);
         
+        // Émettre l'événement pour vérifier si l'utilisateur est l'hôte
         socket.emit('game:check_host', { gameId, userId }, (response: any) => {
           clearTimeout(timeout);
-          const isHost = !!response?.isHost;
-          console.log(`👑 Résultat vérification hôte: ${isHost ? 'EST' : "N'EST PAS"} l'hôte`);
-          
-          // Mettre en cache pour éviter des requêtes répétées
-          AsyncStorage.setItem(cacheKey, JSON.stringify({
-            hostId: response?.hostId || null,
-            timestamp: Date.now()
-          }));
-          
-          resolve(isHost);
+          resolve(response?.isHost || false);
         });
       });
     } catch (error) {
-      console.error(`❌ [GameWebSocket] Erreur lors de la vérification d'hôte:`, error);
-      return false;
-    }
-  }
-  
-  /**
-   * Force la vérification de la phase du jeu
-   */
-  async forcePhaseCheck(gameId: string): Promise<boolean> {
-    try {
-      return await socketService.forcePhaseCheck(gameId);
-    } catch (error) {
-      console.error(`❌ [GameWebSocket] Erreur lors du forçage de la vérification de phase:`, error);
+      console.error(`❌ Erreur lors de la vérification du statut d'hôte:`, error);
       return false;
     }
   }

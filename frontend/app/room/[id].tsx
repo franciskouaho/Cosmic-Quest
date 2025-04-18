@@ -117,14 +117,20 @@ export default function Room() {
           
           // Essayer de rejoindre la salle avec des nouvelles tentatives automatiques
           try {
-            // Utiliser joinRoom directement car reconnectToRoom pourrait ne pas être disponible
+            console.log(`🔌 Tentative de rejoindre la salle ${id} via WebSocket`);
+            
+            // Forcer l'initialisation du socket et activer l'autoInit 
+            // pour permettre la reconnexion automatique en cas de déconnexion
+            SocketService.setAutoInit(true);
+            
+            // Utiliser joinRoom avec une tentative d'initialisation forcée
             const joinSuccess = await SocketService.joinRoom(id as string);
             
             if (joinSuccess) {
               console.log(`✅ Salle ${id} rejointe avec succès via WebSocket`);
             } else {
-              console.warn(`⚠️ Impossible de rejoindre la salle ${id}`);
-              // Continuer quand même pour permettre le fonctionnement via API REST
+              console.warn(`⚠️ Impossible de rejoindre la salle ${id} via WebSocket, mais continuons`);
+              // Un nouvel essai sera fait automatiquement grâce à setAutoInit(true)
             }
           } catch (joinError) {
             console.warn(`⚠️ Erreur lors de la tentative de rejoindre la salle ${id}:`, joinError);

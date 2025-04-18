@@ -6,11 +6,9 @@ import { useAuth } from "@/contexts/AuthContext"
 import BottomTabBar from "@/components/BottomTabBar"
 import TopBar from "@/components/TopBar"
 import SocketService from '@/services/socketService';
-import { useEffect } from 'react';
 import NetInfo from '@react-native-community/netinfo';
 import { useCreateRoom } from '@/hooks/useCreateRoom';
 import LoadingOverlay from '@/components/common/LoadingOverlay';
-import {Socket} from "socket.io-client";
 
 const gameModes = [
   {
@@ -143,6 +141,15 @@ export default function HomeScreen() {
     try {
       console.log('🎮 Tentative de création de salle avec mode:', modeId);
       
+      // Initialiser le socket explicitement ici au moment du clic
+      console.log('🔌 Initialisation socket demandée lors de la création de salle');
+      
+      // On active l'initialisation automatique seulement à partir de ce moment
+      SocketService.setAutoInit(true);
+      
+      // On n'a pas besoin d'attendre le socket pour créer la salle via HTTP
+      // Le traitement de createRoom s'occupera de rejoindre le socket si nécessaire
+      
       // S'assurer que toutes les propriétés sont correctement définies et nommées
       createRoom({
         name: `Salle de ${user?.username || 'Joueur'}`,
@@ -160,47 +167,6 @@ export default function HomeScreen() {
     }
   };
 
-  // Gérer les connexions WebSocket
-  useEffect(() => {
-    let socket: Socket | null = null;
-    let socketInitialized = false;
-    
-    const initSocket = async () => {
-      try {
-        console.log('🔌 Initialisation du socket sur la page d\'accueil');
-        socket = await SocketService.getInstanceAsync();
-        socketInitialized = true;
-
-        // Écouter les événements spécifiques à la salle
-        socket.on('room:update', (data) => {
-          console.log('🎮 Mise à jour de la salle reçue:', data);
-        });
-        
-        // Vérifier l'état de la connexion
-        const netInfo = await NetInfo.fetch();
-        console.log(`🌐 État connexion: ${netInfo.isConnected ? 'Connecté' : 'Non connecté'} (${netInfo.type})`);
-        
-        // Vérifier l'état du socket de manière synchrone
-        const socketConnected = SocketService.isConnected();
-        console.log(`🔌 Socket connecté: ${socketConnected}`);
-      } catch (error) {
-        console.error('❌ Erreur lors de l\'initialisation du socket:', error);
-      }
-    };
-
-    // Initialisation asynchrone
-    initSocket();
-
-    return () => {
-      console.log('🔌 Nettoyage du socket sur la page d\'accueil');
-      // Pas besoin de déconnecter complètement le socket à chaque fois 
-      // pour éviter de multiples reconnexions, seulement se désabonner des événements
-      if (socket && socketInitialized) {
-        socket.off('room:update');
-      }
-    };
-  }, []);
-  
   // Rendu conditionnel pour le chargement
   if (isCreatingRoom) {
     return (
