@@ -19,7 +19,6 @@ export const testSocketConnection = async () => {
     console.log(`🔌 Socket ID: ${socket.id || 'non connecté'}`);
     console.log(`🔌 État de connexion: ${socket.connected ? 'connecté' : 'déconnecté'}`);
     
-    // Vérifier d'abord si le socket est connecté avant d'ajouter des écouteurs
     if (!socket.connected) {
       console.log('⚠️ Socket non connecté, attente de connexion...');
       return false;
@@ -32,19 +31,26 @@ export const testSocketConnection = async () => {
     
     // Envoyer un ping pour tester la communication bidirectionnelle
     console.log('🏓 Envoi d\'un ping au serveur...');
-    socket.emit('ping', (response) => {
-      console.log('✅ Réponse ping (callback) reçue:', response);
-    });
     
-    // Nettoyer les écouteurs après 5 secondes
-    setTimeout(() => {
-      if (socket.connected) {
-        socket.off('pong');
-        console.log('🧹 Écouteurs nettoyés');
-      }
-    }, 5000);
+    // Utiliser une promesse avec timeout court pour test rapide
+    const pingResult = await Promise.race([
+      new Promise<boolean>((resolve) => {
+        socket.emit('ping', (response) => {
+          console.log('✅ Réponse ping (callback) reçue:', response);
+          resolve(true);
+        });
+      }),
+      new Promise<boolean>((resolve) => setTimeout(() => {
+        console.log('⚠️ Timeout ping, considérant la connexion comme instable');
+        resolve(false);
+      }, 1000)) // Timeout à 1 seconde pour plus de réactivité
+    ]);
     
-    return true;
+    // Nettoyer les écouteurs immédiatement
+    socket.off('pong');
+    console.log('🧹 Écouteurs nettoyés');
+    
+    return pingResult;
   } catch (error) {
     console.error('❌ Erreur lors du test de connexion WebSocket:', error);
     return false;
@@ -58,85 +64,52 @@ export const testSocketConnection = async () => {
  * @param content Contenu de la réponse
  * @returns {Promise<boolean>} true si la soumission a réussi, false sinon
  */
-export const testSubmitAnswer = async (
-  gameId: string | number, 
-  questionId: string | number, 
-  content: string
-): Promise<boolean> => {
-  console.log(`🧪 Test de soumission de réponse - Game: ${gameId}, Question: ${questionId}`);
-  
+export const testAndSubmitAnswer = async (gameId: string, questionId: string, content: string): Promise<boolean> => {
   try {
-    // Récupérer l'ID utilisateur
-    const userId = await UserIdManager.getUserId();
-    if (!userId) {
-      console.error('❌ ID utilisateur non disponible pour le test');
-      return false;
+    // Utiliser la méthode asynchrone pour obtenir une instance valide
+    const socket = await SocketService.getInstanceAsync();
+    
+    // Vérifier rapidement si le socket est connecté
+    if (!socket.connected) {
+      console.log('⚠️ Socket non connecté, utilisation HTTP immédiate...');
+      return await submitAnswerViaHttp(gameId, questionId, content);
     }
     
-    // 1. Essayer d'abord via WebSocket
-    console.log('🔌 Tentative via WebSocket...');
-    try {
-      const socket = await SocketService.getInstanceAsync();
-      
-      if (!socket.connected) {
-        throw new Error('Socket non connecté');
-      }
-      
-      return new Promise((resolve) => {
-        // Définir un timeout pour limiter l'attente
-        const timeout = setTimeout(() => {
-          console.warn('⚠️ Timeout WebSocket atteint, fallback vers HTTP...');
-          resolve(false);
-        }, 3000);
-        
-        // Tentative via WebSocket
-        socket.emit('game:submit_answer', {
-          gameId,
-          questionId,
-          content,
-          userId
-        }, (response: any) => {
-          clearTimeout(timeout);
-          
-          if (response?.success) {
-            console.log('✅ Réponse soumise avec succès via WebSocket');
-            resolve(true);
-          } else {
-            console.warn('⚠️ Échec de soumission via WebSocket:', response?.error);
-            resolve(false);
-          }
+    // Tenter l'envoi via WebSocket avec un timeout serré
+    return await Promise.race([
+      new Promise<boolean>((resolve) => {
+        socket.emit('game:submit_answer', { gameId, questionId, content }, (response) => {
+          console.log('✅ Réponse soumise via WebSocket:', response);
+          resolve(true);
         });
-      });
-    } catch (wsError) {
-      console.warn('⚠️ Erreur WebSocket:', wsError.message);
-      // Continuer avec HTTP en cas d'erreur WebSocket
-    }
-    
-    // 2. Fallback: Essayer via HTTP REST
-    console.log('🌐 Tentative via HTTP REST...');
-    const response = await axios.post(`${API_URL}/games/${gameId}/answer`, {
-      question_id: questionId,
-      content,
-      user_id: userId
-    }, {
-      headers: {
-        'Accept': 'application/json',
-        'Content-Type': 'application/json',
-        'userId': userId
-      }
+      }),
+      new Promise<boolean>(async (resolve) => {
+        // Si pas de réponse en 800ms, utiliser HTTP
+        await new Promise(r => setTimeout(r, 800));
+        console.log('⚠️ Timeout WebSocket, utilisation HTTP...');
+        resolve(await submitAnswerViaHttp(gameId, questionId, content));
+      })
+    ]);
+  } catch (error) {
+    console.error('❌ Erreur lors de la soumission de réponse:', error);
+    // En cas d'erreur, tenter par HTTP
+    return await submitAnswerViaHttp(gameId, questionId, content);
+  }
+};
+
+// Fonction d'aide pour soumettre via HTTP
+const submitAnswerViaHttp = async (gameId: string, questionId: string, content: string): Promise<boolean> => {
+  try {
+    // Implémentation HTTP
+    const response = await fetch(`/api/games/${gameId}/answer`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question_id: questionId, content })
     });
     
-    console.log('✅ Réponse soumise avec succès via HTTP');
-    
-    // 3. Attendre une synchronisation
-    setTimeout(async () => {
-      // Forcer une mise à jour de l'état du jeu
-      await GameWebSocketService.getInstance().getGameState(String(gameId), true);
-    }, 1000);
-    
-    return true;
+    return response.ok;
   } catch (error) {
-    console.error('❌ Erreur lors du test de soumission de réponse:', error);
+    console.error('❌ Erreur HTTP:', error);
     return false;
   }
 };

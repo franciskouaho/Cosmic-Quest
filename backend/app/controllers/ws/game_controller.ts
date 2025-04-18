@@ -406,9 +406,10 @@ export default class GamesController {
             playerId: user.id,
             playerName: user.displayName || user.username,
           },
+          instantTransition: true,
         })
 
-        // Vérifier si tous les joueurs qui PEUVENT répondre ont répondu
+        // Vérifier si tous les joueurs qui PEUVENT répondre ont répondu et passer immédiatement à la phase suivante
         await this.checkAndProgressPhase(gameId, question.id)
 
         // Notifier immédiatement le succès
@@ -490,7 +491,6 @@ export default class GamesController {
 
         // Notifier tous les clients
         const io = socketService.getInstance()
-        const votePhaseDuration = 20 // 20 secondes
 
         // Trouver le joueur cible pour lui envoyer une notification spéciale
         const targetPlayer = players.find((player) => player.id === question.targetPlayerId)
@@ -522,10 +522,7 @@ export default class GamesController {
             targetPlayerId: targetPlayer.id,
             questionId: questionId,
             answers: answerData,
-            timer: {
-              duration: votePhaseDuration,
-              startTime: Date.now(),
-            },
+            instantTransition: true,
           })
         }
 
@@ -535,25 +532,8 @@ export default class GamesController {
           phase: 'vote',
           message: 'Toutes les réponses ont été reçues. Place au vote!',
           targetPlayerId: question.targetPlayerId,
-          timer: {
-            duration: votePhaseDuration,
-            startTime: Date.now(),
-          },
+          instantTransition: true,
         })
-
-        // Notification de rappel après 2 secondes pour s'assurer que tout le monde l'a reçue
-        setTimeout(() => {
-          io.to(`game:${gameId}`).emit('game:update', {
-            type: 'phase_reminder',
-            phase: 'vote',
-            message: 'Passé en phase de vote',
-            targetPlayerId: question.targetPlayerId,
-            timer: {
-              duration: votePhaseDuration - 2,
-              startTime: Date.now(),
-            },
-          })
-        }, 2000)
 
         return true
       }
@@ -655,7 +635,6 @@ export default class GamesController {
 
       // Vérifier que la phase actuelle est bien la phase de vote
       // Assouplissement: accepter les votes même si la phase n'est pas 'vote'
-      // Cela permet de gérer les cas où le client est légèrement désynchronisé
       if (game.currentPhase !== 'vote') {
         console.log(
           `⚠️ [submitVote] Vote reçu en phase '${game.currentPhase}' au lieu de 'vote' - tentative de récupération`
@@ -722,7 +701,7 @@ export default class GamesController {
       answer.votesCount += 1
       await answer.save()
 
-      // Remplacer transmit.emit par socketService
+      // Utiliser le service socket
       const io = socketService.getInstance()
       io.to(`game:${gameId}`).emit('game:update', {
         type: 'new_vote',
@@ -730,6 +709,7 @@ export default class GamesController {
           voterId: user.id,
           answerId: answer.id,
         },
+        instantTransition: true,
       })
 
       // Vérifier si tous les joueurs (sauf ceux qui ont donné une réponse) ont voté
@@ -750,29 +730,20 @@ export default class GamesController {
 
       // Tous les joueurs ont voté OU dans une partie à 2, dès qu'il y a un vote, on peut continuer
       if (count >= players.length - 1 || (isSmallGame && count > 0)) {
-        // Passer à la phase de résultats
+        // Passer à la phase de résultats immédiatement
         game.currentPhase = 'results'
         await game.save()
 
         // Calculer les points et mettre à jour les scores
         await this.calculateAndUpdateScores(question.id, game)
 
-        // Définir la durée pour la phase résultats
-        const resultsPhaseDuration = 15 // 15 secondes pour voir les résultats
-
-        // Notifier tous les joueurs du changement de phase avec le compteur
+        // Notifier tous les joueurs du changement de phase immédiatement
         io.to(`game:${gameId}`).emit('game:update', {
           type: 'phase_change',
           phase: 'results',
           scores: game.scores,
-          timer: {
-            duration: resultsPhaseDuration,
-            startTime: Date.now(),
-          },
+          instantTransition: true,
         })
-
-        // Démarrer la progression automatique
-        this.autoAdvanceGamePhase(game.id, 'results', resultsPhaseDuration)
       }
 
       return response.created({
@@ -960,10 +931,7 @@ export default class GamesController {
             targetPlayerId: targetPlayer.id,
           })
 
-          // Définir la durée pour la phase question
-          const questionPhaseDuration = 10 // 10 secondes
-
-          // Notifier tous les joueurs du nouveau tour avec le compteur
+          // Notifier tous les joueurs du nouveau tour immédiatement
           io.to(`game:${gameId}`).emit('game:update', {
             type: 'new_round',
             round: game.currentRound,
@@ -977,29 +945,9 @@ export default class GamesController {
                 displayName: targetPlayer.displayName,
               },
             },
-            timer: {
-              duration: questionPhaseDuration,
-              startTime: Date.now(),
-            },
+            // Supprimer le timer pour rendre le jeu instantané
+            instantTransition: true,
           })
-
-          // Après un délai, passer à la phase de réponse
-          setTimeout(async () => {
-            game.currentPhase = 'answer'
-            await game.save()
-
-            // Définir la durée pour la phase réponse
-            const answerPhaseDuration = 30 // 30 secondes pour répondre
-
-            io.to(`game:${gameId}`).emit('game:update', {
-              type: 'phase_change',
-              phase: 'answer',
-              timer: {
-                duration: answerPhaseDuration,
-                startTime: Date.now(),
-              },
-            })
-          }, questionPhaseDuration * 1000) // 10 secondes pour voir la question
 
           // Notification avec confirmation
           io.to(`game:${gameId}`).emit('game:update', {
@@ -1263,9 +1211,6 @@ export default class GamesController {
       // Instance Socket.IO
       const io = socketService.getInstance()
 
-      // Durée de la phase de vote
-      const votePhaseDuration = 20 // 20 secondes
-
       // Notification spécifique pour le joueur ciblé
       if (targetPlayer) {
         console.log(
@@ -1280,10 +1225,7 @@ export default class GamesController {
           targetPlayerId: targetPlayer.id,
           questionId: question.id,
           answers: formattedAnswers,
-          timer: {
-            duration: votePhaseDuration,
-            startTime: Date.now(),
-          },
+          instantTransition: true,
         })
       }
 
@@ -1293,10 +1235,7 @@ export default class GamesController {
         phase: 'vote',
         message: 'Toutes les réponses ont été reçues. Place au vote!',
         targetPlayerId: question.targetPlayerId,
-        timer: {
-          duration: votePhaseDuration,
-          startTime: Date.now(),
-        },
+        instantTransition: true,
       })
 
       return true

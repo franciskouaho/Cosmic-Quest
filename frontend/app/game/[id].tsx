@@ -228,8 +228,6 @@ export default function GameScreen() {
   useEffect(() => {
     fetchGameData();
     
-    let refreshInterval: NodeJS.Timeout;
-    
     const initSocket = async () => {
       try {
         // S'assurer que l'ID utilisateur est défini dans api avant tout
@@ -250,27 +248,62 @@ export default function GameScreen() {
         const handleGameUpdate = (data) => {
           console.log('🎮 Mise à jour du jeu reçue:', data);
           
+          if (data.instantTransition) {
+            console.log('⚡ Transition instantanée détectée, mise à jour immédiate');
+          }
+          
           if (data.type === 'phase_change') {
             console.log(`🎮 Changement de phase: ${data.phase}`);
             
             // Mise à jour immédiate de l'état sans attente
             setGameState(prev => ({
               ...prev,
-              phase: data.phase === 'answer' && prev.currentUserState?.isTargetPlayer 
-                ? GamePhase.WAITING 
-                : data.phase,
+              phase: PhaseManager.determineEffectivePhase(
+                data.phase,
+                prev.currentUserState?.isTargetPlayer || false,
+                prev.currentUserState?.hasAnswered || false,
+                prev.currentUserState?.hasVoted || false
+              ),
               game: {
                 ...prev.game,
                 currentPhase: data.phase
               },
-              timer: data.timer || prev.timer
+              // Suppression des timers pour un jeu instantané
+              timer: null
             }));
             
-            // Rafraîchir les données après un court délai
-            setTimeout(fetchGameData, 500);
+            // Rafraîchir les données immédiatement
+            fetchGameData();
           } else if (data.type === 'new_vote' || data.type === 'new_answer') {
-            // Rafraîchissement plus rapide pour les votes et réponses
-            setTimeout(fetchGameData, 300);
+            // Rafraîchissement immédiat pour les votes et réponses
+            fetchGameData();
+          } else if (data.type === 'new_round') {
+            // Passage immédiat au nouveau tour
+            setGameState(prev => ({
+              ...prev,
+              phase: PhaseManager.determineEffectivePhase(
+                'question',
+                data.question?.targetPlayer?.id === String(user?.id),
+                false,
+                false
+              ),
+              currentRound: data.round,
+              currentQuestion: data.question,
+              // Assurer que la cible est correctement identifiée
+              currentUserState: {
+                ...prev.currentUserState,
+                isTargetPlayer: data.question?.targetPlayer?.id === String(user?.id),
+                hasAnswered: false,
+                hasVoted: false
+              },
+              game: {
+                ...prev.game,
+                currentPhase: 'question',
+                currentRound: data.round
+              },
+              // Pas de timer pour un jeu instantané
+              timer: null
+            }));
           }
         };
         
@@ -301,8 +334,8 @@ export default function GameScreen() {
       socketCleanup = cleanup;
     });
 
-    // Réduire l'intervalle de rafraîchissement automatique
-    refreshInterval = setInterval(fetchGameData, 15000); // 15 secondes au lieu de 45
+    // Rafraîchir les données du jeu régulièrement mais à un intervalle réduit
+    const refreshInterval = setInterval(fetchGameData, 5000); // 5 secondes pour maintenir la synchronisation
     
     return () => {
       clearInterval(refreshInterval);
@@ -326,80 +359,26 @@ export default function GameScreen() {
     };
   }, [id, user, router, fetchGameData]);
 
-  // Dans le composant GameScreen, modifions l'effet pour mieux gérer les blocages
+  // Dans le composant GameScreen, simplifions l'effet pour supprimer les vérifications de blocage
   useEffect(() => {
     // Ne pas exécuter pendant le chargement initial
     if (!isReady || !gameState || !id) return;
     
-    // Compteur pour les situations d'attente prolongées
-    let waitingTime = 0;
-    let unblockAttempted = false;
-    
-    // Vérifier si nous sommes dans une situation d'attente potentiellement bloquée
-    const checkIfStuck = async () => {
-      // Si nous sommes déjà en phase de vote ou de résultats, pas besoin de vérifier
-      if ((gameState.phase !== 'waiting' && gameState.phase !== GamePhase.WAITING) || 
-          (gameState.game?.currentPhase !== 'answer')) {
-        waitingTime = 0;
-        unblockAttempted = false;
-        return;
-      }
-      
-      // On incrémente le temps d'attente
-      waitingTime += 5;
-      
-      // Après 15 secondes d'attente, vérifier si nous sommes bloqués
-      if (waitingTime >= 15) {
-        console.log(`⚠️ Situation d'attente prolongée détectée: ${waitingTime} secondes`);
-        
-        // Vérifier si nous sommes potentiellement bloqués en phase answer
-        if (gameState.game?.currentPhase === 'answer') {
-          const nonTargetPlayers = gameState.players?.filter(p => 
-            p.id !== gameState.targetPlayer?.id
-          ).length || 0;
-          
-          const answersCount = gameState.answers?.length || 0;
-          
-          // Si toutes les réponses sont disponibles mais nous sommes toujours en phase answer
-          if (answersCount >= nonTargetPlayers && nonTargetPlayers > 0) {
-            console.log(`⚠️ BLOCAGE DÉTECTÉ: Toutes les réponses (${answersCount}/${nonTargetPlayers}) sont fournies mais toujours en phase answer`);
-            
-            if (!unblockAttempted) {
-              console.log(`🔓 Tentative de déblocage du jeu...`);
-              unblockAttempted = true;
-              
-              try {
-                // Tentative de récupération sans utiliser gameDebugger
-                await SocketService.forcePhaseCheck(id as string);
-                console.log(`✅ Demande de vérification de phase envoyée pour le jeu ${id}`);
-                
-                // Rafraîchir les données après un court délai
-                setTimeout(() => {
-                  fetchGameData();
-                }, 2000);
-                
-                return;
-              } catch (error) {
-                console.error(`❌ Erreur lors de la tentative de déblocage:`, error);
-              }
-            }
-          }
-        }
-        
-        // Si après 15 secondes nous sommes toujours bloqués, forcer un rafraîchissement
-        if (waitingTime >= 15) {
-          console.log(`🔄 Forçage d'un rafraîchissement après attente prolongée (${waitingTime}s)`);
-          fetchGameData();
-          waitingTime = 0;
-        }
+    // Au lieu de vérifier périodiquement, on force une récupération des données
+    // si on détecte une désynchronisation
+    const checkSync = () => {
+      // Si nous sommes en phase d'attente depuis trop longtemps, force refresh
+      if (gameState.phase === GamePhase.WAITING || gameState.phase === GamePhase.WAITING_FOR_VOTE) {
+        console.log(`🔄 Force refresh pour éviter les blocages en phase ${gameState.phase}`);
+        fetchGameData();
       }
     };
     
-    // Vérifier toutes les 5 secondes
-    const stuckInterval = setInterval(checkIfStuck, 5000);
+    // Vérifier une seule fois après 3 secondes
+    const syncCheck = setTimeout(checkSync, 3000);
     
     return () => {
-      clearInterval(stuckInterval);
+      clearTimeout(syncCheck);
     };
   }, [isReady, gameState, id, fetchGameData]);
   

@@ -460,9 +460,270 @@ class GameWebSocketService {
 
 // Modification de l'export pour utiliser à la fois l'instance et les méthodes statiques
 const gameWebSocketService = new GameWebSocketService();
-export default gameWebSocketService;
 
 // Ajout des fonctions statiques pour maintenir la compatibilité avec le code existant
 export const isUserHost = async (gameId: string): Promise<boolean> => {
   return await gameWebSocketService.isUserHost(gameId);
 };
+
+class InstantGameWebSocketService {
+  // Singleton
+  private static instance: InstantGameWebSocketService;
+  
+  // Paramètres optimisés pour un jeu instantané
+  private readonly REQUEST_TIMEOUT = 1000; // 1 seconde max pour les requêtes
+  private readonly CACHE_TTL = 1000; // 1 seconde de cache
+  
+  // Cache des états de jeu
+  private gameStateCache: Map<string, { state: any, timestamp: number }> = new Map();
+  
+  // Cache des jointures de jeu
+  private joinedGames: Set<string> = new Set();
+  
+  // Requêtes en attente
+  private pendingRequests: Map<string, { promise: Promise<any>, timestamp: number }> = new Map();
+  
+  constructor() {
+    // Nettoyage périodique du cache et des requêtes en attente
+    setInterval(() => this.cleanupCache(), 60000);
+  }
+  
+  public static getInstance(): InstantGameWebSocketService {
+    if (!InstantGameWebSocketService.instance) {
+      InstantGameWebSocketService.instance = new InstantGameWebSocketService();
+    }
+    return InstantGameWebSocketService.instance;
+  }
+  
+  /**
+   * Nettoie le cache et les requêtes en attente
+   */
+  private cleanupCache(): void {
+    const now = Date.now();
+    
+    // Nettoyer le cache des états
+    for (const [key, value] of this.gameStateCache.entries()) {
+      if (now - value.timestamp > 60000) { // 1 minute
+        this.gameStateCache.delete(key);
+      }
+    }
+    
+    // Nettoyer les requêtes en attente
+    for (const [key, value] of this.pendingRequests.entries()) {
+      if (now - value.timestamp > 10000) { // 10 secondes
+        this.pendingRequests.delete(key);
+      }
+    }
+  }
+  
+  /**
+   * Rejoint le canal de jeu immédiatement
+   */
+  public async joinGameChannel(gameId: string): Promise<boolean> {
+    try {
+      // Si déjà joint, retourner true immédiatement
+      if (this.joinedGames.has(gameId)) {
+        return true;
+      }
+      
+      const socket = await SocketService.getInstanceAsync();
+      
+      return new Promise<boolean>((resolve) => {
+        // Timeout rapide pour éviter de bloquer l'interface
+        const timeout = setTimeout(() => {
+          console.log(`⏱️ Timeout jointure au jeu ${gameId}`);
+          resolve(false);
+        }, this.REQUEST_TIMEOUT);
+        
+        socket.emit('join-game', { gameId }, (response: any) => {
+          clearTimeout(timeout);
+          
+          if (response?.success) {
+            this.joinedGames.add(gameId);
+            resolve(true);
+          } else {
+            resolve(false);
+          }
+        });
+        
+        // Même sans confirmation, considérer comme joint 
+        // pour ne pas bloquer l'expérience utilisateur
+        this.joinedGames.add(gameId);
+      });
+    } catch (error) {
+      console.error(`❌ Erreur lors de la jointure au jeu ${gameId}:`, error);
+      return false;
+    }
+  }
+  
+  /**
+   * Quitte le canal de jeu
+   */
+  public async leaveGameChannel(gameId: string): Promise<boolean> {
+    try {
+      if (!this.joinedGames.has(gameId)) {
+        return true; // Déjà quitté
+      }
+      
+      const socket = await SocketService.getInstanceAsync();
+      
+      return new Promise<boolean>((resolve) => {
+        // Timeout rapide
+        const timeout = setTimeout(() => {
+          this.joinedGames.delete(gameId);
+          resolve(true); // Considérer comme succès même en cas de timeout
+        }, this.REQUEST_TIMEOUT);
+        
+        socket.emit('leave-game', { gameId }, () => {
+          clearTimeout(timeout);
+          this.joinedGames.delete(gameId);
+          resolve(true);
+        });
+        
+        // Supprimer du cache de toute façon
+        this.joinedGames.delete(gameId);
+      });
+    } catch (error) {
+      console.error(`❌ Erreur lors du départ du jeu ${gameId}:`, error);
+      this.joinedGames.delete(gameId);
+      return false;
+    }
+  }
+  
+  /**
+   * Vérifie si l'utilisateur est l'hôte du jeu (optimisé)
+   */
+  public async isUserHost(gameId: string, userId?: string): Promise<boolean> {
+    try {
+      // Utiliser l'ID utilisateur fourni ou le récupérer
+      const effectiveUserId = userId || await UserIdManager.getUserId();
+      
+      if (!effectiveUserId) {
+        console.error('❌ ID utilisateur non disponible');
+        return false;
+      }
+      
+      // Vérifier dans le cache d'hôte
+      const cacheKey = `host:${gameId}:${effectiveUserId}`;
+      const cachedStatus = this.gameStateCache.get(cacheKey);
+      
+      if (cachedStatus && Date.now() - cachedStatus.timestamp < this.CACHE_TTL) {
+        return cachedStatus.state;
+      }
+      
+      // Vérifier via le socket
+      const socket = await SocketService.getInstanceAsync();
+      
+      // Créer une promesse avec timeout
+      const isHost = await Promise.race([
+        new Promise<boolean>((resolve) => {
+          socket.emit('game:check_host', { gameId, userId: effectiveUserId }, (response: any) => {
+            resolve(!!response?.isHost);
+          });
+        }),
+        new Promise<boolean>((resolve) => {
+          setTimeout(() => resolve(false), this.REQUEST_TIMEOUT);
+        })
+      ]);
+      
+      // Mettre en cache
+      this.gameStateCache.set(cacheKey, { state: isHost, timestamp: Date.now() });
+      
+      return isHost;
+    } catch (error) {
+      console.error(`❌ Erreur lors de la vérification d'hôte:`, error);
+      return false;
+    }
+  }
+  
+  /**
+   * Force la vérification de la phase (instantané)
+   */
+  public async forcePhaseCheck(gameId: string): Promise<boolean> {
+    try {
+      const socket = await SocketService.getInstanceAsync();
+      
+      // Rejoindre le canal si nécessaire
+      if (!this.joinedGames.has(gameId)) {
+        await this.joinGameChannel(gameId);
+      }
+      
+      return new Promise<boolean>((resolve) => {
+        // Timeout rapide
+        const timeout = setTimeout(() => {
+          resolve(false);
+        }, this.REQUEST_TIMEOUT);
+        
+        socket.emit('game:force_check', { gameId }, (response: any) => {
+          clearTimeout(timeout);
+          resolve(!!response?.success);
+        });
+        
+        // Envoyer aussi un event direct pour plus de réactivité
+        socket.emit('game:get_state', { gameId });
+      });
+    } catch (error) {
+      console.error(`❌ Erreur lors du forçage de la vérification de phase:`, error);
+      return false;
+    }
+  }
+  
+  /**
+   * Soumission instantanée de réponse
+   */
+  public async submitAnswer(gameId: string, questionId: string, content: string): Promise<boolean> {
+    try {
+      const socket = await SocketService.getInstanceAsync();
+      
+      return new Promise<boolean>((resolve) => {
+        // Timeout ultra rapide
+        const timeout = setTimeout(() => {
+          console.log(`⏱️ Timeout soumission de réponse, considérant comme acceptée`);
+          resolve(true); // Considérer comme succès pour éviter de bloquer le joueur
+        }, this.REQUEST_TIMEOUT);
+        
+        socket.emit('game:submit_answer', { gameId, questionId, content }, (response: any) => {
+          clearTimeout(timeout);
+          resolve(!!response?.success);
+        });
+      });
+    } catch (error) {
+      console.error(`❌ Erreur lors de la soumission de réponse:`, error);
+      return false;
+    }
+  }
+  
+  /**
+   * Soumission instantanée de vote
+   */
+  public async submitVote(gameId: string, answerId: string, questionId: string): Promise<boolean> {
+    try {
+      const socket = await SocketService.getInstanceAsync();
+      
+      return new Promise<boolean>((resolve) => {
+        // Timeout ultra rapide
+        const timeout = setTimeout(() => {
+          console.log(`⏱️ Timeout soumission de vote, considérant comme accepté`);
+          resolve(true); // Considérer comme succès pour éviter de bloquer le joueur
+        }, this.REQUEST_TIMEOUT);
+        
+        socket.emit('game:submit_vote', { gameId, answerId, questionId }, (response: any) => {
+          clearTimeout(timeout);
+          resolve(!!response?.success);
+        });
+      });
+    } catch (error) {
+      console.error(`❌ Erreur lors de la soumission de vote:`, error);
+      return false;
+    }
+  }
+}
+
+// Création d'une instance du service instantané
+const instantGameWebSocketService = new InstantGameWebSocketService();
+
+// Exporter l'instance principale comme exportation par défaut
+export default gameWebSocketService;
+
+// Exporter le service instantané avec un nom spécifique
+export { instantGameWebSocketService as InstantGameWebSocketService };

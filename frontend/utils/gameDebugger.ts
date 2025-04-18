@@ -23,23 +23,22 @@ class GameDebugger {
   }
 
   /**
-   * Vérifie l'état complet du socket et du jeu
+   * Vérifie l'état complet du socket et du jeu en mode instantané
    */
   public async diagnoseGameState(gameId: string): Promise<void> {
     try {
       console.log(`🔍 GameDebugger: Diagnostic du jeu ${gameId} en cours...`);
       
-      // 1. Vérifier l'état du socket
+      // 1. Vérifier l'état du socket (instantané)
       const socketState = await this.checkSocketState();
       
-      // 2. Vérifier l'état du jeu via HTTP
-      await this.checkGameStateHttp(gameId);
+      // 2. Si problème avec le socket, tenter de le réparer
+      if (!socketState) {
+        await SocketService.reconnect();
+      }
       
-      // 3. Vérifier l'état du jeu via WebSocket
+      // 3. Analyser l'état du jeu via WebSocket (plus rapide)
       await this.checkGameStateWebSocket(gameId);
-      
-      // 4. Vérifier les phases entre le serveur et le client
-      await this.checkPhaseConsistency(gameId);
       
       console.log(`✅ GameDebugger: Diagnostic du jeu ${gameId} terminé`);
     } catch (error) {
@@ -68,134 +67,69 @@ class GameDebugger {
   }
 
   /**
-   * Vérifie l'état du jeu via HTTP
-   */
-  private async checkGameStateHttp(gameId: string): Promise<void> {
-    try {
-      const userId = await UserIdManager.getUserId();
-      const response = await axios.get(`${API_URL}/games/${gameId}`, {
-        headers: { userId: userId }
-      });
-      
-      console.log(`🌐 État du jeu via HTTP:
-        - Phase: ${response.data?.data?.game?.currentPhase}
-        - Round: ${response.data?.data?.game?.currentRound}/${response.data?.data?.game?.totalRounds}
-        - Réponses: ${response.data?.data?.answers?.length || 0}
-      `);
-    } catch (error) {
-      console.error(`❌ Erreur lors de la vérification HTTP:`, error);
-    }
-  }
-
-  /**
-   * Vérifie l'état du jeu via WebSocket
+   * Vérifie l'état du jeu via WebSocket (plus rapide que HTTP)
    */
   private async checkGameStateWebSocket(gameId: string): Promise<void> {
     try {
       const userId = await UserIdManager.getUserId();
       const socket = await SocketService.getInstanceAsync();
       
-      return new Promise((resolve) => {
-        socket.emit('game:get_state', { gameId, userId }, (response: any) => {
-          if (response?.success) {
-            console.log(`🔌 État du jeu via WebSocket:
-              - Phase: ${response.data?.game?.currentPhase}
-              - Round: ${response.data?.game?.currentRound}/${response.data?.game?.totalRounds}
-              - Réponses: ${response.data?.answers?.length || 0}
-            `);
-          } else {
-            console.error(`❌ Erreur WebSocket:`, response?.error);
-          }
-          resolve();
-        });
-      });
+      // Utiliser une promesse avec timeout
+      const result = await Promise.race([
+        new Promise<any>((resolve) => {
+          socket.emit('game:get_state', { gameId, userId }, (response: any) => {
+            resolve(response);
+          });
+        }),
+        new Promise<any>((resolve) => {
+          // Timeout court pour ne pas bloquer l'interface
+          setTimeout(() => resolve({ success: false, error: 'Timeout' }), 1000);
+        })
+      ]);
+      
+      if (result?.success) {
+        console.log(`🔌 État du jeu via WebSocket:
+          - Phase: ${result.data?.game?.currentPhase}
+          - Round: ${result.data?.game?.currentRound}/${result.data?.game?.totalRounds}
+          - Réponses: ${result.data?.answers?.length || 0}
+          - Joueurs: ${result.data?.players?.length || 0}
+        `);
+      } else {
+        // Fallback à HTTP en cas d'échec WebSocket
+        console.warn(`⚠️ Échec WebSocket, fallback HTTP sera utilisé si nécessaire`);
+      }
     } catch (error) {
       console.error(`❌ Erreur lors de la vérification WebSocket:`, error);
     }
   }
 
   /**
-   * Vérifie la cohérence des phases entre le serveur et l'UI
+   * Répare un jeu potentiellement bloqué
    */
-  private async checkPhaseConsistency(gameId: string): Promise<void> {
-    try {
-      // Utilisez GameWebSocketService pour obtenir l'état actuel
-      const state = await GameWebSocketService.getInstance().getGameState(gameId);
-      
-      // Analyse de la cohérence
-      if (state) {
-        console.log(`🧪 Analyse de cohérence des phases:
-          - Phase serveur: ${state.game?.currentPhase}
-          - Cible: ${state.currentUserState?.isTargetPlayer ? 'Oui' : 'Non'}
-          - A répondu: ${state.currentUserState?.hasAnswered ? 'Oui' : 'Non'}
-          - A voté: ${state.currentUserState?.hasVoted ? 'Oui' : 'Non'}
-        `);
-        
-        // Détecter les incohérences potentielles
-        const servPhase = state.game?.currentPhase;
-        const isTarget = state.currentUserState?.isTargetPlayer;
-        const hasAnswered = state.currentUserState?.hasAnswered;
-        const hasVoted = state.currentUserState?.hasVoted;
-        
-        if (servPhase === 'answer' && hasAnswered && !isTarget) {
-          console.warn(`⚠️ Incohérence détectée: Joueur a répondu mais reste en phase answer`);
-        }
-        
-        if (servPhase === 'vote' && hasVoted && isTarget) {
-          console.warn(`⚠️ Incohérence détectée: Joueur cible a voté mais reste en phase vote`);
-        }
-      }
-    } catch (error) {
-      console.error(`❌ Erreur lors de la vérification de cohérence:`, error);
-    }
-  }
-
-  /**
-   * Force la vérification de phase côté serveur
-   */
-  public async forceCheckPhase(gameId: string): Promise<void> {
-    try {
-      console.log(`🔄 GameDebugger: Forçage de vérification de phase pour le jeu ${gameId}`);
-      
-      const userId = await UserIdManager.getUserId();
-      await axios.post(`${API_URL}/games/${gameId}/force-check-phase`, {
-        user_id: userId
-      });
-      
-      console.log(`✅ Vérification de phase forcée avec succès`);
-      
-      // Attendre un peu puis vérifier l'état mis à jour
-      setTimeout(() => this.diagnoseGameState(gameId), 1000);
-    } catch (error) {
-      console.error(`❌ Erreur lors du forçage de vérification:`, error);
-      Alert.alert(
-        "Erreur",
-        "Impossible de forcer la vérification de phase. Veuillez réessayer."
-      );
-    }
-  }
-
-  /**
-   * Tente de réparer un jeu bloqué
-   */
-  public async repairGame(gameId: string): Promise<boolean> {
+  public static async repairGame(gameId: string): Promise<boolean> {
     try {
       console.log(`🔧 GameDebugger: Tentative de réparation du jeu ${gameId}`);
       
-      // 1. Forcer la vérification de phase
-      await this.forceCheckPhase(gameId);
-      
-      // 2. Rejoindre à nouveau le canal du jeu
+      // 1. Vérifier la connexion socket
       const socket = await SocketService.getInstanceAsync();
-      socket.emit('join-game', { gameId });
+      if (!socket.connected) {
+        await SocketService.reconnect();
+      }
       
-      // 3. Forcer une synchronisation complète
-      return await GameWebSocketService.getInstance().ensureSocketConnection(gameId);
+      // 2. Rejoindre le canal du jeu à nouveau
+      await SocketService.joinGameChannel(gameId);
+      
+      // 3. Forcer une vérification de phase
+      await SocketService.forcePhaseCheck(gameId);
+      
+      console.log(`✅ GameDebugger: Réparation du jeu ${gameId} terminée`);
+      return true;
     } catch (error) {
-      console.error(`❌ Erreur lors de la réparation du jeu:`, error);
+      console.error(`❌ GameDebugger: Erreur lors de la réparation:`, error);
       return false;
     }
   }
 }
 
+// Exporter le service
 export default GameDebugger.getInstance();
