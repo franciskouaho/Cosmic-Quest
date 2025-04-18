@@ -1070,6 +1070,18 @@ export default class GamesController {
             round: game.currentRound,
           })
 
+          // Forcer une mise à jour immédiate de l'état pour tous les joueurs
+          io.to(`game:${gameId}`).emit('game:force_refresh', {
+            message: 'Nouveau tour démarré',
+            round: game.currentRound,
+            phase: 'question',
+            targetPlayer: {
+              id: targetPlayer.id,
+              username: targetPlayer.username,
+              displayName: targetPlayer.displayName,
+            },
+          })
+
           return {
             status: 'success',
             message: 'Tour suivant lancé avec succès',

@@ -313,6 +313,13 @@ export default function GameScreen() {
           fetchGameData();
         });
 
+        // Gérer l'événement de force refresh
+        socket.on('game:force_refresh', (data) => {
+          console.log('Force refresh received:', data)
+          // Forcer une mise à jour immédiate de l'état
+          fetchGameData()
+        });
+
         // Retourner les nettoyeurs d'événements
         return {
           cleanupEvents: () => {
@@ -687,7 +694,8 @@ export default function GameScreen() {
           onNextRound={handleNextRound}
           isLastRound={gameState.currentRound >= gameState.totalRounds}
           timer={null}
-          gameId={id} // Passer l'ID du jeu directement
+          gameId={id}
+          isTargetPlayer={gameState.currentUserState?.isTargetPlayer || false}
         />
       );
     }

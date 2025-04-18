@@ -29,6 +29,12 @@ export class PhaseManager {
       - hasAnswered: ${hasAnswered}
       - hasVoted: ${hasVoted}`);
 
+    // Si nous sommes en phase results, tout le monde voit results
+    if (serverPhase === 'results') {
+      console.log(`🏆 [PhaseManager] Phase results - Tout le monde voit results`);
+      return 'results';
+    }
+
     // Si le joueur est la cible
     if (isTarget) {
       console.log(`🎯 [PhaseManager] Joueur est la cible`);
@@ -60,9 +66,6 @@ export class PhaseManager {
         }
         console.log(`🗳️ [PhaseManager] Phase vote - hasAnswered: ${hasAnswered}`);
         return hasAnswered ? 'vote' : 'waiting_for_vote';
-      case 'results':
-        console.log(`🏆 [PhaseManager] Phase results`);
-        return 'results';
       default:
         console.log(`❓ [PhaseManager] Phase inconnue: ${serverPhase}`);
         return serverPhase;

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator, Alert } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import { Answer, Player, Question } from '@/types/gameTypes';
 import GameWebSocketService from '@/services/gameWebSocketService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -12,13 +13,20 @@ interface ResultsPhaseProps {
   players: Player[];
   question: Question;
   targetPlayer: Player;
-  onNextRound: () => void;
+  onNextRound: () => Promise<void>;
   isLastRound: boolean;
   timer?: {
     duration: number;
     startTime: number;
   } | null;
   gameId?: string | number;
+  isTargetPlayer?: boolean;
+  currentPhase: string;
+}
+
+interface Score {
+  playerId: string | number;
+  score: number;
 }
 
 const ResultsPhase: React.FC<ResultsPhaseProps> = ({ 
@@ -30,8 +38,12 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
   onNextRound,
   isLastRound,
   timer,
-  gameId
+  gameId,
+  isTargetPlayer = false,
+  currentPhase
 }) => {
+  const router = useRouter();
+  
   // Trouver la réponse avec le plus de votes
   const winningAnswer = answers.length > 0 
     ? answers.reduce((prev, current) => (prev.votesCount || 0) > (current.votesCount || 0) ? prev : current, answers[0])
@@ -45,9 +57,9 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
   const [isButtonDisabled, setIsButtonDisabled] = useState(false);
   const [isUserHost, setIsUserHost] = useState<boolean | null>(null);
   const [isCheckingHost, setIsCheckingHost] = useState(true);
-  const [canProceed, setCanProceed] = useState(true); // Toujours permettre la progression immédiate
+  const [canProceed, setCanProceed] = useState(true);
   
-  // Flag indiquant si le jeu est en cours de synchronisation
+  // Flag
   const [isSynchronizing, setIsSynchronizing] = useState(false);
   
   useEffect(() => {
@@ -60,13 +72,11 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
       setIsCheckingHost(true);
       
       try {
-        // Utiliser gameId de props OU extraire des réponses si disponible
         let effectiveGameId = gameId;
         
         if (!effectiveGameId && answers && answers.length > 0) {
           effectiveGameId = answers[0].gameId;
           
-          // Si gameId n'est pas directement disponible, essayer de l'extraire du questionId
           if (!effectiveGameId && answers[0].questionId) {
             const idParts = String(answers[0].questionId).split('-');
             if (idParts.length > 0) {
@@ -84,7 +94,6 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
         
         console.log(`🔍 Vérification d'hôte pour la partie ${effectiveGameId}`);
         
-        // Corriger l'appel à la méthode isUserHost
         const isHost = await GameWebSocketService.isUserHost(String(effectiveGameId));
         
         console.log(`👑 Résultat vérification hôte: ${isHost ? 'EST' : 'N\'EST PAS'} l'hôte`);
@@ -98,60 +107,77 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
     };
     
     checkIfUserIsHost();
-    
-    return () => {
-      // Nettoyage
-    };
   }, [gameId, answers, isSynchronizing]);
   
-  const handleNextRound = useCallback(() => {
+  const handleNextRound = useCallback(async () => {
     if (isButtonDisabled || isSynchronizing) return;
     
     setIsButtonDisabled(true);
     setIsSynchronizing(true);
     
     try {
-      console.log("🎮 ResultsPhase: Tentative de passage au tour suivant...");
+      // Vérifier que nous sommes dans une phase valide
+      if (currentPhase !== 'results' && currentPhase !== 'vote') {
+        Alert.alert(
+          "Action impossible",
+          "Vous ne pouvez pas passer au tour suivant pendant la phase de question."
+        );
+        return;
+      }
       
-      onNextRound()
-        .then(() => {
-          console.log("✅ ResultsPhase: Passage au tour suivant initié");
-        })
-        .catch((error) => {
-          console.error("❌ ResultsPhase: Erreur:", error);
-          Alert.alert(
-            "Erreur",
-            "Le passage au tour suivant a échoué. Essayez à nouveau."
-          );
-        })
-        .finally(() => {
-          setIsButtonDisabled(false);
-          setIsSynchronizing(false);
-        });
-    } catch (error) {
-      console.error("❌ ResultsPhase: Erreur non gérée:", error);
-      setIsButtonDisabled(false);
-      setIsSynchronizing(false);
+      // Si on est en phase vote, vérifier qu'il y a des votes
+      if (currentPhase === 'vote' && answers.every(a => !a.votesCount || a.votesCount === 0)) {
+        Alert.alert(
+          "Action impossible",
+          "Veuillez attendre que les votes soient terminés avant de passer au tour suivant."
+        );
+        return;
+      }
+      
+      await onNextRound();
+    } catch (error: any) {
+      let errorMessage = "Le passage au tour suivant a échoué. Essayez à nouveau.";
+      
+      if (error.response?.data?.error) {
+        errorMessage = error.response.data.error;
+      }
       
       Alert.alert(
         "Erreur",
-        "Une erreur inattendue s'est produite. Veuillez réessayer."
+        errorMessage
       );
+    } finally {
+      setIsButtonDisabled(false);
+      setIsSynchronizing(false);
     }
-  }, [onNextRound, isButtonDisabled, isSynchronizing]);
+  }, [onNextRound, isButtonDisabled, isSynchronizing, currentPhase, answers]);
 
-  // Obtenir le nom du joueur correspondant à chaque réponse
   const getPlayerName = (playerId: string | number) => {
-    const player = players.find(p => p.id === playerId.toString() || p.id === Number(playerId));
-    return player ? (player.name || player.displayName || player.username || "Joueur inconnu") : "Joueur inconnu";
+    // Convertir l'ID en string pour la comparaison
+    const searchId = String(playerId);
+    console.log(`🔍 Recherche du joueur avec l'ID: ${searchId}`);
+    console.log(`📋 Liste des joueurs disponibles:`, players);
+    
+    const player = players.find(p => {
+      const playerIdStr = String(p.id);
+      console.log(`🔎 Comparaison: ${playerIdStr} === ${searchId} ? ${playerIdStr === searchId}`);
+      return playerIdStr === searchId;
+    });
+    
+    if (!player) {
+      console.warn(`⚠️ Joueur non trouvé pour l'ID: ${searchId}`);
+      return "Joueur inconnu";
+    }
+    
+    // Priorité: displayName > name > username
+    const name = player.displayName || player.name || player.username;
+    console.log(`✅ Joueur trouvé: ${name} (ID: ${player.id})`);
+    return name || "Joueur inconnu";
   };
   
-  // Pour les parties à 2 joueurs où il n'y a pas de vote (donc pas de gagnant clairement défini)
   const noVotesMode = answers.every(a => !a.votesCount || a.votesCount === 0);
 
-  // Rendu du bouton en fonction du rôle (hôte ou joueur)
   const renderNextButton = () => {
-    // Si on vérifie encore si l'utilisateur est l'hôte, montrer un indicateur de chargement
     if (isCheckingHost) {
       return (
         <View style={[styles.nextButton, styles.checkingButton]}>
@@ -161,14 +187,13 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
       );
     }
     
-    // Si l'utilisateur est l'hôte, montrer le bouton de passage au tour suivant
-    if (isUserHost === true) {
+    if (isUserHost === true || isTargetPlayer) {
       return (
         <TouchableOpacity
           style={[
             styles.nextButton, 
             (!canProceed || isButtonDisabled || isSynchronizing) && styles.disabledButton,
-            isUserHost && styles.hostButton
+            isUserHost ? styles.hostButton : styles.targetButton
           ]}
           onPress={handleNextRound}
           disabled={!canProceed || isButtonDisabled || isSynchronizing}
@@ -179,29 +204,103 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
               <Text style={styles.nextButtonText}>Synchronisation...</Text>
             </View>
           ) : (
-            <>
+            <View>
               <Text style={styles.nextButtonText}>
                 {isLastRound ? 'Voir les résultats finaux' : 'Tour suivant'}
               </Text>
               {!canProceed && (
                 <Text style={styles.waitText}>Veuillez patienter...</Text>
               )}
-            </>
+            </View>
           )}
         </TouchableOpacity>
       );
     }
     
-    // Pour les joueurs normaux, afficher un message d'attente avec le même style
     return (
       <View style={[styles.nextButton, styles.disabledButton]}>
         <Text style={styles.nextButtonText}>
-          En attente que l'hôte passe au tour suivant
+          En attente que l'hôte ou la cible passe au tour suivant
         </Text>
         <MaterialCommunityIcons name="timer-sand" size={18} color="#b3a5d9" style={{marginTop: 4}} />
       </View>
     );
   };
+
+  // Si c'est le dernier tour, afficher les résultats finaux
+  if (isLastRound) {
+    console.log('🏆 Préparation des résultats finaux:', {
+      players: players.map(p => ({ id: p.id, name: p.name || p.displayName || p.username })),
+      scores
+    });
+    
+    // Trier les joueurs par score
+    const sortedPlayers = [...players].sort((a, b) => {
+      const scoreA = scores[String(a.id)] || 0;
+      const scoreB = scores[String(b.id)] || 0;
+      return scoreB - scoreA;
+    });
+
+    return (
+      <View style={styles.container}>
+        <View style={styles.header}>
+          <Text style={styles.title}>Résultats finaux</Text>
+        </View>
+        
+        <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+          {sortedPlayers.map((player, index) => {
+            const playerIdStr = String(player.id);
+            const playerScore = scores[playerIdStr] || 0;
+            
+            console.log(`🎯 Affichage du résultat pour ${player.name || player.displayName || player.username}:`, {
+              playerId: playerIdStr,
+              score: playerScore,
+              rank: index + 1
+            });
+            
+            return (
+              <View 
+                key={playerIdStr} 
+                style={[
+                  styles.playerCard,
+                  index === 0 && styles.winnerCard
+                ]}
+              >
+                <View style={styles.rankBadge}>
+                  <Text style={styles.rankText}>{index + 1}</Text>
+                </View>
+                
+                <View style={styles.playerInfo}>
+                  <View style={styles.avatarContainer}>
+                    <Text style={styles.avatarText}>
+                      {(player.name || player.displayName || player.username || "?").charAt(0)}
+                    </Text>
+                  </View>
+                  <Text style={styles.playerName}>
+                    {player.name || player.displayName || player.username || "Joueur inconnu"}
+                  </Text>
+                </View>
+                
+                <View style={styles.scoreContainer}>
+                  <Text style={styles.scoreText}>{playerScore}</Text>
+                  <Text style={styles.scoreLabel}>points</Text>
+                </View>
+              </View>
+            );
+          })}
+        </ScrollView>
+        
+        <View style={styles.footer}>
+          <TouchableOpacity
+            style={[styles.nextButton, styles.primaryButton]}
+            onPress={() => router.push('/')}
+          >
+            <Text style={styles.nextButtonText}>Retour à l'accueil</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
   
   return (
     <View style={styles.container}>
@@ -217,9 +316,13 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
           >
             <View style={styles.targetPlayerInfo}>
               <View style={styles.avatarContainer}>
-                <Text style={styles.avatarText}>{(targetPlayer.name || targetPlayer.displayName || targetPlayer.username || "?").charAt(0)}</Text>
+                <Text style={styles.avatarText}>
+                  {(targetPlayer.name || targetPlayer.displayName || targetPlayer.username || "?").charAt(0)}
+                </Text>
               </View>
-              <Text style={styles.targetPlayerName}>{targetPlayer.name || targetPlayer.displayName || targetPlayer.username}</Text>
+              <Text style={styles.targetPlayerName}>
+                {targetPlayer.name || targetPlayer.displayName || targetPlayer.username || "Joueur inconnu"}
+              </Text>
             </View>
             
             <Text style={styles.questionText}>{question.text}</Text>
@@ -255,51 +358,80 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
         <View style={styles.allAnswersSection}>
           <Text style={styles.sectionTitle}>Toutes les réponses</Text>
           {answers && answers.length > 0 ? (
-            answers.map((answer) => (
-              <View 
-                key={answer.id} 
-                style={[
-                  styles.answerCard, 
-                  answer === winningAnswer ? styles.winningAnswerCard : null
-                ]}
-              >
-                <View style={styles.answerHeader}>
-                  <Text style={styles.playerName}>{getPlayerName(answer.playerId)}</Text>
-                </View>
-                <Text style={styles.answerText}>{answer.content}</Text>
-                { answer.votesCount > 0 && (
-                  <View style={styles.voteCountContainer}>
-                    <MaterialCommunityIcons name="thumb-up" size={16} color="#b3a5d9" />
-                    <Text style={styles.voteCount}>{answer.votesCount}</Text>
+            answers.map((answer) => {
+              console.log(`📝 Affichage de la réponse pour le joueur ${answer.playerId}:`, {
+                answerId: answer.id,
+                playerId: answer.playerId,
+                content: answer.content,
+                votesCount: answer.votesCount,
+                playersList: players.map(p => ({ id: p.id, name: p.name || p.displayName || p.username }))
+              });
+              
+              // Convertir l'ID en string pour la comparaison
+              const playerIdStr = String(answer.playerId);
+              const player = players.find(p => String(p.id) === playerIdStr);
+              
+              return (
+                <View 
+                  key={answer.id} 
+                  style={[
+                    styles.answerCard, 
+                    answer === winningAnswer ? styles.winningAnswerCard : null
+                  ]}
+                >
+                  <View style={styles.answerHeader}>
+                    <Text style={styles.playerName}>
+                      {player 
+                        ? (player.name || player.displayName || player.username || "Joueur inconnu")
+                        : `Joueur ${playerIdStr}`}
+                    </Text>
                   </View>
-                )}
-              </View>
-            ))
+                  <Text style={styles.answerText}>{answer.content}</Text>
+                  {answer.votesCount && answer.votesCount > 0 && (
+                    <View style={styles.voteCountContainer}>
+                      <MaterialCommunityIcons name="thumb-up" size={16} color="#b3a5d9" />
+                      <Text style={styles.voteCount}>{answer.votesCount}</Text>
+                    </View>
+                  )}
+                </View>
+              );
+            })
           ) : (
-            <Text style={styles.noAnswersText}>Aucune réponse pour ce tour</Text>
+            <View style={styles.noAnswersContainer}>
+              <Text style={styles.noAnswersText}>Aucune réponse pour ce tour</Text>
+            </View>
           )}
         </View>
         
         <View style={styles.scoresSection}>
-          <Text style={styles.sectionTitle}>Scores actuels</Text>
-          {Object.entries(scores).length > 0 ? (
-            Object.entries(scores)
-              .sort(([, scoreA], [, scoreB]) => scoreB - scoreA)
-              .map(([playerId, score], index) => {
-                // Trouver le joueur correspondant à cet ID
-                const player = players.find(p => p.id === playerId.toString() || p.id === Number(playerId));
-                const playerName = player ? (player.name || player.displayName || player.username || "Joueur inconnu") : "Joueur inconnu";
-                
-                return (
-                  <View key={playerId} style={styles.scoreRow}>
-                    <Text style={styles.scoreRank}>{index + 1}</Text>
-                    <Text style={styles.scoreName}>{playerName}</Text>
-                    <Text style={styles.scoreValue}>{score} pts</Text>
-                  </View>
-                );
-              })
+          <Text style={styles.sectionTitle}>Scores</Text>
+          {scores && Object.keys(scores).length > 0 ? (
+            Object.entries(scores).map(([playerId, score]) => {
+              console.log(`📊 Affichage du score pour le joueur ${playerId}:`, {
+                playerId,
+                score,
+                playersList: players.map(p => ({ id: p.id, name: p.name || p.displayName || p.username }))
+              });
+              
+              // Convertir l'ID en string pour la comparaison
+              const playerIdStr = String(playerId);
+              const player = players.find(p => String(p.id) === playerIdStr);
+              
+              return (
+                <View key={playerIdStr} style={styles.scoreItem}>
+                  <Text style={styles.playerName}>
+                    {player 
+                      ? (player.name || player.displayName || player.username || "Joueur inconnu")
+                      : `Joueur ${playerIdStr}`}
+                  </Text>
+                  <Text style={styles.scoreValue}>{score}</Text>
+                </View>
+              );
+            })
           ) : (
-            <Text style={styles.noAnswersText}>Aucun score à afficher</Text>
+            <View style={styles.noScoresContainer}>
+              <Text style={styles.noScoresText}>Aucun score à afficher</Text>
+            </View>
           )}
         </View>
       </ScrollView>
@@ -426,24 +558,13 @@ const styles = StyleSheet.create({
   scoresSection: {
     marginBottom: 20,
   },
-  scoreRow: {
+  scoreItem: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: 'rgba(255, 255, 255, 0.1)',
     borderRadius: 12,
     padding: 14,
     marginBottom: 8,
-  },
-  scoreRank: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#b3a5d9',
-    width: 30,
-  },
-  scoreName: {
-    flex: 1,
-    fontSize: 16,
-    color: '#ffffff',
   },
   scoreValue: {
     fontSize: 16,
@@ -510,6 +631,66 @@ const styles = StyleSheet.create({
   },
   hostButton: {
     backgroundColor: 'rgba(72, 219, 134, 0.7)',
+  },
+  targetButton: {
+    backgroundColor: 'rgba(255, 215, 0, 0.7)',
+  },
+  noAnswersContainer: {
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderRadius: 16,
+    padding: 16,
+  },
+  noScoresContainer: {
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderRadius: 16,
+    padding: 16,
+  },
+  noScoresText: {
+    color: 'rgba(255, 255, 255, 0.6)',
+    fontStyle: 'italic',
+    textAlign: 'center',
+  },
+  primaryButton: {
+    backgroundColor: '#694ED6',
+  },
+  rankBadge: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 16,
+  },
+  rankText: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#ffffff',
+  },
+  playerCard: {
+    flexDirection: 'row',
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 16,
+    alignItems: 'center',
+  },
+  playerInfo: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  scoreContainer: {
+    alignItems: 'center',
+  },
+  scoreText: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#ffffff',
+  },
+  scoreLabel: {
+    fontSize: 14,
+    color: '#b3a5d9',
   },
 });
 
