@@ -349,6 +349,37 @@ export default function GameScreen() {
           }
         }
         
+        // Vérifier si l'utilisateur est la cible et devrait voir l'écran de vote
+        if (gameState.game?.currentPhase === 'answer' && gameState.currentUserState?.isTargetPlayer) {
+          console.log(`🎯 Utilisateur est la cible en phase answer, vérification du statut de vote...`);
+          
+          // Vérifier si toutes les réponses sont arrivées
+          const answers = gameState.answers || [];
+          const players = gameState.players || [];
+          
+          // Nombre de joueurs attendus (moins la cible)
+          const expectedAnswers = players.length - 1;
+          
+          if (answers.length >= expectedAnswers) {
+            console.log(`🎯 Toutes les réponses sont arrivées (${answers.length}/${expectedAnswers}), transition vers vote...`);
+            
+            // Tenter de forcer la transition vers la phase vote pour la cible
+            try {
+              const { forceVotePhaseForTarget } = await import('@/utils/gameStateHelper');
+              const success = await forceVotePhaseForTarget(id as string);
+              
+              if (success) {
+                console.log(`✅ Transition vers phase vote réussie pour la cible`);
+                fetchGameData();
+              }
+            } catch (error) {
+              console.error(`❌ Erreur lors de la transition vers vote:`, error);
+            }
+          } else {
+            console.log(`⏳ En attente de plus de réponses (${answers.length}/${expectedAnswers}) avant de passer à la phase vote`);
+          }
+        }
+        
         // Si phase 'waiting' trop longtemps, vérifier l'état
         if (gameState.phase === GamePhase.WAITING || gameState.phase === GamePhase.WAITING_FOR_VOTE) {
           const { checkAndUnblockGame } = await import('@/utils/socketTester');

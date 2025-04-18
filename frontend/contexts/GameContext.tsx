@@ -149,7 +149,6 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
         : null;
 
-      // Utiliser PhaseManager pour déterminer la phase effective avec plus de logs
       const effectivePhase = PhaseManager.determineEffectivePhase(
         gameData.game.currentPhase,
         Boolean(gameData.currentUserState?.isTargetPlayer),
@@ -165,10 +164,8 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         - hasVoted: ${Boolean(gameData.currentUserState?.hasVoted)}
       `);
 
-      // Vérification de cohérence supplémentaire et correction
       if (effectivePhase === 'unknown' || !effectivePhase) {
         console.warn(`⚠️ [GameContext] Phase invalide détectée: ${effectivePhase}, utilisation de fallback`);
-        // Utiliser une phase par défaut basée sur le contexte
         const fallbackPhase = gameData.game.currentPhase === 'results' 
           ? GamePhase.RESULTS 
           : GamePhase.WAITING;
@@ -224,7 +221,6 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
       console.log('✅ GameContext: Jeu chargé avec succès');
 
-      // Vérifier immédiatement en cas de hasAnswered en phase Question
       if (gameState.phase === GamePhase.QUESTION && gameState.currentUserState?.hasAnswered) {
         checkGameProgress();
       }
@@ -249,7 +245,6 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     try {
       console.log('🎮 GameContext: Soumission de réponse...');
       
-      // Vérifier que l'utilisateur peut répondre
       if (gameState.currentUserState?.isTargetPlayer) {
         showToast("Vous êtes la cible, vous ne pouvez pas répondre", "error");
         return;
@@ -263,23 +258,19 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       );
 
       if (success) {
-        // Mise à jour immédiate de l'UI
         setGameState(prev => ({
           ...prev,
           currentUserState: {
             ...prev.currentUserState,
             hasAnswered: true
           },
-          // Passer immédiatement en phase d'attente
           phase: GamePhase.WAITING
         }));
         
         showToast("Réponse soumise avec succès", "success");
         
-        // Forcer un rafraîchissement immédiat - suppression des délais
         fetchGameData();
         
-        // Vérifier immédiatement si une transition de phase est nécessaire
         try {
           const { checkPhaseAfterAnswer } = await import('@/utils/socketTester');
           checkPhaseAfterAnswer(gameId).catch(console.error);
@@ -306,10 +297,8 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       console.log('🎮 GameContext: Soumission du vote...');
       setIsSubmitting(true);
       
-      // Ajouter un feedback utilisateur immédiat
       showToast("Envoi de votre vote en cours...", "info");
       
-      // Utiliser directement la méthode de service qui utilise HTTP REST
       await gameService.submitVote(gameId, answerId, gameState.currentQuestion.id.toString());
       
       setGameState(prev => ({
@@ -324,7 +313,6 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       showToast("Vote enregistré avec succès", "success");
       console.log('✅ GameContext: Vote soumis avec succès');
       
-      // Rafraîchir l'état du jeu sans timeout
       fetchGameData();
     } catch (error) {
       console.error('❌ GameContext: Erreur lors de la soumission du vote:', error);
@@ -346,12 +334,10 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         console.log("✅ Passage au tour suivant initié avec succès via HTTP");
         showToast("Tour suivant initié avec succès", "success");
         
-        // Forcer un rafraîchissement immédiat des données
         fetchGameData();
       } catch (error) {
         console.error("❌ Erreur lors du passage au tour suivant:", error);
         
-        // Une seule nouvelle tentative en cas d'erreur
         try {
           console.log("🔄 Nouvelle tentative via méthode alternative...");
           const userId = await UserIdManager.getUserId();
@@ -362,7 +348,6 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             retry: true
           }, {
             headers: { 'X-Emergency': 'true' }
-            // Suppression du timeout
           });
           
           if (response.data?.status === 'success') {
@@ -416,12 +401,10 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
               setGameState(prevState => {
                 if (!prevState) return prevState;
                 
-                // Vérifier si le joueur est la cible dans la phase de vote
                 if (data.phase === 'vote' && data.targetPlayerId && user?.id) {
                   const isTarget = String(data.targetPlayerId) === String(user.id);
                   if (isTarget) {
                     console.log("🎯 Utilisateur cible détecté, passage direct en phase de vote");
-                    // Charger immédiatement les données pour éviter les délais
                     loadGame(gameState.game.id);
                     return {
                       ...prevState,
@@ -458,12 +441,22 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 };
               });
               
+              if (data.phase === 'answer' && data.targetPlayerId && user?.id && 
+                  String(data.targetPlayerId) === String(user.id)) {
+                console.log("🎯 Cible détectée en phase answer, préparation pour phase vote...");
+                setTimeout(async () => {
+                  const needTransition = await gameService.forceVotePhaseForTarget(gameState.game.id);
+                  if (needTransition) {
+                    console.log("🎯 Transition vers phase vote forcée pour la cible");
+                    loadGame(gameState.game.id);
+                  }
+                }, 1500);
+              }
+              
               loadGame(gameState.game.id);
               break;
             
             case 'target_player_vote':
-              // Traitement spécial lorsque le joueur cible doit voter
-              // Vérifier si l'utilisateur actuel est le joueur cible
               const userId = user?.id;
               console.log(`🎯 Notification de vote pour joueur cible reçue. UserId: ${userId}, TargetId: ${data.targetPlayerId}`);
               
@@ -473,7 +466,6 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                 setGameState(prevState => {
                   if (!prevState) return prevState;
                   
-                  // S'assurer que les réponses sont à jour
                   const updatedAnswers = data.answers || prevState.answers;
                   
                   return {
@@ -488,9 +480,9 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                     }
                   };
                 });
-              } else {
-                console.log("👀 Utilisateur non ciblé, attente du vote");
                 
+                loadGame(gameState.game.id);
+              } else {
                 setGameState(prevState => {
                   if (!prevState) return prevState;
                   

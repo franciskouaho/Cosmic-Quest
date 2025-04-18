@@ -1,5 +1,5 @@
-import React from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import React, { useEffect } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Answer } from '@/types/gameTypes';
@@ -28,6 +28,11 @@ const VotePhase: React.FC<VotePhaseProps> = ({
   isTargetPlayer = false,
   hasVoted = false
 }: VotePhaseProps) => {
+  // Log de débogage pour tracer les états
+  useEffect(() => {
+    console.log(`🎯 VotePhase: isTargetPlayer=${isTargetPlayer}, hasVoted=${hasVoted}, réponses disponibles=${answers.length}`);
+  }, [isTargetPlayer, hasVoted, answers.length]);
+  
   // Filtrer les réponses pour ne pas afficher les propres réponses du joueur
   const votableAnswers = answers.filter(answer => !answer.isOwnAnswer);
   
@@ -51,6 +56,20 @@ const VotePhase: React.FC<VotePhaseProps> = ({
             />
           </View>
         )}
+      </View>
+    );
+  }
+
+  // Cas où l'utilisateur est la cible mais n'a pas encore de réponses à évaluer
+  if (votableAnswers.length === 0) {
+    return (
+      <View style={styles.messageContainer}>
+        <Text style={styles.messageTitle}>En attente des réponses</Text>
+        <Text style={styles.messageText}>
+          Les autres joueurs sont en train de répondre à votre question.
+          Vous pourrez voter dès que les réponses seront disponibles.
+        </Text>
+        <ActivityIndicator size="large" color="#694ED6" style={styles.loader} />
       </View>
     );
   }
@@ -271,6 +290,9 @@ const styles = StyleSheet.create({
     width: '100%',
     marginTop: 20,
   },
+  loader: {
+    marginTop: 20
+  }
 });
 
 export default VotePhase;

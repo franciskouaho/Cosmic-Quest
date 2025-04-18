@@ -488,6 +488,30 @@ class GameService {
     }
   }
 
+  /**
+   * Force la transition vers la phase vote pour l'utilisateur ciblé
+   */
+  async forceVotePhaseForTarget(gameId: string): Promise<boolean> {
+    try {
+      console.log(`🎯 [GameService] Tentative de forcer la phase vote pour la cible du jeu ${gameId}`);
+      
+      // Utiliser notre utilitaire dédié
+      const success = await GameStateHelper.forceVotePhaseForTarget(gameId);
+      
+      if (success) {
+        // Invalider le cache pour forcer un rafraîchissement
+        this.gameStateCache.delete(gameId);
+        // Recharger les données
+        await this.getGameState(gameId, 0, 1, true);
+      }
+      
+      return success;
+    } catch (error) {
+      console.error(`❌ [GameService] Erreur lors du forçage de phase vote pour la cible:`, error);
+      return false;
+    }
+  }
+
   // Ressynchroniser la connection WebSocket si nécessaire
   async ensureSocketConnection(gameId: string) {
     try {

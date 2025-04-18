@@ -1,6 +1,7 @@
 import api from '@/config/axios';
 import socketService from '@/services/socketService';
 import UserIdManager from './userIdManager';
+import { PhaseManager } from './phaseManager';
 
 /**
  * Utilitaire pour aider à résoudre les problèmes d'état du jeu
@@ -15,6 +16,20 @@ export class GameStateHelper {
   static async forcePhaseTransition(gameId: string, targetPhase: string): Promise<boolean> {
     try {
       console.log(`🔄 [GameStateHelper] Tentative de forcer la phase ${targetPhase} pour le jeu ${gameId}`);
+      
+      // Vérifier d'abord l'état actuel du jeu pour détecter des transitions non standards
+      try {
+        const gameState = await gameService.getGameState(gameId);
+        const currentPhase = gameState?.game?.currentPhase;
+        
+        if (currentPhase && !PhaseManager.isValidTransition(currentPhase, targetPhase)) {
+          console.warn(`⚠️ [GameStateHelper] Tentative de transition non standard: ${currentPhase} -> ${targetPhase}`);
+          // Continuer quand même avec la transition
+        }
+      } catch (error) {
+        console.warn(`⚠️ [GameStateHelper] Impossible de vérifier l'état actuel avant transition:`, error);
+        // Continuer avec la transition
+      }
       
       // Méthode 1: Utiliser Socket.IO
       try {
@@ -31,6 +46,10 @@ export class GameStateHelper {
             
             if (response && response.success) {
               console.log(`✅ [GameStateHelper] Phase ${targetPhase} forcée avec succès via Socket.IO`);
+              
+              // Invalider le cache après une transition réussie
+              gameService.invalidateGameState(gameId);
+              
               resolve(true);
             } else {
               console.warn(`⚠️ [GameStateHelper] Échec de forçage de phase via Socket.IO:`, response?.error || 'Raison inconnue');
@@ -61,11 +80,16 @@ export class GameStateHelper {
       
       const response = await api.post(`/games/${gameId}/force-phase`, { 
         user_id: userId,
-        target_phase: targetPhase 
+        target_phase: targetPhase,
+        force_transition: true // Ajouter un flag pour forcer même les transitions non standards
       });
       
       if (response.data?.success) {
         console.log(`✅ [GameStateHelper] Phase ${targetPhase} forcée avec succès via HTTP`);
+        
+        // Invalider le cache après une transition réussie
+        gameService.invalidateGameState(gameId);
+        
         return true;
       } else {
         console.warn(`⚠️ [GameStateHelper] Échec de forçage de phase via HTTP:`, response.data?.error || 'Raison inconnue');
@@ -85,6 +109,28 @@ export class GameStateHelper {
       console.log(`⚠️ [GameStateHelper] Incohérence détectée: joueur a répondu mais toujours en phase question`);
       return await this.forcePhaseTransition(gameId, 'answer');
     }
+    
+    // Aussi vérifier les transitions incohérentes
+    if (currentPhase === 'question' && this.getNextPhase(currentPhase) === 'answer') {
+      // Vérifier si tous les joueurs ont répondu
+      try {
+        const gameState = await gameService.getGameState(gameId);
+        const players = gameState?.players || [];
+        const answers = gameState?.answers || [];
+        const targetPlayerId = gameState?.currentQuestion?.targetPlayer?.id;
+        
+        // Compter les joueurs qui peuvent répondre (tous sauf la cible)
+        const nonTargetPlayersCount = players.filter(p => p.id !== targetPlayerId).length;
+        
+        if (answers.length >= nonTargetPlayersCount) {
+          console.log(`⚠️ [GameStateHelper] Tous les joueurs ont répondu mais toujours en phase question`);
+          return await this.forcePhaseTransition(gameId, 'answer');
+        }
+      } catch (error) {
+        console.error(`❌ [GameStateHelper] Erreur lors de la vérification des réponses:`, error);
+      }
+    }
+    
     return false;
   }
   
@@ -120,13 +166,7 @@ export class GameStateHelper {
    * Détermine la phase suivante basée sur la phase actuelle
    */
   private static getNextPhase(currentPhase: string): string | null {
-    switch (currentPhase) {
-      case 'question': return 'answer';
-      case 'answer': return 'vote';
-      case 'vote': return 'results';
-      case 'results': return null; // Nécessite next-round plutôt qu'un changement de phase
-      default: return null;
-    }
+    return PhaseManager.getNextPhase(currentPhase);
   }
 
   /**
@@ -248,6 +288,101 @@ export class GameStateHelper {
       }
     } catch (outerError) {
       console.error(`❌ Erreur critique lors de la récupération:`, outerError);
+      return false;
+    }
+  }
+
+  /**
+   * Force spécifiquement la phase de vote pour l'utilisateur ciblé
+   * @param gameId ID du jeu
+   * @returns Promise<boolean> indiquant si l'opération a réussi
+   */
+  static async forceVotePhaseForTarget(gameId: string): Promise<boolean> {
+    try {
+      console.log(`🎯 [GameStateHelper] Tentative de forcer la phase de vote pour la cible dans le jeu ${gameId}`);
+      
+      // Vérifier d'abord si la phase actuelle est "answer"
+      const gameStateCheck = await gameService.getGameState(gameId);
+      if (gameStateCheck?.game?.currentPhase !== 'answer') {
+        console.log(`⚠️ [GameStateHelper] La phase actuelle n'est pas 'answer' mais '${gameStateCheck?.game?.currentPhase}', vérification si l'action est nécessaire`);
+        
+        // Si déjà en phase vote, c'est un succès
+        if (gameStateCheck?.game?.currentPhase === 'vote') {
+          console.log(`✅ [GameStateHelper] Déjà en phase vote, aucune action nécessaire`);
+          return true;
+        }
+      }
+      
+      // Vérifier si l'utilisateur actuel est la cible de la question
+      const userId = await UserIdManager.getUserId();
+      const isTarget = gameStateCheck?.currentUserState?.isTargetPlayer || 
+                       (gameStateCheck?.currentQuestion?.targetPlayer && 
+                        String(gameStateCheck.currentQuestion.targetPlayer.id) === String(userId));
+                        
+      if (!isTarget) {
+        console.log(`ℹ️ [GameStateHelper] L'utilisateur n'est pas la cible, transition normale`);
+        return await this.forcePhaseTransition(gameId, 'vote');
+      }
+      
+      console.log(`🎯 [GameStateHelper] L'utilisateur est la cible, utilisation de méthode spéciale`);
+      
+      // Méthode 1: Via Socket avec paramètres spéciaux pour la cible
+      try {
+        const socket = await socketService.getInstanceAsync(true);
+        
+        return new Promise((resolve) => {
+          const timeout = setTimeout(() => resolve(false), 5000);
+          
+          socket.emit('game:target_vote_ready', { 
+            gameId, 
+            targetId: userId,
+            forceVotePhase: true
+          }, (response: any) => {
+            clearTimeout(timeout);
+            
+            if (response && response.success) {
+              console.log(`✅ [GameStateHelper] Phase vote forcée pour la cible avec succès`);
+              resolve(true);
+            } else {
+              console.warn(`⚠️ [GameStateHelper] Échec via Socket pour la cible:`, response?.error || 'Raison inconnue');
+              resolve(false);
+            }
+          });
+        });
+      } catch (socketError) {
+        console.error(`❌ [GameStateHelper] Erreur socket pour phase vote cible:`, socketError);
+        
+        // Fallback à la méthode HTTP
+        return await this.forceTargetVoteHttp(gameId, userId);
+      }
+    } catch (error) {
+      console.error(`❌ [GameStateHelper] Erreur lors du forçage de phase vote pour la cible:`, error);
+      return false;
+    }
+  }
+  
+  /**
+   * Force la transition de vote pour la cible via HTTP
+   */
+  private static async forceTargetVoteHttp(gameId: string, targetId: string): Promise<boolean> {
+    try {
+      console.log(`🔄 [GameStateHelper] Tentative HTTP pour forcer le vote de la cible ${targetId}`);
+      
+      const response = await api.post(`/games/${gameId}/force-target-vote`, { 
+        user_id: targetId,
+        target_id: targetId,
+        force: true
+      });
+      
+      if (response.data?.success) {
+        console.log(`✅ [GameStateHelper] Vote de la cible forcé avec succès via HTTP`);
+        return true;
+      } else {
+        console.warn(`⚠️ [GameStateHelper] Échec via HTTP pour vote cible:`, response.data?.error || 'Raison inconnue');
+        return false;
+      }
+    } catch (error) {
+      console.error(`❌ [GameStateHelper] Erreur HTTP pour vote cible:`, error);
       return false;
     }
   }
