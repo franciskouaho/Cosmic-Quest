@@ -118,7 +118,8 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
       isUserHost,
       isTargetPlayer,
       hasVotes: answers.some(a => a.votesCount && a.votesCount > 0),
-      answersCount: answers.length
+      answersCount: answers.length,
+      playersCount: players.length
     });
 
     if (isButtonDisabled || isSynchronizing) {
@@ -136,9 +137,15 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
           currentPhase,
           validPhases: ['results', 'vote']
         });
+        
+        let message = "Vous ne pouvez pas passer au tour suivant pendant cette phase.";
+        if (currentPhase === 'question') {
+          message = "Veuillez attendre que tous les joueurs aient répondu avant de passer au tour suivant.";
+        }
+        
         Alert.alert(
           "Action impossible",
-          `Vous ne pouvez pas passer au tour suivant pendant la phase ${currentPhase}.`
+          message
         );
         return;
       }
@@ -158,6 +165,30 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
         return;
       }
       
+      // Vérifier que tous les joueurs (sauf la cible) ont répondu
+      const expectedAnswers = players.length - 1; // -1 pour la cible qui ne répond pas
+      const actualAnswers = answers.length;
+      
+      console.log('📊 Vérification des réponses:', {
+        expectedAnswers,
+        actualAnswers,
+        playersCount: players.length,
+        targetPlayerId: targetPlayer?.id
+      });
+      
+      if (actualAnswers < expectedAnswers) {
+        console.log('⚠️ Nombre insuffisant de réponses:', {
+          answersCount: actualAnswers,
+          expectedAnswers,
+          playersCount: players.length
+        });
+        Alert.alert(
+          "Action impossible",
+          "Veuillez attendre que tous les joueurs (sauf la cible) aient répondu avant de passer au tour suivant."
+        );
+        return;
+      }
+      
       // Utiliser la méthode nextRound du GameService via HTTP
       if (gameId) {
         console.log('🔄 Appel nextRound avec gameId:', gameId);
@@ -169,27 +200,34 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
         console.log('❌ Pas de gameId disponible');
       }
     } catch (error: any) {
-      console.error('❌ Erreur lors du passage au tour suivant:', {
-        error: error?.response?.data || error,
-        phase: currentPhase,
-        gameId
-      });
+      console.error('❌ Erreur lors du passage au tour suivant:', error?.response?.data || error);
       
-      let errorMessage = "Le passage au tour suivant a échoué. Essayez à nouveau.";
+      let errorMessage = "Le passage au tour suivant a échoué.";
       
-      if (error.response?.data?.error) {
+      // Gestion spécifique des erreurs du serveur
+      if (error?.response?.data?.error) {
         errorMessage = error.response.data.error;
+        
+        // Ajouter des détails supplémentaires si disponibles
+        if (error.response.data.details) {
+          const details = error.response.data.details;
+          if (!details.allPlayersAnswered) {
+            errorMessage = "Veuillez attendre que tous les joueurs (sauf la cible) aient répondu avant de passer au tour suivant.";
+          } else if (!details.hasVotes && details.currentPhase === 'vote') {
+            errorMessage = "Veuillez attendre que tous les votes soient enregistrés avant de passer au tour suivant.";
+          }
+        }
       }
       
       Alert.alert(
-        "Erreur",
+        "Action impossible",
         errorMessage
       );
     } finally {
       setIsButtonDisabled(false);
       setIsSynchronizing(false);
     }
-  }, [onNextRound, isButtonDisabled, isSynchronizing, currentPhase, answers, gameId]);
+  }, [onNextRound, isButtonDisabled, isSynchronizing, currentPhase, answers, gameId, players.length, targetPlayer?.id]);
 
   const getPlayerName = (playerId: string | number) => {
     const searchId = String(playerId);
@@ -203,12 +241,18 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
     return name || "Joueur inconnu";
   };
 
-  const renderPlayerScore = (player: Player, score: number) => (
-    <View key={`score-${player.id}`} style={styles.scoreItem}>
-      <Text style={styles.playerName}>{getPlayerName(player.id)}</Text>
-      <Text style={styles.scoreValue}>{score}</Text>
-    </View>
-  );
+  const renderPlayerScore = (player: Player) => {
+    return (
+      <View key={`score-${player.id}`} style={styles.scoreCard}>
+        <Text style={styles.playerName}>
+          {getPlayerName(player.id)}
+        </Text>
+        <Text style={styles.scoreText}>
+          Score: {player.score || 0}
+        </Text>
+      </View>
+    );
+  };
 
   const renderAnswer = (answer: Answer) => {
     const playerIdStr = String(answer.playerId);
@@ -239,62 +283,25 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
   };
 
   const renderFinalResults = () => {
-    const sortedPlayers = [...players].sort((a, b) => {
-      const scoreA = scores[String(a.id)] || 0;
-      const scoreB = scores[String(b.id)] || 0;
-      return scoreB - scoreA;
-    });
+    const sortedPlayers = [...players].sort((a, b) => (b.score || 0) - (a.score || 0));
+    const winner = sortedPlayers[0];
 
     return (
-      <View style={styles.container}>
-        <View style={styles.header}>
-          <Text style={styles.title}>Résultats finaux</Text>
-        </View>
-        
-        <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-          {sortedPlayers.map((player, index) => {
-            const playerIdStr = String(player.id);
-            const playerScore = scores[playerIdStr] || 0;
-            
-            return (
-              <View 
-                key={`player-${playerIdStr}`}
-                style={[
-                  styles.playerCard,
-                  index === 0 && styles.winnerCard
-                ]}
-              >
-                <View key={`rank-${playerIdStr}`} style={styles.rankBadge}>
-                  <Text style={styles.rankText}>{index + 1}</Text>
-                </View>
-                
-                <View key={`info-${playerIdStr}`} style={styles.playerInfo}>
-                  <View key={`avatar-${playerIdStr}`} style={styles.avatarContainer}>
-                    <Text style={styles.avatarText}>
-                      {(player.name || player.displayName || player.username || "?").charAt(0)}
-                    </Text>
-                  </View>
-                  <Text style={styles.playerName}>
-                    {getPlayerName(player.id)}
-                  </Text>
-                </View>
-                
-                <View key={`score-container-${playerIdStr}`} style={styles.scoreContainer}>
-                  <Text style={styles.scoreText}>{playerScore}</Text>
-                  <Text style={styles.scoreLabel}>points</Text>
-                </View>
-              </View>
-            );
-          })}
-        </ScrollView>
-        
-        <View style={styles.footer}>
-          <TouchableOpacity
-            style={[styles.nextButton, styles.primaryButton]}
-            onPress={() => router.push('/')}
-          >
-            <Text style={styles.nextButtonText}>Retour à l'accueil</Text>
-          </TouchableOpacity>
+      <View style={styles.finalResultsContainer}>
+        <Text style={styles.finalResultsTitle}>Résultats finaux</Text>
+        {winner && (
+          <View style={styles.winnerSection}>
+            <Text style={styles.winnerText}>🎉 Vainqueur: {getPlayerName(winner.id)} 🎉</Text>
+            <Text style={styles.winnerScore}>Score final: {winner.score || 0} points</Text>
+          </View>
+        )}
+        <View style={styles.allScores}>
+          {sortedPlayers.map((player, index) => (
+            <View key={player.id} style={styles.playerRank}>
+              <Text style={styles.rankText}>#{index + 1}</Text>
+              {renderPlayerScore(player)}
+            </View>
+          ))}
         </View>
       </View>
     );
@@ -326,7 +333,7 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
           {isSynchronizing ? (
             <View style={{flexDirection: 'row', alignItems: 'center'}}>
               <ActivityIndicator size="small" color="#ffffff" style={{marginRight: 10}} />
-              <Text style={styles.nextButtonText}>Synchronisation...</Text>
+              <Text style={styles.nextButtonText}>Synchronisation en cours...</Text>
             </View>
           ) : (
             <View>
@@ -404,7 +411,7 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
             <Text style={styles.messageText}>
               {noVotesMode 
                 ? "Aucun vote pour ce tour. Passons au suivant!" 
-                : "Pas de réponse gagnante pour ce tour."}
+                : "En attente des votes..."}
             </Text>
           </View>
         )}
@@ -423,7 +430,7 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
         <View style={styles.scoresSection}>
           <Text style={styles.sectionTitle}>Scores</Text>
           {scores && Object.keys(scores).length > 0 ? (
-            Object.entries(scores).map(([playerId, score]) => renderPlayerScore(players.find(p => String(p.id) === playerId) || players[0], score))
+            Object.entries(scores).map(([playerId, score]) => renderPlayerScore(players.find(p => String(p.id) === playerId) || players[0]))
           ) : (
             <View style={styles.noScoresContainer}>
               <Text style={styles.noScoresText}>Aucun score à afficher</Text>
@@ -442,9 +449,9 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    marginRight: 12,
   },
   header: {
-    alignItems: 'center',
     marginBottom: 20,
   },
   title: {
@@ -497,10 +504,10 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   sectionTitle: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: 'bold',
-    color: '#b3a5d9',
-    marginBottom: 12,
+    color: '#ffffff',
+    marginBottom: 16,
   },
   winnerCard: {
     borderRadius: 16,
@@ -544,8 +551,8 @@ const styles = StyleSheet.create({
   },
   playerName: {
     fontSize: 16,
-    fontWeight: '600',
-    color: '#b3a5d9',
+    color: '#ffffff',
+    marginRight: 8,
   },
   answerText: {
     fontSize: 16,
@@ -554,15 +561,17 @@ const styles = StyleSheet.create({
   scoresSection: {
     marginBottom: 20,
   },
-  scoreItem: {
+  scoreCard: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    borderRadius: 12,
-    padding: 14,
+    padding: 12,
+    borderRadius: 8,
     marginBottom: 8,
+    width: '100%',
   },
-  scoreValue: {
+  scoreText: {
     fontSize: 16,
     fontWeight: 'bold',
     color: '#ffffff',
@@ -649,44 +658,71 @@ const styles = StyleSheet.create({
   primaryButton: {
     backgroundColor: '#694ED6',
   },
-  rankBadge: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 16,
-  },
   rankText: {
     fontSize: 18,
     fontWeight: 'bold',
     color: '#ffffff',
+    marginRight: 12,
   },
-  playerCard: {
+  playerRank: {
     flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    borderRadius: 16,
-    padding: 20,
-    marginBottom: 16,
-    alignItems: 'center',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 8,
   },
-  playerInfo: {
+  finalResultsContainer: {
     flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
+    padding: 20,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
   },
-  scoreContainer: {
-    alignItems: 'center',
-  },
-  scoreText: {
+  finalResultsTitle: {
     fontSize: 24,
     fontWeight: 'bold',
     color: '#ffffff',
+    textAlign: 'center',
+    marginBottom: 20,
   },
-  scoreLabel: {
-    fontSize: 14,
-    color: '#b3a5d9',
+  winnerSection: {
+    alignItems: 'center',
+    marginBottom: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    padding: 16,
+    borderRadius: 12,
+  },
+  winnerText: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#ffffff',
+    marginBottom: 8,
+  },
+  winnerScore: {
+    fontSize: 16,
+    color: '#ffffff',
+  },
+  allScores: {
+    flex: 1,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    color: '#ffffff',
+    fontSize: 16,
+    marginTop: 12,
+  },
+  gridLayout: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  answersSection: {
+    marginTop: 24,
+    marginBottom: 20,
   },
 });
 
