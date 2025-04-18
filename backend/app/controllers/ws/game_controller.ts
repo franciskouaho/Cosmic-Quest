@@ -638,31 +638,47 @@ export default class GamesController {
     gameId: string | number,
     questionId: number
   ): Promise<void> {
+    const lockKey = `game:${gameId}:phase_transition`
+    const hasLock = await this.acquireLock(lockKey, 5) // 5 secondes de lock
+
+    if (!hasLock) {
+      console.log(
+        `⏳ [checkAndProgressToResults] Lock non acquis pour le jeu ${gameId}, tentative abandonnée`
+      )
+      return
+    }
+
     try {
+      // Récupérer le jeu et la question
       const game = await Game.find(gameId)
-      if (!game) return
+      if (!game) {
+        console.error(`❌ [checkAndProgressToResults] Jeu ${gameId} non trouvé`)
+        return
+      }
 
-      const question = await Question.findOrFail(questionId)
-      const room = await Room.find(game.roomId)
-      if (!room) return
+      const question = await Question.find(questionId)
+      if (!question) {
+        console.error(`❌ [checkAndProgressToResults] Question ${questionId} non trouvée`)
+        return
+      }
 
-      const players = await room.related('players').query()
-      const votesCount = await Vote.query()
+      // Récupérer tous les votes pour cette question
+      const votes = await Vote.query()
         .where('question_id', questionId)
-        .count('* as count')
-        .first()
+        .preload('answer', (answerQuery) => {
+          answerQuery.preload('user')
+        })
 
-      const count = Number.parseInt(votesCount?.$extras.count || '0', 10)
-      const isSmallGame = players.length <= 2
-      const allPlayersVoted = isSmallGame ? count > 0 : count >= players.length - 1
+      // Vérifier si le joueur cible a voté
+      const targetPlayerVote = votes.find((vote) => vote.voterId === question.targetPlayerId)
+      const hasTargetPlayerVoted = !!targetPlayerVote
 
-      if (allPlayersVoted) {
-        // Récupérer tous les votes pour cette question
-        const votes = await Vote.query()
-          .where('question_id', questionId)
-          .preload('answer', (answerQuery) => {
-            answerQuery.preload('user')
-          })
+      console.log(
+        `🎯 [checkAndProgressToResults] Le joueur cible ${question.targetPlayerId} a voté: ${hasTargetPlayerVoted}`
+      )
+
+      if (hasTargetPlayerVoted) {
+        console.log(`🎮 [checkAndProgressToResults] Passage à la phase results...`)
 
         // Calculer les scores
         const scores = { ...game.scores }
@@ -679,12 +695,21 @@ export default class GamesController {
         game.currentPhase = 'results'
         await game.save()
 
+        // Invalider tous les caches Redis pour ce jeu
+        const cacheKeys = [
+          `game:${gameId}:state`,
+          `game:${gameId}:phase`,
+          `game:${gameId}:scores`,
+          `game:${gameId}:votes`,
+        ]
+        await Promise.all(cacheKeys.map((key) => Redis.del(key)))
+
         // Préparer les résultats pour l'affichage
         const results = votes.map((vote) => ({
           answerId: vote.answerId,
           voterId: vote.voterId,
           answerUserId: vote.answer.userId,
-          answerText: vote.answer.$extras.text,
+          answerText: vote.answer.content,
           voterName: vote.answer.user.displayName || vote.answer.user.username,
         }))
 
@@ -692,14 +717,22 @@ export default class GamesController {
         io.to(`game:${gameId}`).emit('game:update', {
           type: 'phase_change',
           phase: 'results',
-          message: 'Tous les votes ont été soumis!',
+          message: 'Le vote a été soumis!',
           results: results,
           scores: scores,
           instantTransition: true,
         })
+
+        console.log(`✅ [checkAndProgressToResults] Phase results activée avec succès`)
+      } else {
+        console.log(
+          `⏳ [checkAndProgressToResults] En attente du vote du joueur cible ${question.targetPlayerId}`
+        )
       }
     } catch (error) {
       console.error('❌ [checkAndProgressToResults] Erreur:', error)
+    } finally {
+      await this.releaseLock(lockKey)
     }
   }
 
@@ -708,6 +741,16 @@ export default class GamesController {
    */
   @inject()
   public async submitVote({ request, response, auth, params }: HttpContext) {
+    const lockKey = `game:${params.id}:vote`
+    const hasLock = await this.acquireLock(lockKey, 5)
+
+    if (!hasLock) {
+      console.log(`⏳ [submitVote] Lock non acquis pour le jeu ${params.id}, tentative abandonnée`)
+      return response.tooManyRequests({
+        error: 'Une autre opération est en cours, veuillez réessayer.',
+      })
+    }
+
     try {
       const user = await auth.authenticate()
       const gameId = params.id
@@ -716,7 +759,9 @@ export default class GamesController {
       const payload = await request.validateUsing(voteValidator)
       const { answer_id: answerId, question_id: questionId } = payload
 
-      console.log(`Vote reçu pour le jeu ${gameId}, question ${questionId}, réponse ${answerId}`)
+      console.log(
+        `🎮 [submitVote] Vote reçu - User: ${user.id}, Game: ${gameId}, Question: ${questionId}, Answer: ${answerId}`
+      )
 
       // Vérifier que le jeu existe et est en cours
       const game = await Game.find(gameId)
@@ -737,6 +782,9 @@ export default class GamesController {
 
       // Récupérer la question
       const question = await Question.findOrFail(questionId)
+      console.log(
+        `🎯 [submitVote] Question trouvée - Target: ${question.targetPlayerId}, Current User: ${user.id}`
+      )
 
       // Vérifier si le joueur a déjà voté
       const existingVote = await Vote.query()
@@ -753,6 +801,7 @@ export default class GamesController {
 
       // Si le joueur est la cible, il peut voter directement
       const isTarget = user.id === question.targetPlayerId
+      console.log(`🎯 [submitVote] Joueur ${user.id} est la cible: ${isTarget}`)
 
       if (!isTarget) {
         // Pour les autres joueurs, vérifier qu'ils ont répondu
@@ -760,6 +809,8 @@ export default class GamesController {
           .where('question_id', questionId)
           .where('user_id', user.id)
           .first()
+
+        console.log(`📝 [submitVote] Joueur ${user.id} a répondu: ${!!hasAnswered}`)
 
         if (!hasAnswered) {
           console.error(`❌ [submitVote] Le joueur ${user.id} n'a pas répondu à la question`)
@@ -778,6 +829,15 @@ export default class GamesController {
 
       console.log(`✅ [submitVote] Vote enregistré: ${vote.id}`)
 
+      // Invalider tous les caches Redis pour ce jeu
+      const cacheKeys = [
+        `game:${gameId}:state`,
+        `game:${gameId}:phase`,
+        `game:${gameId}:scores`,
+        `game:${gameId}:votes`,
+      ]
+      await Promise.all(cacheKeys.map((key) => Redis.del(key)))
+
       // Notifier tous les clients du nouveau vote
       const io = socketService.getInstance()
       io.to(`game:${gameId}`).emit('game:update', {
@@ -786,7 +846,8 @@ export default class GamesController {
         message: `${user.displayName || user.username} a voté !`,
       })
 
-      // Vérifier si tous les votes sont soumis
+      // Vérifier immédiatement si tous les votes sont soumis
+      console.log(`🔄 [submitVote] Vérification des votes après soumission`)
       await this.checkAndProgressToResults(gameId, questionId)
 
       return response.ok({
@@ -798,6 +859,8 @@ export default class GamesController {
       return response.internalServerError({
         error: "Une erreur s'est produite lors du vote.",
       })
+    } finally {
+      await this.releaseLock(lockKey)
     }
   }
 

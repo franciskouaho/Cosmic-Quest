@@ -23,7 +23,7 @@ export class PhaseManager {
     hasAnswered: boolean,
     hasVoted: boolean
   ): string {
-    console.log(`🎮 Détermination phase:
+    console.log(`🎮 [PhaseManager] Détermination phase:
       - Phase serveur: ${serverPhase}
       - isTarget: ${isTarget}
       - hasAnswered: ${hasAnswered}
@@ -31,26 +31,40 @@ export class PhaseManager {
 
     // Si le joueur est la cible
     if (isTarget) {
+      console.log(`🎯 [PhaseManager] Joueur est la cible`);
       if (serverPhase === 'vote' && !hasVoted) {
+        console.log(`🎯 [PhaseManager] Cible peut voter`);
         return 'vote';
       }
       if (serverPhase === 'vote' && hasVoted) {
+        console.log(`🎯 [PhaseManager] Cible a déjà voté`);
         return 'waiting';
       }
+      console.log(`🎯 [PhaseManager] Cible en attente`);
       return 'waiting';
     }
 
     // Si le joueur n'est pas la cible
+    console.log(`👤 [PhaseManager] Joueur n'est pas la cible`);
     switch (serverPhase) {
       case 'question':
+        console.log(`❓ [PhaseManager] Phase question - hasAnswered: ${hasAnswered}`);
         return hasAnswered ? 'waiting' : 'question';
       case 'answer':
+        console.log(`📝 [PhaseManager] Phase answer - hasAnswered: ${hasAnswered}`);
         return hasAnswered ? 'waiting' : 'question';
       case 'vote':
-        return hasVoted ? 'waiting' : 'waiting_for_vote';
+        if (hasVoted) {
+          console.log(`🗳️ [PhaseManager] Joueur a déjà voté`);
+          return 'waiting';
+        }
+        console.log(`🗳️ [PhaseManager] Phase vote - hasAnswered: ${hasAnswered}`);
+        return hasAnswered ? 'vote' : 'waiting_for_vote';
       case 'results':
+        console.log(`🏆 [PhaseManager] Phase results`);
         return 'results';
       default:
+        console.log(`❓ [PhaseManager] Phase inconnue: ${serverPhase}`);
         return serverPhase;
     }
   }

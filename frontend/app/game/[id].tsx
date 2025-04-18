@@ -231,54 +231,79 @@ export default function GameScreen() {
             console.log(`🎮 Changement de phase: ${data.phase}`);
             
             // Mise à jour immédiate de l'état sans attente
-            setGameState(prev => ({
-              ...prev,
-              phase: PhaseManager.determineEffectivePhase(
-                data.phase,
-                prev.currentUserState?.isTargetPlayer || false,
-                prev.currentUserState?.hasAnswered || false,
-                prev.currentUserState?.hasVoted || false
-              ) as GamePhase,
-              game: {
-                ...prev.game,
-                currentPhase: data.phase
-              },
-              // Suppression des timers
-              timer: null
-            }));
+            setGameState(prev => {
+              const newState = {
+                ...prev,
+                phase: PhaseManager.determineEffectivePhase(
+                  data.phase,
+                  prev.currentUserState?.isTargetPlayer || false,
+                  prev.currentUserState?.hasAnswered || false,
+                  prev.currentUserState?.hasVoted || false
+                ) as GamePhase,
+                game: {
+                  ...prev.game,
+                  currentPhase: data.phase,
+                  id: prev.game?.id || '',
+                  roomId: prev.game?.roomId || '',
+                  hostId: prev.game?.hostId || '',
+                  status: prev.game?.status || 'in_progress',
+                  gameMode: prev.game?.gameMode || 'standard',
+                  currentRound: prev.game?.currentRound || 1,
+                  totalRounds: prev.game?.totalRounds || 5,
+                  scores: prev.game?.scores || {},
+                  createdAt: prev.game?.createdAt || new Date().toISOString()
+                },
+                // Mettre à jour les scores si fournis
+                scores: data.scores || prev.scores,
+                // Suppression des timers
+                timer: null
+              };
+              return newState;
+            });
             
             // Rafraîchir les données immédiatement
             fetchGameData();
-          } else if (data.type === 'new_vote' || data.type === 'new_answer') {
-            // Rafraîchissement immédiat pour les votes et réponses
+          } else if (data.type === 'vote_submitted') {
+            // Rafraîchissement immédiat pour les votes
             fetchGameData();
           } else if (data.type === 'new_round') {
             // Passage immédiat au nouveau tour
-            setGameState(prev => ({
-              ...prev,
-              phase: PhaseManager.determineEffectivePhase(
-                'question',
-                data.question?.targetPlayer?.id === String(user?.id),
-                false,
-                false
-              ) as GamePhase,
-              currentRound: data.round,
-              currentQuestion: data.question,
-              // Assurer que la cible est correctement identifiée
-              currentUserState: {
-                ...prev.currentUserState,
-                isTargetPlayer: data.question?.targetPlayer?.id === String(user?.id),
-                hasAnswered: false,
-                hasVoted: false
-              },
-              game: {
-                ...prev.game,
-                currentPhase: 'question',
-                currentRound: data.round
-              },
-              // Supprimer timer
-              timer: null
-            }));
+            setGameState(prev => {
+              const newState = {
+                ...prev,
+                phase: PhaseManager.determineEffectivePhase(
+                  'question',
+                  data.question?.targetPlayer?.id === String(user?.id),
+                  false,
+                  false
+                ) as GamePhase,
+                currentRound: data.round,
+                currentQuestion: data.question,
+                // Assurer que la cible est correctement identifiée
+                currentUserState: {
+                  ...prev.currentUserState,
+                  isTargetPlayer: data.question?.targetPlayer?.id === String(user?.id),
+                  hasAnswered: false,
+                  hasVoted: false
+                },
+                game: {
+                  ...prev.game,
+                  currentPhase: 'question',
+                  currentRound: data.round,
+                  id: prev.game?.id || '',
+                  roomId: prev.game?.roomId || '',
+                  hostId: prev.game?.hostId || '',
+                  status: prev.game?.status || 'in_progress',
+                  gameMode: prev.game?.gameMode || 'standard',
+                  totalRounds: prev.game?.totalRounds || 5,
+                  scores: prev.game?.scores || {},
+                  createdAt: prev.game?.createdAt || new Date().toISOString()
+                },
+                // Supprimer timer
+                timer: null
+              };
+              return newState;
+            });
           }
         };
         
@@ -580,42 +605,15 @@ export default function GameScreen() {
         } else {
           throw new Error(response.data?.message || "La requête HTTP a échoué");
         }
-      } catch (error) {
+      } catch (error: unknown) {
         console.error("❌ Erreur lors du passage au tour suivant:", error);
-        
-        // En cas d'échec, nouvelle tentative avec des paramètres légèrement différents
-        try {
-          console.log("🔄 Seconde tentative HTTP avec paramètres alternatifs...");
-          
-          const retryResponse = await api.post(`/games/${id}/next-round`, { 
-            user_id: userId,
-            force_advance: true,
-            retry: true
-          }, { 
-            headers: { 'X-Retry': 'true' }
-          });
-          
-          if (retryResponse.data?.status === 'success') {
-            console.log("✅ Passage au tour suivant réussi via seconde tentative HTTP");
-            Alert.alert("Succès", "Passage au tour suivant effectué via méthode alternative!");
-            
-            // Forcer une mise à jour immédiate des données du jeu
-            fetchGameData();
-          } else {
-            throw new Error("Échec de toutes les tentatives");
-          }
-        } catch (retryError) {
-          console.error("❌ Échec de la seconde tentative:", retryError);
-          Alert.alert(
-            "Erreur",
-            "Impossible de passer au tour suivant. Veuillez réessayer.",
-            [{ text: "OK" }]
-          );
-        }
+        const errorMessage = error instanceof Error ? error.message : "Impossible de passer au tour suivant. Veuillez réessayer.";
+        Alert.alert("Erreur", errorMessage);
       }
-    } catch (outerError) {
-      console.error("❌ Erreur externe:", outerError);
-      Alert.alert("Erreur", "Une erreur inattendue s'est produite.");
+    } catch (error: unknown) {
+      console.error("❌ Erreur lors du passage au tour suivant:", error);
+      const errorMessage = error instanceof Error ? error.message : "Une erreur inattendue s'est produite. Veuillez réessayer.";
+      Alert.alert("Erreur", errorMessage);
     } finally {
       setIsSubmitting(false);
     }
