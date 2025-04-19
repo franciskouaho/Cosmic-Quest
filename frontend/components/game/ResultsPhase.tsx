@@ -343,13 +343,13 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
       );
     }
     
-    if (isUserHost === true || isTargetPlayer) {
+    if (isUserHost === true) {
       return (
         <TouchableOpacity
           style={[
             styles.nextButton, 
             (!canProceed || isButtonDisabled || isSynchronizing) && styles.disabledButton,
-            isUserHost ? styles.hostButton : styles.targetButton
+            styles.hostButton
           ]}
           onPress={handleNextRound}
           disabled={!canProceed || isButtonDisabled || isSynchronizing}
@@ -376,7 +376,7 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
     return (
       <View style={[styles.nextButton, styles.disabledButton]}>
         <Text style={styles.nextButtonText}>
-          En attente que l'hôte ou la cible passe au tour suivant
+          En attente que l'hôte passe au tour suivant
         </Text>
         <MaterialCommunityIcons name="timer-sand" size={18} color="#b3a5d9" style={{marginTop: 4}} />
       </View>
