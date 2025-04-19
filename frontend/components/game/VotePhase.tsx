@@ -4,6 +4,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Answer } from '@/types/gameTypes';
 import GameTimer from './GameTimer';
+import userIdManager from '@/utils/userIdManager';
 
 type VotePhaseProps = {
   answers: Answer[];
@@ -36,7 +37,13 @@ const VotePhase: React.FC<VotePhaseProps> = ({
   }, [isTargetPlayer, hasVoted, allPlayersVoted, answers.length]);
   
   // Filtrer les réponses pour ne pas afficher les propres réponses du joueur
-  const votableAnswers = answers.filter(answer => !answer.isOwnAnswer);
+  // Cette logique est utilisée que le joueur soit la cible ou non
+  // Le filtrage se fait sur base de l'ID du joueur actuel pour plus de fiabilité
+  const votableAnswers = answers.filter(answer => {
+    const currentUserId = userIdManager.getUserId();
+    console.log(`🔄 Filtrage des réponses: réponse de ${answer.playerId}, utilisateur actuel ${currentUserId}`);
+    return String(answer.playerId) !== String(currentUserId);
+  });
   
   // Si tout le monde a voté, afficher un message d'attente
   if (allPlayersVoted) {
@@ -60,6 +67,7 @@ const VotePhase: React.FC<VotePhaseProps> = ({
 
   // Si l'utilisateur n'est pas la cible, ou a déjà voté, afficher un message d'attente
   if (!isTargetPlayer || hasVoted) {
+    console.log(`🎮 VotePhase: Affichage du message d'attente - isTargetPlayer=${isTargetPlayer}, hasVoted=${hasVoted}`);
     return (
       <View style={styles.messageContainer}>
         <Text style={styles.messageTitle}>
@@ -84,6 +92,7 @@ const VotePhase: React.FC<VotePhaseProps> = ({
 
   // Cas où l'utilisateur est la cible mais n'a pas encore de réponses à évaluer
   if (votableAnswers.length === 0) {
+    console.log(`🎮 VotePhase: Aucune réponse votable - isTargetPlayer=${isTargetPlayer}, answers=${answers.length}, votableAnswers=${votableAnswers.length}`);
     return (
       <View style={styles.messageContainer}>
         <Text style={styles.messageTitle}>En attente des réponses</Text>
@@ -96,6 +105,8 @@ const VotePhase: React.FC<VotePhaseProps> = ({
     );
   }
 
+  console.log(`🎮 VotePhase: Affichage des réponses pour vote - isTargetPlayer=${isTargetPlayer}, votableAnswers=${votableAnswers.length}`);
+  
   return (
     <View style={styles.container}>
       {timer && (

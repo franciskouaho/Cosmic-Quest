@@ -783,7 +783,7 @@ export default function GameScreen() {
                 C'est votre tour de voter!
               </Text>
               <VotePhase 
-                answers={gameState.answers.filter(answer => !answer.isOwnAnswer)}
+                answers={gameState.answers}
                 question={gameState.currentQuestion}
                 onVote={handleVote}
                 timer={null}
@@ -797,7 +797,7 @@ export default function GameScreen() {
         
         return (
           <VotePhase 
-            answers={gameState.answers.filter(answer => !answer.isOwnAnswer)}
+            answers={gameState.answers}
             question={gameState.currentQuestion}
             onVote={handleVote}
             timer={null}
