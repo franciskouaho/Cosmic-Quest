@@ -225,6 +225,9 @@ export default function GameScreen() {
         }
       }
       
+      // Afficher un log détaillé pour le débogage
+      console.log(`[DEBUG VOTE] userId:`, userIdStr, 'targetPlayer.id:', gameData.currentQuestion?.targetPlayer?.id, 'targetPlayer:', gameData.targetPlayer, 'currentUserState:', gameData.currentUserState, 'gameData:', gameData);
+      
       // Appliquer ensuite la correction via ensureCorrectVoteTarget pour les autres cas
       let correctedState = ensureCorrectVoteTarget(newGameState, userIdStr);
       

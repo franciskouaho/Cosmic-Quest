@@ -150,6 +150,16 @@ export function ensureCorrectVoteTarget(gameState: GameState, userId: string | n
   // Normaliser l'identifiant de l'utilisateur en chaîne
   const userIdStr = String(userId);
   
+  // Ajout log DEBUG complet pour toutes les sources d'ID cible
+  console.log('[DEBUG VOTE] ensureCorrectVoteTarget - userId:', userIdStr, 
+    'currentQuestion.targetPlayer.id:', gameState.currentQuestion?.targetPlayer?.id, 
+    'targetPlayer.id:', gameState.targetPlayer?.id, 
+    'raw.targetPlayerId:', (gameState as any).targetPlayerId, 
+    '_targetPlayerId:', (gameState as any)._targetPlayerId, 
+    'backupTargetId:', (gameState as any).backupTargetId, 
+    'socketTargetId:', (gameState as any).socketTargetId
+  );
+  
   // Plusieurs façons de déterminer si l'utilisateur est la cible
   let isUserTarget = false;
   

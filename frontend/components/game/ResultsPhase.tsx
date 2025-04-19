@@ -383,91 +383,15 @@ const ResultsPhase: React.FC<ResultsPhaseProps> = ({
     );
   };
 
-  if (isLastRound) {
-    return renderFinalResults();
-  }
-  
-  return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Résultats du tour</Text>
-      </View>
-      
-      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-        <View style={styles.questionCard}>
-          <LinearGradient
-            colors={['rgba(105, 78, 214, 0.3)', 'rgba(105, 78, 214, 0.1)']}
-            style={styles.cardGradient}
-          >
-            <View style={styles.targetPlayerInfo}>
-              <View style={styles.avatarContainer}>
-                <Text style={styles.avatarText}>
-                  {(targetPlayer.name || targetPlayer.displayName || targetPlayer.username || "?").charAt(0)}
-                </Text>
-              </View>
-              <Text style={styles.targetPlayerName}>
-                {targetPlayer.name || targetPlayer.displayName || targetPlayer.username || "Joueur inconnu"}
-              </Text>
-            </View>
-            
-            <Text style={styles.questionText}>{question.text}</Text>
-          </LinearGradient>
-        </View>
-        
-        {winningAnswer && !noVotesMode ? (
-          <View style={styles.winnerSection}>
-            <Text style={styles.sectionTitle}>Réponse gagnante</Text>
-            <View style={styles.winnerCard}>
-              <LinearGradient
-                colors={['rgba(255, 215, 0, 0.3)', 'rgba(255, 215, 0, 0.1)']}
-                style={styles.winnerCardGradient}
-              >
-                <View style={styles.winnerHeader}>
-                  <MaterialCommunityIcons name="trophy" size={24} color="#FFD700" />
-                  <Text style={styles.winnerName}>{getPlayerName(winningAnswer.playerId)}</Text>
-                </View>
-                <Text style={styles.winnerAnswer}>{winningAnswer.content}</Text>
-              </LinearGradient>
-            </View>
-          </View>
-        ) : (
-          <View style={styles.messageSection}>
-            <Text style={styles.messageText}>
-              {noVotesMode 
-                ? "Aucun vote pour ce tour. Passons au suivant!" 
-                : "En attente des votes..."}
-            </Text>
-          </View>
-        )}
-        
-        <View style={styles.allAnswersSection}>
-          <Text style={styles.sectionTitle}>Toutes les réponses</Text>
-          {answers && answers.length > 0 ? (
-            answers.map((answer) => renderAnswer(answer))
-          ) : (
-            <View style={styles.noAnswersContainer}>
-              <Text style={styles.noAnswersText}>Aucune réponse pour ce tour</Text>
-            </View>
-          )}
-        </View>
-        
-        <View style={styles.scoresSection}>
-          <Text style={styles.sectionTitle}>Scores</Text>
-          {scores && Object.keys(scores).length > 0 ? (
-            Object.entries(scores).map(([playerId, score]) => renderPlayerScore(players.find(p => String(p.id) === playerId) || players[0]))
-          ) : (
-            <View style={styles.noScoresContainer}>
-              <Text style={styles.noScoresText}>Aucun score à afficher</Text>
-            </View>
-          )}
-        </View>
-      </ScrollView>
-      
-      <View style={styles.footer}>
-        {renderNextButton()}
-      </View>
-    </View>
-  );
+  // Redirection automatique vers la page de résultats dédiée
+  useEffect(() => {
+    if (gameId && currentPhase === 'results') {
+      router.replace(`/game/results/${gameId}`);
+    }
+  }, [gameId, currentPhase, router]);
+
+  // Ne rien afficher pendant la redirection
+  return null;
 };
 
 const styles = StyleSheet.create({
