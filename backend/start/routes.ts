@@ -47,6 +47,7 @@ router
         router
           .group(() => {
             router.get('/:id', [GamesController, 'show'])
+            router.get('/:id/results', [GamesController, 'getResults'])
             router.post('/:id/answer', [GamesController, 'submitAnswer'])
             router.post('/:id/vote', [GamesController, 'submitVote'])
             router.post('/:id/next-round', [GamesController, 'nextRound'])

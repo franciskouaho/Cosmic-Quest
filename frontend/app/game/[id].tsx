@@ -292,6 +292,22 @@ export default function GameScreen() {
             
             // Mise à jour immédiate de l'état sans attente
             setGameState(prev => {
+              // Toujours mettre à jour le joueur cible si targetPlayerId est présent
+              let updatedCurrentQuestion = prev.currentQuestion;
+              if (data.targetPlayerId) {
+                const targetPlayerData = prev.players?.find((p: any) => String(p.id) === String(data.targetPlayerId));
+                updatedCurrentQuestion = {
+                  ...(updatedCurrentQuestion || {
+                    id: '', text: '', roundNumber: prev.currentRound, theme: prev.theme
+                  }),
+                  targetPlayer: targetPlayerData ? {
+                    id: String(targetPlayerData.id),
+                    name: targetPlayerData.displayName || targetPlayerData.username || 'Joueur',
+                    avatar: targetPlayerData.avatar
+                  } : { id: String(data.targetPlayerId) }
+                };
+                console.log('[SOCKET] Mise à jour du joueur cible pour la phase vote:', updatedCurrentQuestion?.targetPlayer);
+              }
               const newState = {
                 ...prev,
                 phase: PhaseManager.determineEffectivePhase(
@@ -313,10 +329,9 @@ export default function GameScreen() {
                   scores: prev.game?.scores || {},
                   createdAt: prev.game?.createdAt || new Date().toISOString()
                 },
-                // Mettre à jour les scores si fournis
                 scores: data.scores || prev.scores,
-                // Suppression des timers
-                timer: null
+                timer: null,
+                currentQuestion: updatedCurrentQuestion
               };
               return newState;
             });
@@ -326,92 +341,39 @@ export default function GameScreen() {
           } else if (data.type === 'target_player_vote') {
             // Gestion spéciale pour le cas où nous avons un message target_player_vote
             console.log(`🎯 Message target_player_vote reçu: targetPlayerId=${data.targetPlayerId}`);
-            
             // Vérifier si c'est le joueur cible
             const isCurrentUserTarget = String(data.targetPlayerId) === String(user?.id);
-            console.log(`🎯 Ce joueur ${isCurrentUserTarget ? 'EST' : 'n\'est PAS'} la cible.`);
-            
             // IMPORTANT: Stockage global de l'ID cible pour les cas où le serveur
             // n'inclut pas cette information dans les objets question/player
-            const targetPlayerInfo = { id: data.targetPlayerId };
-            
-            if (isCurrentUserTarget) {
-              // Mettre à jour immédiatement l'état pour le joueur cible
-              setGameState(prev => {
-                // Créer une copie profonde pour éviter les références
-                const newState = JSON.parse(JSON.stringify(prev));
-                
-                // Configurer la phase et l'état du joueur
-                newState.phase = GamePhase.VOTE;
-                
-                // Définir explicitement le joueur comme cible
-                if (!newState.currentUserState) {
-                  newState.currentUserState = {};
-                }
-                newState.currentUserState.isTargetPlayer = true;
-                
-                // Si targetPlayer n'existe pas encore, le créer
-                if (!newState.targetPlayer && data.targetPlayerId) {
-                  // Chercher le joueur dans la liste des joueurs si possible
-                  const targetPlayerData = newState.players?.find(p => 
-                    String(p.id) === String(data.targetPlayerId)
-                  );
-                  
-                  if (targetPlayerData) {
-                    newState.targetPlayer = {
-                      id: String(targetPlayerData.id),
-                      name: targetPlayerData.displayName || targetPlayerData.username || 'Joueur',
-                      avatar: targetPlayerData.avatar
-                    };
-                  } else {
-                    // Sinon, créer un objet minimal avec l'ID
-                    newState.targetPlayer = { id: String(data.targetPlayerId) };
-                  }
-                }
-                
-                // Stocker les réponses si disponibles
-                if (data.answers) {
-                  newState.answers = data.answers;
-                }
-                
-                // Stocker l'ID cible temporairement
-                newState._targetPlayerId = data.targetPlayerId;
-                
-                return newState;
-              });
-              
-              console.log(`🎯 État mis à jour pour le joueur cible: phase=vote, isTargetPlayer=true`);
-            } else {
-              // Pour les non-cibles, mettre quand même à jour le targetPlayerId
-              setGameState(prev => {
-                const newState = JSON.parse(JSON.stringify(prev));
-                newState.phase = GamePhase.WAITING_FOR_VOTE;
-                newState._targetPlayerId = data.targetPlayerId;
-                
-                // Si targetPlayer n'existe pas encore mais que nous avons l'info targetPlayerId
-                if (!newState.targetPlayer && data.targetPlayerId) {
-                  // Chercher le joueur dans la liste des joueurs si possible
-                  const targetPlayerData = newState.players?.find(p => 
-                    String(p.id) === String(data.targetPlayerId)
-                  );
-                  
-                  if (targetPlayerData) {
-                    newState.targetPlayer = {
-                      id: String(targetPlayerData.id),
-                      name: targetPlayerData.displayName || targetPlayerData.username || 'Joueur',
-                      avatar: targetPlayerData.avatar
-                    };
-                  } else {
-                    // Sinon, créer un objet minimal avec l'ID
-                    newState.targetPlayer = { id: String(data.targetPlayerId) };
-                  }
-                }
-                
-                return newState;
-              });
-            }
-            
-            // Rafraîchir les données dans tous les cas
+            setGameState(prev => {
+              // Toujours mettre à jour le joueur cible si targetPlayerId est présent
+              const targetPlayerData = prev.players?.find((p: any) => String(p.id) === String(data.targetPlayerId));
+              let updatedCurrentQuestion = prev.currentQuestion;
+              if (data.targetPlayerId) {
+                updatedCurrentQuestion = {
+                  ...(updatedCurrentQuestion || {
+                    id: '', text: '', roundNumber: prev.currentRound, theme: prev.theme
+                  }),
+                  targetPlayer: targetPlayerData ? {
+                    id: String(targetPlayerData.id),
+                    name: targetPlayerData.displayName || targetPlayerData.username || 'Joueur',
+                    avatar: targetPlayerData.avatar
+                  } : { id: String(data.targetPlayerId) }
+                };
+                console.log('[SOCKET] Mise à jour du joueur cible pour la phase vote:', updatedCurrentQuestion?.targetPlayer);
+              }
+              const newState = {
+                ...prev,
+                phase: isCurrentUserTarget ? GamePhase.VOTE : GamePhase.WAITING_FOR_VOTE,
+                currentUserState: {
+                  ...prev.currentUserState,
+                  isTargetPlayer: isCurrentUserTarget
+                },
+                currentQuestion: updatedCurrentQuestion,
+                answers: data.answers || prev.answers
+              };
+              return newState;
+            });
             fetchGameData();
           } else if (data.type === 'vote_submitted') {
             // Rafraîchissement immédiat pour les votes
@@ -865,11 +827,6 @@ export default function GameScreen() {
         console.log(`🎯 Détection directe - Utilisateur ${userId} identifié comme cible du vote`);
         correctedState.currentUserState.isTargetPlayer = true;
       }
-      
-      // Si l'état a été modifié, afficher un log
-      if (correctedState !== gameState) {
-        console.log('🔄 État corrigé pour la phase vote - Nouveau isTarget:', correctedState.currentUserState?.isTargetPlayer);
-      }
     }
 
     // Vérifier si la phase est valide
@@ -986,6 +943,8 @@ export default function GameScreen() {
               targetPlayer={gameState.targetPlayer}
               onVote={handleVote}
               isSubmitting={isSubmitting}
+              isTargetPlayer={true}
+              hasVoted={false}
             />
           );
         } else {

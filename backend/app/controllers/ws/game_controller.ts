@@ -537,8 +537,11 @@ export default class GamesController {
             playerName: answer.user?.displayName || answer.user?.username || 'Joueur anonyme',
           }))
 
-          // Notification spéciale pour le joueur cible avec les réponses
-          io.to(`game:${gameId}`).emit('game:update', {
+          // Stocker l'ID du joueur cible dans le cache Redis
+          await Redis.setex(`game:${gameId}:target_player`, 300, targetPlayer.id)
+
+          // Envoyer une notification spéciale au joueur cible
+          io.to(`user:${targetPlayer.id}`).emit('game:update', {
             type: 'target_player_vote',
             phase: 'vote',
             message: "C'est à votre tour de voter!",
@@ -554,18 +557,15 @@ export default class GamesController {
             },
           })
 
-          // Stocker l'ID du joueur cible dans le cache Redis
-          await Redis.setex(`game:${gameId}:target_player`, 300, targetPlayer.id)
+          // Envoyer une notification générale à tous les joueurs
+          io.to(`game:${gameId}`).emit('game:update', {
+            type: 'phase_change',
+            phase: 'vote',
+            message: 'Toutes les réponses ont été reçues. Place au vote!',
+            targetPlayerId: question.targetPlayerId,
+            instantTransition: true,
+          })
         }
-
-        // Notification générale du changement de phase
-        io.to(`game:${gameId}`).emit('game:update', {
-          type: 'phase_change',
-          phase: 'vote',
-          message: 'Toutes les réponses ont été reçues. Place au vote!',
-          targetPlayerId: question.targetPlayerId,
-          instantTransition: true,
-        })
 
         return true
       }
@@ -1299,6 +1299,69 @@ export default class GamesController {
     } catch (error) {
       console.error('❌ [getGameState] Erreur:', error)
       throw error
+    }
+  }
+
+  /**
+   * Récupérer les résultats finaux d'une partie
+   */
+  async getResults({ params, response, auth }: HttpContext) {
+    try {
+      const user = await auth.authenticate()
+      const gameId = params.id
+
+      const game = await Game.query()
+        .where('id', gameId)
+        .preload('room', (roomQuery) => {
+          roomQuery.preload('players')
+        })
+        .first()
+
+      if (!game) {
+        return response.notFound({
+          error: 'Partie non trouvée',
+        })
+      }
+
+      // Vérifier que le joueur fait partie de la partie
+      const isPlayerInGame = game.room.players.some((player) => player.id === user.id)
+
+      if (!isPlayerInGame) {
+        return response.forbidden({
+          error: 'Vous ne faites pas partie de cette partie',
+        })
+      }
+
+      // Vérifier que la partie est terminée
+      if (game.status !== 'completed') {
+        return response.badRequest({
+          error: "La partie n'est pas encore terminée",
+        })
+      }
+
+      // Récupérer les scores des joueurs
+      const playersWithScores = game.room.players.map((player) => ({
+        id: player.id,
+        name: player.displayName || player.username,
+        avatar: player.avatar,
+        score: game.scores?.[player.id] || 0,
+      }))
+
+      // Trier les joueurs par score (décroissant)
+      playersWithScores.sort((a, b) => b.score - a.score)
+
+      return response.ok({
+        status: 'success',
+        data: {
+          gameId: game.id,
+          players: playersWithScores,
+        },
+      })
+    } catch (error) {
+      console.error('❌ Erreur lors de la récupération des résultats:', error)
+      return response.internalServerError({
+        error: 'Une erreur est survenue lors de la récupération des résultats',
+      })
     }
   }
 }

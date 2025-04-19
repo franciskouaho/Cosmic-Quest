@@ -1,11 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, Dimensions, Animated } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { FontAwesome5, Ionicons } from '@expo/vector-icons';
-import Confetti from 'react-native-confetti';
+import ConfettiCannon from 'react-native-confetti-cannon';
 import { Player } from '@/types/gameTypes';
+import { getGameResults } from '@/services/gameService';
+
+const { width } = Dimensions.get('window');
 
 type PlayerScore = Player & { score: number };
 
@@ -15,34 +18,40 @@ export default function GameResultsScreen() {
   
   const [players, setPlayers] = useState<PlayerScore[]>([]);
   const [loading, setLoading] = useState(true);
-  const [confettiRef, setConfettiRef] = useState<any>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [showConfetti, setShowConfetti] = useState(false);
+  const fadeAnim = new Animated.Value(0);
   
   useEffect(() => {
-    const mockPlayers: PlayerScore[] = [
-      { id: '1', name: 'Francis', avatar: 'avatar1', isReady: true, score: 3 },
-      { id: '2', name: 'Sophie', avatar: 'avatar2', isReady: true, score: 5 },
-      { id: '3', name: 'Thomas', avatar: 'avatar3', isReady: true, score: 2 },
-      { id: '4', name: 'Emma', avatar: 'avatar4', isReady: true, score: 4 },
-    ];
-    
-    // Trier les joueurs par score (décroissant)
-    mockPlayers.sort((a, b) => b.score - a.score);
-    
-    setPlayers(mockPlayers);
-    setLoading(false);
-    
-    // Version simplifiée avec les confettis pour le gagnant
-    if (confettiRef) {
-      confettiRef.startConfetti();
-    }
-    
-    // Arrêter les confettis lors du nettoyage
-    return () => {
-      if (confettiRef) {
-        confettiRef.stopConfetti();
+    const fetchResults = async () => {
+      try {
+        if (!id || typeof id !== 'string') {
+          throw new Error('ID de partie invalide');
+        }
+        
+        const results = await getGameResults(id);
+        setPlayers(results);
+        
+        // Démarrer l'animation de fondu
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 1000,
+          useNativeDriver: true,
+        }).start();
+
+        // Démarrer les confettis après un court délai
+        setTimeout(() => {
+          setShowConfetti(true);
+        }, 500);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Une erreur est survenue');
+      } finally {
+        setLoading(false);
       }
     };
-  }, [confettiRef]);
+
+    fetchResults();
+  }, [id]);
   
   const handlePlayAgain = () => {
     router.push(`/room/${id}`);
@@ -81,10 +90,13 @@ export default function GameResultsScreen() {
   };
   
   const renderPlayerItem = ({ item, index }: { item: PlayerScore; index: number }) => (
-    <View style={[
-      styles.playerCard, 
-      index === 0 ? styles.winnerCard : null
-    ]}>
+    <Animated.View 
+      style={[
+        styles.playerCard, 
+        index === 0 ? styles.winnerCard : null,
+        { opacity: fadeAnim }
+      ]}
+    >
       {renderRankBadge(index)}
       
       <View style={styles.playerInfo}>
@@ -98,7 +110,7 @@ export default function GameResultsScreen() {
         <Text style={styles.scoreText}>{item.score}</Text>
         <Text style={styles.scoreLabel}>points</Text>
       </View>
-    </View>
+    </Animated.View>
   );
   
   if (loading) {
@@ -115,6 +127,28 @@ export default function GameResultsScreen() {
       </View>
     );
   }
+
+  if (error) {
+    return (
+      <View style={styles.container}>
+        <StatusBar style="light" />
+        <LinearGradient
+          colors={['#1a0933', '#321a5e']}
+          style={styles.background}
+        />
+        <View style={styles.errorContainer}>
+          <Text style={styles.errorText}>{error}</Text>
+          <TouchableOpacity
+            style={[styles.button, styles.secondaryButton]}
+            onPress={handleReturnHome}
+          >
+            <Ionicons name="home" size={18} color="#ffffff" style={styles.buttonIcon} />
+            <Text style={styles.buttonText}>Retour à l'accueil</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
   
   return (
     <View style={styles.container}>
@@ -125,12 +159,21 @@ export default function GameResultsScreen() {
         style={styles.background}
       />
       
-      <Confetti ref={ref => setConfettiRef(ref)} />
+      {showConfetti && (
+        <ConfettiCannon
+          count={200}
+          origin={{ x: width / 2, y: -10 }}
+          autoStart={true}
+          fadeOut={true}
+          explosionSpeed={350}
+          fallSpeed={3000}
+        />
+      )}
       
-      <View style={styles.header}>
+      <Animated.View style={[styles.header, { opacity: fadeAnim }]}>
         <Text style={styles.title}>Résultats finaux</Text>
         <Text style={styles.subtitle}>Félicitations à tous !</Text>
-      </View>
+      </Animated.View>
       
       <View style={styles.resultsContainer}>
         <FlatList
@@ -141,7 +184,7 @@ export default function GameResultsScreen() {
         />
       </View>
       
-      <View style={styles.buttonsContainer}>
+      <Animated.View style={[styles.buttonsContainer, { opacity: fadeAnim }]}>
         <TouchableOpacity
           style={[styles.button, styles.primaryButton]}
           onPress={handlePlayAgain}
@@ -156,7 +199,7 @@ export default function GameResultsScreen() {
           <Ionicons name="home" size={18} color="#ffffff" style={styles.buttonIcon} />
           <Text style={styles.buttonText}>Accueil</Text>
         </TouchableOpacity>
-      </View>
+      </Animated.View>
     </View>
   );
 }
@@ -195,6 +238,18 @@ const styles = StyleSheet.create({
   loadingText: {
     fontSize: 18,
     color: '#ffffff',
+  },
+  errorContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  errorText: {
+    fontSize: 18,
+    color: '#ff6b6b',
+    textAlign: 'center',
+    marginBottom: 20,
   },
   resultsContainer: {
     flex: 1,
@@ -248,7 +303,7 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#694ED6',
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
@@ -260,7 +315,6 @@ const styles = StyleSheet.create({
   },
   playerName: {
     fontSize: 18,
-    fontWeight: '600',
     color: '#ffffff',
   },
   scoreContainer: {
@@ -272,23 +326,26 @@ const styles = StyleSheet.create({
     color: '#ffffff',
   },
   scoreLabel: {
-    fontSize: 14,
+    fontSize: 12,
     color: '#b3a5d9',
   },
   buttonsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
     padding: 20,
-    paddingBottom: 40,
+    marginBottom: 20,
   },
   button: {
-    borderRadius: 12,
-    padding: 16,
-    alignItems: 'center',
-    marginBottom: 12,
     flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 25,
+    minWidth: 120,
     justifyContent: 'center',
   },
   primaryButton: {
-    backgroundColor: '#694ED6',
+    backgroundColor: '#6c5ce7',
   },
   secondaryButton: {
     backgroundColor: 'rgba(255, 255, 255, 0.2)',
@@ -296,7 +353,7 @@ const styles = StyleSheet.create({
   buttonText: {
     color: '#ffffff',
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: 'bold',
   },
   buttonIcon: {
     marginRight: 8,
