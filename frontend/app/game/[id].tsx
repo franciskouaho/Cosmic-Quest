@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, Alert, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, Alert } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -8,16 +8,14 @@ import VotePhase from '@/components/game/VotePhase';
 import ResultsPhase from '@/components/game/ResultsPhase';
 import LoadingOverlay from '@/components/common/LoadingOverlay';
 import { useAuth } from '@/contexts/AuthContext';
-import { Player, GamePhase, GameState, Answer, Question } from '@/types/gameTypes';
+import { GamePhase, GameState } from '@/types/gameTypes';
 import gameService from '@/services/queries/game';
 import SocketService from '@/services/socketService';
-import api, { API_URL } from '@/config/axios';
-import axios from 'axios';
+import api from '@/config/axios';
 import NetInfo from '@react-native-community/netinfo';
-import GameTimer from '@/components/game/GameTimer';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import UserIdManager from '@/utils/userIdManager';
-import { PhaseManager } from '@/utils/phaseManager';
+import { PhaseManager, ensureCorrectVoteTarget } from '@/utils/phaseManager';
 
 export default function GameScreen() {
   const router = useRouter();
@@ -167,7 +165,7 @@ export default function GameScreen() {
       const effectivePhase = determineEffectivePhase(
         gameData.game.currentPhase,
         gameData.game.currentRound,
-        gameData.players?.find((p: any) => p.id === user?.id)
+        gameData.players?.find((p: any) => String(p.id) === String(user?.id))
       );
 
       // Afficher un log détaillé pour le débogage
@@ -196,10 +194,46 @@ export default function GameScreen() {
       const targetMismatch = detectedAsTarget !== isTargetPlayer;
       if (targetMismatch) {
         console.log('🔧 Correction automatique de l\'état isTargetPlayer appliquée');
-        newGameState.currentUserState.isTargetPlayer = detectedAsTarget;
+        if (newGameState.currentUserState) {
+          newGameState.currentUserState.isTargetPlayer = detectedAsTarget;
+        }
       }
       
-      setGameState(newGameState);
+      // Vérification supplémentaire: pour la phase vote,
+      // s'assurer que la cible est correctement identifiée pour l'écran de vote
+      if (gameData.game.currentPhase === 'vote' && newGameState.currentQuestion) {
+        const questionTargetId = String(newGameState.currentQuestion.targetPlayer?.id || '');
+        const currentUserId = String(user?.id || '');
+        
+        if (questionTargetId === currentUserId) {
+          console.log('🎯 Correction supplémentaire: l\'utilisateur est la cible en phase vote');
+          
+          if (newGameState.currentUserState) {
+            newGameState.currentUserState.isTargetPlayer = true;
+          } else {
+            newGameState.currentUserState = {
+              isTargetPlayer: true,
+              hasAnswered: false,
+              hasVoted: gameData.currentUserState?.hasVoted || false
+            };
+          }
+          
+          // Forcer la phase effective à vote si la cible n'a pas encore voté
+          if (!newGameState.currentUserState.hasVoted) {
+            newGameState.phase = 'vote';
+          }
+        }
+      }
+      
+      // Appliquer ensuite la correction via ensureCorrectVoteTarget pour les autres cas
+      let correctedState = ensureCorrectVoteTarget(newGameState, userIdStr);
+      
+      // Vérifier si l'état a été modifié, afficher un log
+      if (correctedState !== newGameState) {
+        console.log('🔄 État corrigé pour la phase vote - Nouveau isTarget:', correctedState.currentUserState?.isTargetPlayer);
+      }
+      
+      setGameState(correctedState);
       setIsReady(true);
     } catch (error) {
       console.error('❌ Erreur lors de la récupération des données du jeu:', error);
@@ -247,7 +281,7 @@ export default function GameScreen() {
         const socket = await SocketService.getInstanceAsync();
         
         // Gestionnaire d'événements optimisé pour les mises à jour du jeu
-        const handleGameUpdate = (data) => {
+        const handleGameUpdate = (data: any) => {
           console.log('🎮 Mise à jour du jeu reçue:', data);
           
           // Toujours traiter comme transition instantanée
@@ -289,18 +323,111 @@ export default function GameScreen() {
             
             // Rafraîchir les données immédiatement
             fetchGameData();
+          } else if (data.type === 'target_player_vote') {
+            // Gestion spéciale pour le cas où nous avons un message target_player_vote
+            console.log(`🎯 Message target_player_vote reçu: targetPlayerId=${data.targetPlayerId}`);
+            
+            // Vérifier si c'est le joueur cible
+            const isCurrentUserTarget = String(data.targetPlayerId) === String(user?.id);
+            console.log(`🎯 Ce joueur ${isCurrentUserTarget ? 'EST' : 'n\'est PAS'} la cible.`);
+            
+            // IMPORTANT: Stockage global de l'ID cible pour les cas où le serveur
+            // n'inclut pas cette information dans les objets question/player
+            const targetPlayerInfo = { id: data.targetPlayerId };
+            
+            if (isCurrentUserTarget) {
+              // Mettre à jour immédiatement l'état pour le joueur cible
+              setGameState(prev => {
+                // Créer une copie profonde pour éviter les références
+                const newState = JSON.parse(JSON.stringify(prev));
+                
+                // Configurer la phase et l'état du joueur
+                newState.phase = GamePhase.VOTE;
+                
+                // Définir explicitement le joueur comme cible
+                if (!newState.currentUserState) {
+                  newState.currentUserState = {};
+                }
+                newState.currentUserState.isTargetPlayer = true;
+                
+                // Si targetPlayer n'existe pas encore, le créer
+                if (!newState.targetPlayer && data.targetPlayerId) {
+                  // Chercher le joueur dans la liste des joueurs si possible
+                  const targetPlayerData = newState.players?.find(p => 
+                    String(p.id) === String(data.targetPlayerId)
+                  );
+                  
+                  if (targetPlayerData) {
+                    newState.targetPlayer = {
+                      id: String(targetPlayerData.id),
+                      name: targetPlayerData.displayName || targetPlayerData.username || 'Joueur',
+                      avatar: targetPlayerData.avatar
+                    };
+                  } else {
+                    // Sinon, créer un objet minimal avec l'ID
+                    newState.targetPlayer = { id: String(data.targetPlayerId) };
+                  }
+                }
+                
+                // Stocker les réponses si disponibles
+                if (data.answers) {
+                  newState.answers = data.answers;
+                }
+                
+                // Stocker l'ID cible temporairement
+                newState._targetPlayerId = data.targetPlayerId;
+                
+                return newState;
+              });
+              
+              console.log(`🎯 État mis à jour pour le joueur cible: phase=vote, isTargetPlayer=true`);
+            } else {
+              // Pour les non-cibles, mettre quand même à jour le targetPlayerId
+              setGameState(prev => {
+                const newState = JSON.parse(JSON.stringify(prev));
+                newState.phase = GamePhase.WAITING_FOR_VOTE;
+                newState._targetPlayerId = data.targetPlayerId;
+                
+                // Si targetPlayer n'existe pas encore mais que nous avons l'info targetPlayerId
+                if (!newState.targetPlayer && data.targetPlayerId) {
+                  // Chercher le joueur dans la liste des joueurs si possible
+                  const targetPlayerData = newState.players?.find(p => 
+                    String(p.id) === String(data.targetPlayerId)
+                  );
+                  
+                  if (targetPlayerData) {
+                    newState.targetPlayer = {
+                      id: String(targetPlayerData.id),
+                      name: targetPlayerData.displayName || targetPlayerData.username || 'Joueur',
+                      avatar: targetPlayerData.avatar
+                    };
+                  } else {
+                    // Sinon, créer un objet minimal avec l'ID
+                    newState.targetPlayer = { id: String(data.targetPlayerId) };
+                  }
+                }
+                
+                return newState;
+              });
+            }
+            
+            // Rafraîchir les données dans tous les cas
+            fetchGameData();
           } else if (data.type === 'vote_submitted') {
             // Rafraîchissement immédiat pour les votes
             fetchGameData();
           } else if (data.type === 'new_round') {
+            console.log(`🎮 Nouveau tour détecté: ${data.round}`);
+            
             // Passage immédiat au nouveau tour
             setGameState(prev => {
               const newState = {
                 ...prev,
                 phase: PhaseManager.determineEffectivePhase(
                   'question',
-                  data.round,
-                  data.question?.targetPlayer?.id === String(user?.id)
+                  prev.currentUserState?.isTargetPlayer || false,
+                  prev.currentUserState?.hasAnswered || false,
+                  prev.currentUserState?.hasVoted || false
                 ) as GamePhase,
                 currentRound: data.round,
                 currentQuestion: data.question,
@@ -329,6 +456,16 @@ export default function GameScreen() {
               };
               return newState;
             });
+            
+            // Forcer un rechargement complet
+            setTimeout(() => {
+              fetchGameData();
+            }, 300);
+          } else if (data.type === 'next_round_triggered') {
+            console.log(`🎮 Passage au tour suivant déclenché par un autre joueur!`);
+            
+            // Forcer une mise à jour immédiate pour tous les joueurs
+            fetchGameData();
           }
         };
         
@@ -344,12 +481,21 @@ export default function GameScreen() {
           // Forcer une mise à jour immédiate de l'état
           fetchGameData()
         });
+        
+        // Événement spécifique pour le passage au tour suivant
+        socket.on('game:next_round', (data) => {
+          console.log('⏭️ Événement next_round reçu:', data);
+          // Forcer une mise à jour immédiate pour tous les joueurs
+          fetchGameData();
+        });
 
         // Retourner les nettoyeurs d'événements
         return {
           cleanupEvents: () => {
             socket.off('game:update', handleGameUpdate);
             socket.off('reconnect');
+            socket.off('game:force_refresh');
+            socket.off('game:next_round');
           }
         };
       } catch (socketError) {
@@ -603,7 +749,7 @@ export default function GameScreen() {
     }
     
     const validPhases = [GamePhase.RESULTS, GamePhase.VOTE];
-    if (!validPhases.includes(gameState.phase)) {
+    if (!validPhases.includes(gameState.phase as GamePhase)) {
       console.error(`❌ Tentative de passage au tour suivant dans une phase non autorisée: ${gameState.phase}`);
       Alert.alert(
         "Action impossible", 
@@ -631,6 +777,15 @@ export default function GameScreen() {
         if (response.data?.status === 'success') {
           console.log("✅ Passage au tour suivant réussi via HTTP");
           Alert.alert("Succès", "Passage au tour suivant effectué!");
+          
+          // Notifier les autres joueurs via WebSocket
+          try {
+            const { default: gameWebSocketService } = await import('@/services/gameWebSocketService');
+            await gameWebSocketService.notifyNextRound(id as string);
+            console.log("📣 Notification envoyée aux autres joueurs");
+          } catch (notifyError) {
+            console.warn("⚠️ Impossible de notifier les autres joueurs:", notifyError);
+          }
           
           // Forcer une mise à jour immédiate des données du jeu
           fetchGameData();
@@ -679,10 +834,48 @@ export default function GameScreen() {
     console.log(`🎮 Rendu de la phase: ${gameState.phase} (serveur: ${gameState.game?.currentPhase})`);
     console.log(`👤 État joueur: isTarget=${gameState.currentUserState?.isTargetPlayer}, hasVoted=${gameState.currentUserState?.hasVoted}`);
 
+    // Correction supplémentaire: utiliser PhaseManager pour s'assurer que la cible voit bien l'écran de vote
+    let correctedState = gameState;
+    if (gameState.game?.currentPhase === 'vote') {
+      // S'assurer que user?.id existe et le convertir explicitement en chaîne
+      const userId = user?.id ? String(user.id) : null;
+      
+      // Vérifie toutes les sources possibles d'ID cible
+      const mainTargetId = correctedState.currentQuestion?.targetPlayer?.id;
+      const backupTargetId = correctedState.targetPlayer?.id;
+      const socketTargetId = (correctedState as any)._targetPlayerId;
+      const rawTargetId = (correctedState as any).targetPlayerId;
+      
+      // Log détaillé des IDs pour debug
+      console.log(`🔎 [Vote] Sources d'ID cible disponibles:`, {
+        userId,
+        mainTargetId,
+        backupTargetId,
+        socketTargetId,
+        rawTargetId
+      });
+      
+      // Essaie chaque source d'ID cible tour à tour
+      if (userId && (
+        (mainTargetId && String(mainTargetId) === userId) ||
+        (backupTargetId && String(backupTargetId) === userId) ||
+        (socketTargetId && String(socketTargetId) === userId) ||
+        (rawTargetId && String(rawTargetId) === userId)
+      )) {
+        console.log(`🎯 Détection directe - Utilisateur ${userId} identifié comme cible du vote`);
+        correctedState.currentUserState.isTargetPlayer = true;
+      }
+      
+      // Si l'état a été modifié, afficher un log
+      if (correctedState !== gameState) {
+        console.log('🔄 État corrigé pour la phase vote - Nouveau isTarget:', correctedState.currentUserState?.isTargetPlayer);
+      }
+    }
+
     // Vérifier si la phase est valide
     const validPhases = Object.values(GamePhase);
-    if (!validPhases.includes(gameState.phase as GamePhase)) {
-      console.error(`❌ Phase inconnue détectée lors du rendu: ${gameState.phase}`);
+    if (!validPhases.includes(correctedState.phase as GamePhase)) {
+      console.error(`❌ Phase inconnue détectée lors du rendu: ${correctedState.phase}`);
       // Utiliser une phase de secours adaptée au contexte
       return (
         <View style={styles.waitingContainer}>
@@ -695,12 +888,12 @@ export default function GameScreen() {
     }
 
     // Ne pas autoriser de changement d'interface pendant la phase resultats
-    if (gameState.phase === GamePhase.RESULTS) {
+    if (correctedState.phase === GamePhase.RESULTS) {
       // Stocker les informations d'hôte au cas où la salle serait supprimée plus tard
-      if (gameState.game?.hostId) {
+      if (correctedState.game?.hostId) {
         try {
           AsyncStorage.setItem(`@game_host_${id}`, JSON.stringify({
-            hostId: String(gameState.game.hostId),
+            hostId: String(correctedState.game.hostId),
             timestamp: Date.now()
           }));
           console.log(`💾 Informations d'hôte stockées localement pour le jeu ${id}`);
@@ -711,27 +904,27 @@ export default function GameScreen() {
       
       return (
         <ResultsPhase 
-          answers={gameState.answers}
-          scores={gameState.scores}
-          players={gameState.players}
-          question={gameState.currentQuestion}
-          targetPlayer={gameState.targetPlayer}
+          answers={correctedState.answers}
+          scores={correctedState.scores}
+          players={correctedState.players}
+          question={correctedState.currentQuestion}
+          targetPlayer={correctedState.targetPlayer}
           onNextRound={handleNextRound}
-          isLastRound={gameState.currentRound >= gameState.totalRounds}
+          isLastRound={correctedState.currentRound >= correctedState.totalRounds}
           timer={null}
           gameId={id}
-          isTargetPlayer={gameState.currentUserState?.isTargetPlayer || false}
-          currentPhase={gameState.game?.currentPhase}
+          isTargetPlayer={correctedState.currentUserState?.isTargetPlayer || false}
+          currentPhase={correctedState.game?.currentPhase}
         />
       );
     }
 
-    switch (gameState.phase) {
+    switch (correctedState.phase) {
       case GamePhase.LOADING:
         return <LoadingOverlay message="Préparation de la partie" />;
           
       case GamePhase.QUESTION:
-        if (gameState.currentUserState?.isTargetPlayer) {
+        if (correctedState.currentUserState?.isTargetPlayer) {
           return (
             <View style={styles.waitingContainer}>
               <Text style={styles.messageTitle}>Cette question vous concerne !</Text>
@@ -745,14 +938,14 @@ export default function GameScreen() {
 
         return (
           <QuestionPhase 
-            question={gameState.currentQuestion}
-            targetPlayer={gameState.targetPlayer}
+            question={correctedState.currentQuestion}
+            targetPlayer={correctedState.targetPlayer}
             onSubmit={handleSubmitAnswer}
-            round={gameState.currentRound}
-            totalRounds={gameState.totalRounds}
+            round={correctedState.currentRound}
+            totalRounds={correctedState.totalRounds}
             timer={null}
             isSubmitting={isSubmitting}
-            hasAnswered={gameState.currentUserState?.hasAnswered}
+            hasAnswered={correctedState.currentUserState?.hasAnswered}
           />
         );
           
@@ -767,52 +960,57 @@ export default function GameScreen() {
         );
           
       case GamePhase.VOTE:
-        if (!gameState.currentQuestion) {
-          return <LoadingOverlay message="Chargement des données de vote..." />;
-        }
-        
-        const isTargetPlayer = Boolean(gameState.currentUserState?.isTargetPlayer);
-        const hasVoted = Boolean(gameState.currentUserState?.hasVoted);
-        
-        console.log(`🎯 Phase VOTE - Utilisateur ${user?.id} ${isTargetPlayer ? 'EST' : "n'est pas"} la cible. hasVoted=${hasVoted}`);
-        
+        console.log('🎯 [renderGamePhase] Phase VOTE:', {
+          currentUserState: gameState.currentUserState,
+          targetPlayer: gameState.targetPlayer,
+          currentQuestion: gameState.currentQuestion
+        });
+
+        // Vérifier si l'utilisateur actuel est le joueur cible
+        const isTargetPlayer = gameState.currentUserState?.isTargetPlayer || false;
+        const hasVoted = gameState.currentUserState?.hasVoted || false;
+
+        console.log('🔍 [renderGamePhase] État du vote:', {
+          userId: user?.id,
+          isTargetPlayer,
+          hasVoted,
+          targetPlayerId: gameState.targetPlayer?.id
+        });
+
         if (isTargetPlayer && !hasVoted) {
+          console.log('🎯 [renderGamePhase] Affichage de l\'écran de vote pour le joueur cible');
           return (
-            <View style={{ flex: 1 }}>
-              <Text style={{ color: 'white', fontSize: 18, textAlign: 'center', marginTop: 10, marginBottom: 10 }}>
-                C'est votre tour de voter!
+            <VotePhase
+              answers={gameState.answers || []}
+              question={gameState.currentQuestion}
+              targetPlayer={gameState.targetPlayer}
+              onVote={handleVote}
+              isSubmitting={isSubmitting}
+            />
+          );
+        } else {
+          console.log('⏳ [renderGamePhase] Affichage de l\'écran d\'attente pour les autres joueurs');
+          return (
+            <View style={styles.waitingContainer}>
+              <Text style={styles.messageTitle}>En attente du vote...</Text>
+              <Text style={styles.messageText}>
+                {gameState.targetPlayer?.name || 'Un joueur'} est en train de voter.
               </Text>
-              <VotePhase 
-                answers={gameState.answers}
-                question={gameState.currentQuestion}
-                onVote={handleVote}
-                timer={null}
-                isTargetPlayer={true}
-                hasVoted={false}
-                allPlayersVoted={gameState.allPlayersVoted}
+              <LoadingOverlay 
+                message="Attente du vote..."
+                showSpinner={true}
               />
             </View>
           );
         }
-        
-        return (
-          <VotePhase 
-            answers={gameState.answers}
-            question={gameState.currentQuestion}
-            onVote={handleVote}
-            timer={null}
-            isTargetPlayer={gameState.currentUserState?.isTargetPlayer || false}
-            hasVoted={gameState.currentUserState?.hasVoted || false}
-            allPlayersVoted={gameState.allPlayersVoted}
-          />
-        );
           
       case GamePhase.WAITING_FOR_VOTE:
+        // Utiliser le même écran d'attente doré que pour la phase VOTE
         return (
           <View style={styles.waitingContainer}>
-            <Text style={styles.waitingTitle}>C'est au tour de {gameState.targetPlayer?.name} de voter !</Text>
-            <Text style={styles.waitingText}>
-              {gameState.targetPlayer?.name} est en train de choisir sa réponse préférée.
+            <Text style={[styles.waitingTitle, { color: '#FFD700' }]}>C'est au tour de {correctedState.targetPlayer?.name} de voter !</Text>
+            <Text style={[styles.waitingText, { color: '#FFF0AD' }]}>
+              {correctedState.targetPlayer?.name} est en train de choisir sa réponse préférée.
             </Text>
             <LoadingOverlay 
               message="Attente du vote..."

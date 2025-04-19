@@ -3,7 +3,6 @@ import { Server } from 'socket.io'
 import { createAdapter } from '@socket.io/redis-adapter'
 import type { Server as HttpServer } from 'node:http'
 import redisProvider from '#providers/redis_provider'
-import type { Socket } from 'socket.io'
 import Game from '#models/game'
 import Room from '#models/room'
 

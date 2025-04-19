@@ -749,6 +749,35 @@ class SocketService {
 
     await connect();
   }
+
+  /**
+   * Enregistre un écouteur d'événements pour le canal spécifique du jeu
+   * @param event Nom de l'événement
+   * @param callback Fonction de rappel à exécuter
+   */
+  onGameEvent(event: string, callback: Function) {
+    if (!this.socket) {
+      throw new Error('Socket non initialisé. Appelez connect() d\'abord.');
+    }
+    
+    console.log(`🔌 [SocketService] Enregistrement de l'écouteur pour l'événement ${event}`);
+    this.socket.on(event, (data: any) => {
+      // Log générique pour tous les événements
+      console.log(`📡 [SocketService] Événement reçu: ${event}`, data);
+      
+      // Traitement spécial pour certains événements
+      if (event === 'game:update' && data.type === 'target_player_vote') {
+        // Mettre en évidence cet événement critique
+        console.log(`🎯🎯 [SocketService] Événement CIBLE détecté: targetPlayerId=${data.targetPlayerId}`, {
+          event,
+          type: data.type,
+          targetId: data.targetPlayerId
+        });
+      }
+      
+      callback(data);
+    });
+  }
 }
 
 // Création d'une instance unique
@@ -775,5 +804,6 @@ export default {
   leaveGameChannel: (gameId: string) => socketServiceInstance.leaveGameChannel(gameId),
   forcePhaseCheck: (gameId: string) => socketServiceInstance.forcePhaseCheck(gameId),
   cleanup: () => socketServiceInstance.cleanup(),
-  diagnose: () => socketServiceInstance.diagnose()
+  diagnose: () => socketServiceInstance.diagnose(),
+  onGameEvent: (event: string, callback: Function) => socketServiceInstance.onGameEvent(event, callback)
 };

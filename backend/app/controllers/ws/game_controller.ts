@@ -546,7 +546,16 @@ export default class GamesController {
             questionId: questionId,
             answers: answerData,
             instantTransition: true,
+            targetPlayer: {
+              id: targetPlayer.id,
+              username: targetPlayer.username,
+              displayName: targetPlayer.displayName,
+              avatar: targetPlayer.avatar,
+            },
           })
+
+          // Stocker l'ID du joueur cible dans le cache Redis
+          await Redis.setex(`game:${gameId}:target_player`, 300, targetPlayer.id)
         }
 
         // Notification générale du changement de phase

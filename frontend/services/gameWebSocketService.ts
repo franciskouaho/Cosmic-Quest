@@ -219,68 +219,64 @@ class GameWebSocketService {
   }
   
   /**
-   * Vérifie si l'utilisateur actuel est l'hôte de la partie
-   * Amélioration pour utiliser les infos en cache si disponibles
+   * Vérifie si l'utilisateur actuel est l'hôte du jeu
+   * @param gameId Identifiant du jeu
+   * @returns true si l'utilisateur est l'hôte, false sinon
    */
   async isUserHost(gameId: string): Promise<boolean> {
     try {
-      // Vérifier d'abord dans le cache en mémoire
-      const cachedState = this.gameStateCache.get(gameId)?.state;
+      // Vérifier d'abord si l'information est en cache
+      const cachedResult = await this.getHostInfoFromCache(gameId);
+      console.log(`🗄️ [GameWebSocket] Utilisation des informations d'hôte en cache pour ${gameId}: ${cachedResult !== null}`);
       
-      if (cachedState) {
-        const userId = await UserIdManager.getUserId();
-        if (!userId) {
-          console.error('❌ ID utilisateur non disponible');
-          return false;
-        }
-        
-        const isHost = String(cachedState.room?.hostId) === String(userId);
-        console.log(`🗄️ [GameWebSocket] Utilisation des informations d'hôte en cache pour ${gameId}: ${isHost}`);
-        return isHost;
+      if (cachedResult !== null) {
+        return cachedResult;
       }
       
-      // Si pas en cache, vérifier via AsyncStorage
-      try {
-        const cachedInfo = await AsyncStorage.getItem(`@game_host_${gameId}`);
-        if (cachedInfo) {
-          const { hostId, timestamp } = JSON.parse(cachedInfo);
-          const userId = await UserIdManager.getUserId();
-          
-          if (!userId) {
-            console.error('❌ ID utilisateur non disponible');
-            return false;
-          }
-          
-          // N'utiliser le cache que s'il est récent (5 minutes max)
-          if (Date.now() - timestamp < 5 * 60 * 1000) {
-            const isHost = String(hostId) === String(userId);
-            console.log(`🗄️ [GameWebSocket] Utilisation des informations d'hôte persistantes pour ${gameId}: ${isHost}`);
-            return isHost;
-          }
-        }
-      } catch (cacheError) {
-        console.warn(`⚠️ [GameWebSocket] Erreur lors de la lecture du cache:`, cacheError);
-      }
-      
-      // Si aucune information en cache, vérifier via le serveur
+      // Si pas en cache, vérifier via WebSocket
       const socket = await SocketService.getInstanceAsync();
-      return new Promise<boolean>((resolve) => {
-        const userId = UserIdManager.getUserId();
-        if (!userId) {
-          console.error('❌ ID utilisateur non disponible');
+      
+      // Utiliser une promesse pour attendre la réponse
+      return new Promise((resolve) => {
+        // Définir un timeout au cas où le serveur ne répond pas
+        const timeout = setTimeout(() => {
+          console.warn('⏱️ Timeout atteint pour la vérification d\'hôte');
           resolve(false);
-          return;
-        }
+        }, 5000);
         
-        socket.emit('game:check_host', { gameId, userId }, (response: any) => {
-          const isHost = response?.isHost || false;
-          console.log(`👑 [GameWebSocket] Résultat vérification hôte serveur pour ${gameId}: ${isHost}`);
-          resolve(isHost);
+        // Écouter la réponse une seule fois
+        socket.once('game:is_host_result', (result) => {
+          clearTimeout(timeout);
+          resolve(result.isHost);
         });
+        
+        // Envoyer la demande
+        socket.emit('game:check_is_host', { gameId });
       });
     } catch (error) {
-      console.error(`❌ [GameWebSocket] Erreur lors de la vérification d'hôte:`, error);
+      console.error('❌ Erreur lors de la vérification du statut d\'hôte:', error);
       return false;
+    }
+  }
+
+  /**
+   * Émet un événement pour notifier tous les joueurs d'un passage au tour suivant
+   * @param gameId Identifiant du jeu
+   * @returns Promise résolue lorsque l'événement est émis
+   */
+  async notifyNextRound(gameId: string): Promise<void> {
+    try {
+      const socket = await SocketService.getInstanceAsync();
+      
+      // Émettre l'événement pour notifier tous les joueurs
+      socket.emit('game:broadcast_next_round', { 
+        gameId,
+        timestamp: Date.now() 
+      });
+      
+      console.log(`🔄 Notification de passage au tour suivant émise pour le jeu ${gameId}`);
+    } catch (error) {
+      console.error('❌ Erreur lors de la notification de passage au tour suivant:', error);
     }
   }
 
@@ -521,6 +517,73 @@ class GameWebSocketService {
     } catch (error) {
       console.error(`❌ [GameWebSocket] Erreur lors du départ du jeu ${gameId}:`, error);
       this.joinedGames.delete(gameId);
+    }
+  }
+
+  /**
+   * Récupère les informations d'hôte depuis le cache
+   * @param gameId Identifiant du jeu
+   * @returns true si l'utilisateur est l'hôte, false sinon, ou null si pas en cache
+   */
+  async getHostInfoFromCache(gameId: string): Promise<boolean | null> {
+    try {
+      // Vérifier d'abord dans le cache en mémoire (si implémenté)
+      // Si le service possède un cache en mémoire
+      if (this.gameStateCache && this.gameStateCache.get) {
+        const cachedState = this.gameStateCache.get(gameId)?.state;
+        
+        if (cachedState && cachedState.room) {
+          const userId = await this.getUserId();
+          if (!userId) {
+            console.error('❌ ID utilisateur non disponible');
+            return false;
+          }
+          
+          const isHost = String(cachedState.room.hostId) === String(userId);
+          console.log(`🗄️ [GameWebSocket] Cache mémoire: Utilisateur ${userId} ${isHost ? 'EST' : 'N\'EST PAS'} l'hôte du jeu ${gameId}`);
+          return isHost;
+        }
+      }
+      
+      // Sinon, vérifier dans AsyncStorage
+      const cachedInfo = await AsyncStorage.getItem(`@game_host_${gameId}`);
+      if (cachedInfo) {
+        const { hostId, timestamp } = JSON.parse(cachedInfo);
+        const userId = await this.getUserId();
+        
+        if (!userId) {
+          console.error('❌ ID utilisateur non disponible');
+          return false;
+        }
+        
+        // N'utiliser le cache que s'il est récent (5 minutes max)
+        if (Date.now() - timestamp < 5 * 60 * 1000) {
+          const isHost = String(hostId) === String(userId);
+          console.log(`🗄️ [GameWebSocket] Cache persistant: Utilisateur ${userId} ${isHost ? 'EST' : 'N\'EST PAS'} l'hôte du jeu ${gameId}`);
+          return isHost;
+        }
+      }
+      
+      // Pas d'information en cache
+      return null;
+    } catch (error) {
+      console.warn('⚠️ Erreur lors de la récupération des informations d\'hôte en cache:', error);
+      return null;
+    }
+  }
+  
+  /**
+   * Récupère l'ID utilisateur depuis le service approprié
+   * @returns l'ID utilisateur ou null si non disponible
+   */
+  async getUserId(): Promise<string | null> {
+    try {
+      // Importer dynamiquement le gestionnaire d'ID utilisateur
+      const UserIdManager = (await import('@/utils/userIdManager')).default;
+      return await UserIdManager.getUserId();
+    } catch (error) {
+      console.error('❌ Erreur lors de la récupération de l\'ID utilisateur:', error);
+      return null;
     }
   }
 }

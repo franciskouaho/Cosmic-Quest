@@ -423,43 +423,42 @@ class GameService {
   }
 
   /**
-   * Passer au tour suivant via HTTP uniquement
+   * Change to the next round
+   * @param gameId Game ID
+   * @param forceAdvance Whether to force the advancement even if conditions are not met
+   * @returns Promise resolving to an API response
    */
   async nextRound(gameId: string, forceAdvance: boolean = false): Promise<any> {
+    console.log(`🔄 [ResultsPhase] Appel nextRound avec gameId: ${gameId}, forceAdvance: ${forceAdvance}`);
+    
+    // Version optimisée - tentative via HTTP directe
     try {
+      // Utiliser la méthode HTTP directe
       console.log(`🌐 Passage au tour suivant via HTTP direct pour le jeu ${gameId}`);
       
-      // Invalider immédiatement le cache pour forcer un rechargement après
-      this.gameStateCache.delete(gameId);
-      
-      // Récupérer l'ID utilisateur
       const userId = await UserIdManager.getUserId();
-      if (!userId) {
-        throw new Error("ID utilisateur non disponible");
-      }
       
-      // Faire la requête HTTP directement
-      const response = await api.post(`/games/${gameId}/next-round`, {
-        user_id: userId,
-        force_advance: forceAdvance
+      const response = await api.post(`/games/${gameId}/next-round`, { 
+        user_id: userId, 
+        force_advance: forceAdvance 
       }, {
-        headers: {
-          'X-Direct-Method': 'true'
-        },
-        timeout: 12000 // timeout plus long pour assurer une chance de succès
+        headers: { 'X-Direct-Method': 'true' }
       });
       
       console.log(`✅ Réponse du serveur pour passage au tour suivant:`, response.data);
       
-      if (response.data?.status === 'success') {
-        // Forcer un rafraîchissement des données après un court délai
-        setTimeout(() => this.getGameState(gameId, 0, 1, true), 800);
-        return response.data;
-      } else {
-        throw new Error(response.data?.message || "Échec du passage au tour suivant");
+      // Notifier les autres joueurs via WebSocket
+      try {
+        const gameWebSocketService = (await import('@/services/gameWebSocketService')).default;
+        await gameWebSocketService.notifyNextRound(gameId);
+      } catch (wsError) {
+        console.warn('⚠️ Impossible de notifier les autres joueurs via WebSocket:', wsError);
+        // Ne pas bloquer si la notification échoue
       }
+      
+      return response.data;
     } catch (error) {
-      console.error(`❌ Erreur lors du passage au tour suivant:`, error);
+      console.error('❌ Erreur lors du passage au tour suivant (HTTP):', error);
       throw error;
     }
   }

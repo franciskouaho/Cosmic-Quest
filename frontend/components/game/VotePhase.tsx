@@ -65,18 +65,35 @@ const VotePhase: React.FC<VotePhaseProps> = ({
     );
   }
 
-  // Si l'utilisateur n'est pas la cible, ou a déjà voté, afficher un message d'attente
-  if (!isTargetPlayer || hasVoted) {
-    console.log(`🎮 VotePhase: Affichage du message d'attente - isTargetPlayer=${isTargetPlayer}, hasVoted=${hasVoted}`);
+  // Si l'utilisateur a déjà voté, afficher un message d'attente
+  if (hasVoted) {
+    console.log(`🎮 VotePhase: Affichage du message d'attente - utilisateur a déjà voté`);
     return (
       <View style={styles.messageContainer}>
-        <Text style={styles.messageTitle}>
-          {hasVoted ? "Vote enregistré !" : "En attente du vote"}
-        </Text>
+        <Text style={styles.messageTitle}>Vote enregistré !</Text>
         <Text style={styles.messageText}>
-          {hasVoted 
-            ? "Votre vote a été enregistré. Attendons que tout le monde termine." 
-            : "Attendez que la personne ciblée vote pour sa réponse préférée."}
+          Votre vote a été enregistré. Attendons que tout le monde termine.
+        </Text>
+        {timer && (
+          <View style={styles.timerWrapper}>
+            <GameTimer 
+              duration={timer.duration}
+              startTime={timer.startTime}
+            />
+          </View>
+        )}
+      </View>
+    );
+  }
+  
+  // Si l'utilisateur n'est pas la cible et qu'il n'y a pas de réponses à voter, afficher un message d'attente
+  if (!isTargetPlayer && votableAnswers.length === 0) {
+    console.log(`🎮 VotePhase: Affichage du message d'attente - non-cible sans réponses`);
+    return (
+      <View style={styles.messageContainer}>
+        <Text style={styles.messageTitle}>En attente du vote</Text>
+        <Text style={styles.messageText}>
+          Attendez que la personne ciblée vote pour sa réponse préférée.
         </Text>
         {timer && (
           <View style={styles.timerWrapper}>
@@ -91,7 +108,7 @@ const VotePhase: React.FC<VotePhaseProps> = ({
   }
 
   // Cas où l'utilisateur est la cible mais n'a pas encore de réponses à évaluer
-  if (votableAnswers.length === 0) {
+  if (isTargetPlayer && votableAnswers.length === 0) {
     console.log(`🎮 VotePhase: Aucune réponse votable - isTargetPlayer=${isTargetPlayer}, answers=${answers.length}, votableAnswers=${votableAnswers.length}`);
     return (
       <View style={styles.messageContainer}>
@@ -118,14 +135,16 @@ const VotePhase: React.FC<VotePhaseProps> = ({
         </View>
       )}
 
-      <View style={styles.targetMessageContainer}>
-        <Text style={styles.targetMessage}>
-          Cette question vous concerne. Vous devez choisir votre réponse préférée!
-        </Text>
-        <Text style={styles.targetMessageHighlight}>
-          Votez maintenant ou le jeu passera automatiquement au tour suivant!
-        </Text>
-      </View>
+      {isTargetPlayer && (
+        <View style={styles.targetMessageContainer}>
+          <Text style={styles.targetMessage}>
+            Cette question vous concerne. Vous devez choisir votre réponse préférée!
+          </Text>
+          <Text style={styles.targetMessageHighlight}>
+            Votez maintenant ou le jeu passera automatiquement au tour suivant!
+          </Text>
+        </View>
+      )}
       
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.questionCard}>
@@ -137,7 +156,9 @@ const VotePhase: React.FC<VotePhaseProps> = ({
           </LinearGradient>
         </View>
 
-        <Text style={styles.sectionTitle}>Les réponses des autres joueurs</Text>
+        <Text style={styles.sectionTitle}>
+          {isTargetPlayer ? "Les réponses des autres joueurs" : "Choisissez votre réponse préférée"}
+        </Text>
 
         {votableAnswers.length > 0 ? (
           votableAnswers.map((answer) => (
