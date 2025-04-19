@@ -331,10 +331,13 @@ export default class GamesController {
         })
       }
 
-      // SOLUTION: ACCEPTER LES RÉPONSES DANS N'IMPORTE QUELLE PHASE
-      // Au lieu de vérifier la phase, nous allons accepter les réponses quelle que soit la phase
-      // Cela permet aux joueurs de rattraper leur retard s'ils ont eu des problèmes de connexion
-      console.log(`🎮 [submitAnswer] Acceptation de la réponse dans la phase ${game.currentPhase}`)
+      // Vérifier que nous sommes en phase de réponse ou question
+      if (game.currentPhase !== 'answer' && game.currentPhase !== 'question') {
+        console.error(`❌ [submitAnswer] Phase incorrecte: ${game.currentPhase}`)
+        return response.badRequest({
+          error: "Ce n'est pas le moment de répondre",
+        })
+      }
 
       // Récupérer la question actuelle
       console.log(
@@ -356,28 +359,35 @@ export default class GamesController {
         `🎮 [submitAnswer] Question trouvée: ID=${question.id}, target=${question.targetPlayerId}`
       )
 
-      // Vérifier que l'utilisateur n'est pas la cible de la question (il ne peut pas répondre à sa propre question)
+      // Vérifier si l'utilisateur est la cible de la question
       if (question.targetPlayerId === user.id) {
-        console.error(
-          `❌ [submitAnswer] L'utilisateur est la cible: User=${user.id}, Target=${question.targetPlayerId}`
-        )
-        return response.badRequest({
-          error: 'Vous êtes la cible de cette question et ne pouvez pas y répondre',
-          code: 'TARGET_PLAYER_CANNOT_ANSWER',
-        })
+        return { error: 'Vous ne pouvez pas répondre à votre propre question' }
       }
 
-      // Vérifier que l'utilisateur n'a pas déjà répondu
+      // Vérifier si l'utilisateur a déjà répondu
       const existingAnswer = await Answer.query()
         .where('question_id', question.id)
         .where('user_id', user.id)
         .first()
 
       if (existingAnswer) {
-        console.error(`❌ [submitAnswer] L'utilisateur a déjà répondu: Answer=${existingAnswer.id}`)
-        return response.conflict({
-          error: 'Vous avez déjà répondu à cette question',
-        })
+        return { error: 'Vous avez déjà répondu à cette question' }
+      }
+
+      // Vérifier si tous les joueurs ont répondu
+      const gameRoom = await Room.find(game.roomId)
+      const roomPlayers = gameRoom ? await gameRoom.related('players').query() : []
+
+      // Calculer le nombre de joueurs qui peuvent répondre (tous sauf la cible)
+      const eligiblePlayersCount = roomPlayers.length - 1
+
+      const answerCount = await Answer.query()
+        .where('question_id', question.id)
+        .count('* as total')
+        .first()
+
+      if (answerCount && Number(answerCount.$extras.total) >= eligiblePlayersCount) {
+        return { error: 'Tous les joueurs ont déjà répondu à cette question' }
       }
 
       // S'assurer que le payload.content est une chaîne de caractères
@@ -403,10 +413,6 @@ export default class GamesController {
         })
 
         console.log(`✅ [submitAnswer] Réponse créée avec succès: ID=${answer.id}`)
-
-        // Récupérer la salle pour les événements WebSocket
-        const gameRoom = await Room.find(game.roomId)
-        const gamePlayers = gameRoom ? await gameRoom.related('players').query() : []
 
         const hasVotes = await Vote.query()
           .where('question_id', question.id)
@@ -481,14 +487,14 @@ export default class GamesController {
 
       // Récupérer la salle et les joueurs
       const gameRoom = await Room.find(game.roomId)
-      const gamePlayers = gameRoom ? await gameRoom.related('players').query() : []
+      const roomPlayers = gameRoom ? await gameRoom.related('players').query() : []
 
       // Compter les réponses existantes pour cette question
       const answersCount = await Answer.query().where('question_id', questionId).count('* as count')
       const count = Number.parseInt(answersCount[0].$extras.count || '0', 10)
 
       // Calculer combien de joueurs peuvent répondre (tous sauf la cible)
-      const nonTargetPlayers = gamePlayers.filter(
+      const nonTargetPlayers = roomPlayers.filter(
         (player) => player.id !== question.targetPlayerId
       ).length
 
@@ -510,7 +516,7 @@ export default class GamesController {
         const io = socketService.getInstance()
 
         // Trouver le joueur cible pour lui envoyer une notification spéciale
-        const targetPlayer = gamePlayers.find((player) => player.id === question.targetPlayerId)
+        const targetPlayer = roomPlayers.find((player) => player.id === question.targetPlayerId)
 
         if (targetPlayer) {
           console.log(
@@ -926,88 +932,24 @@ export default class GamesController {
           })
         }
 
-        // CORRECTION: Vérifier plus précisément l'état actuel
-        const currentQuestion = await Question.query()
-          .where('game_id', gameId)
-          .where('round_number', game.currentRound)
-          .first()
-
-        console.log('❓ [nextRound] Question actuelle:', {
-          questionId: currentQuestion?.id,
-          roundNumber: game.currentRound,
-        })
-
-        const hasVotes = await Vote.query()
-          .where('question_id', currentQuestion?.id)
-          .count('* as count')
-          .first()
-
-        console.log('🗳️ [nextRound] État des votes:', {
-          hasVotes: hasVotes?.$extras.count,
-          questionId: currentQuestion?.id,
-        })
-
-        // Vérifier que tous les joueurs ont répondu (sauf le joueur cible)
-        if (!currentQuestion) {
-          return response.badRequest({ error: 'Aucune question en cours' })
-        }
-
-        // Récupérer toutes les réponses pour la question actuelle
-        const answers = await Answer.query()
-          .where('question_id', currentQuestion.id)
-          .count('* as total')
-          .first()
-
-        if (!game.room) {
-          return response.badRequest({ error: 'Aucune salle associée à la partie' })
-        }
-
-        // Calculer le nombre de joueurs qui peuvent répondre (tous sauf la cible)
-        const expectedAnswers = game.room.players.length - 1
-        const receivedAnswers = Number(answers?.$extras.total || 0)
-
-        console.log(
-          `🔍 [nextRound] Vérification des réponses:`,
-          `\n- Nombre total de joueurs: ${game.room.players.length}`,
-          `\n- Joueur cible: ${currentQuestion.targetPlayerId}`,
-          `\n- Réponses attendues: ${expectedAnswers}`,
-          `\n- Réponses reçues: ${receivedAnswers}`
-        )
-
-        if (receivedAnswers !== expectedAnswers) {
-          console.log(
-            `❌ [nextRound] Pas toutes les réponses reçues. Attendu: ${expectedAnswers}, Reçu: ${receivedAnswers}`
-          )
-          return response.badRequest({
-            error: 'Tous les joueurs doivent avoir répondu avant de passer au tour suivant',
-            details: {
-              expectedAnswers,
-              receivedAnswers,
-              targetPlayerId: currentQuestion.targetPlayerId,
-            },
-          })
-        }
-
-        // Vérifier que l'utilisateur est l'hôte ou la cible
-        const isHost = room.hostId === user.id
-        const isTarget = game.targetPlayerId === user.id
+        // Vérifier que l'utilisateur est l'hôte
+        const isHost = String(room.hostId) === String(user.id)
 
         console.log('👑 [nextRound] Vérification des droits:', {
           userId: user.id,
           hostId: room.hostId,
-          targetId: game.targetPlayerId,
           isHost,
-          isTarget,
+          userIdType: typeof user.id,
+          hostIdType: typeof room.hostId,
         })
 
-        if (!isHost && !isTarget) {
+        if (!isHost) {
           console.log('❌ [nextRound] Droits insuffisants:', {
             userId: user.id,
             hostId: room.hostId,
-            targetId: game.targetPlayerId,
           })
           return response.unauthorized({
-            error: "Seul l'hôte ou la cible peut passer au tour suivant",
+            error: "Seul l'hôte peut passer au tour suivant",
           })
         }
 
@@ -1017,19 +959,8 @@ export default class GamesController {
         console.log(`👑 [nextRound] Vérification des droits:
           - User ID: ${user.id} (${typeof user.id})
           - Host ID: ${room.hostId} (${typeof room.hostId})
-          - Target ID: ${currentQuestion?.targetPlayerId} (${typeof currentQuestion?.targetPlayerId})
           - Est hôte: ${isHost}
-          - Est cible: ${isTarget}
         `)
-
-        if (!isHost && !isTarget) {
-          console.error(
-            `❌ [nextRound] L'utilisateur n'est ni l'hôte ni la cible: User=${user.id}, Hôte=${room.hostId}, Cible=${currentQuestion?.targetPlayerId}`
-          )
-          return response.forbidden({
-            error: "Seul l'hôte ou la cible peut passer au tour suivant",
-          })
-        }
 
         const io = socketService.getInstance()
 
@@ -1049,7 +980,7 @@ export default class GamesController {
           room.endedAt = DateTime.now()
           await room.save()
 
-          // Mettre à jour les statistiques des joueurs (parties jouées, etc.)
+          // Mettre à jour les statistiques des joueurs
           await this.updatePlayerStats(room.id, game)
 
           // Notifier tous les joueurs de la fin de partie
@@ -1126,27 +1057,7 @@ export default class GamesController {
                 displayName: targetPlayer.displayName,
               },
             },
-            // Supprimer le timer pour rendre le jeu instantané
             instantTransition: true,
-          })
-
-          // Notification avec confirmation
-          io.to(`game:${gameId}`).emit('game:update', {
-            type: 'phase_changed',
-            newPhase: 'question',
-            round: game.currentRound,
-          })
-
-          // Forcer une mise à jour immédiate de l'état pour tous les joueurs
-          io.to(`game:${gameId}`).emit('game:force_refresh', {
-            message: 'Nouveau tour démarré',
-            round: game.currentRound,
-            phase: 'question',
-            targetPlayer: {
-              id: targetPlayer.id,
-              username: targetPlayer.username,
-              displayName: targetPlayer.displayName,
-            },
           })
 
           return {

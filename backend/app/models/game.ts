@@ -26,13 +26,7 @@ export default class Game extends BaseModel {
   declare status: 'in_progress' | 'completed'
 
   @column({ columnName: 'game_mode' })
-  declare gameMode:
-    | 'standard'
-    | 'crazy'
-    | 'fun'
-    | 'dark'
-    | 'personal'
-    | 'on-ecoute-mais-on-ne-juge-pas'
+  declare gameMode: 'standard' | 'crazy' | 'fun' | 'dark' | 'personal'
 
   @column({ columnName: 'current_target_player_id' })
   declare currentTargetPlayerId: number | null
@@ -47,10 +41,8 @@ export default class Game extends BaseModel {
   declare questions: HasMany<typeof Question>
 
   @manyToMany(() => User, {
-    pivotTable: 'room_players',
-    pivotColumns: ['is_ready', 'score', 'joined_at', 'left_at'],
-    relatedKey: 'user_id',
-    foreignKey: 'room_id',
+    pivotTable: 'game_players',
+    pivotColumns: ['score'],
   })
   declare players: ManyToMany<typeof User>
 

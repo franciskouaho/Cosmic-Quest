@@ -519,9 +519,9 @@ export default class RoomsController {
           `✅ Première question générée pour le jeu ${game.id} avec le joueur cible ${targetPlayer.id}`
         )
 
-        // Définir les durées pour chaque phase - TOUTES RÉDUITES À 1 SECONDE
-        const questionPhaseDuration = 1 // Réduit à 1s
-        const answerPhaseDuration = 1 // Réduit à 1s
+        // Définir les durées pour chaque phase
+        const questionPhaseDuration = 10 // Augmenté à 10s
+        const answerPhaseDuration = 30 // Augmenté à 30s
         const io = socketService.getInstance()
 
         // Notifier les clients du début de la phase question

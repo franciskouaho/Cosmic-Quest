@@ -16,6 +16,7 @@ export default class extends BaseSchema {
       table.integer('answer_id').unsigned().references('id').inTable('answers').onDelete('CASCADE')
 
       table.timestamp('created_at', { useTz: true }).notNullable()
+      table.timestamp('updated_at', { useTz: true }).nullable()
 
       // Un joueur ne peut voter qu'une fois par question
       table.unique(['question_id', 'voter_id'])

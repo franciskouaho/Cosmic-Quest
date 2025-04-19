@@ -229,7 +229,12 @@ class GameWebSocketService {
       
       if (cachedState) {
         const userId = await UserIdManager.getUserId();
-        const isHost = String(cachedState.game?.hostId) === String(userId);
+        if (!userId) {
+          console.error('❌ ID utilisateur non disponible');
+          return false;
+        }
+        
+        const isHost = String(cachedState.room?.hostId) === String(userId);
         console.log(`🗄️ [GameWebSocket] Utilisation des informations d'hôte en cache pour ${gameId}: ${isHost}`);
         return isHost;
       }
@@ -240,6 +245,11 @@ class GameWebSocketService {
         if (cachedInfo) {
           const { hostId, timestamp } = JSON.parse(cachedInfo);
           const userId = await UserIdManager.getUserId();
+          
+          if (!userId) {
+            console.error('❌ ID utilisateur non disponible');
+            return false;
+          }
           
           // N'utiliser le cache que s'il est récent (5 minutes max)
           if (Date.now() - timestamp < 5 * 60 * 1000) {
@@ -255,8 +265,17 @@ class GameWebSocketService {
       // Si aucune information en cache, vérifier via le serveur
       const socket = await SocketService.getInstanceAsync();
       return new Promise<boolean>((resolve) => {
-        socket.emit('game:check_host', { gameId }, (response: any) => {
-          resolve(response?.isHost || false);
+        const userId = UserIdManager.getUserId();
+        if (!userId) {
+          console.error('❌ ID utilisateur non disponible');
+          resolve(false);
+          return;
+        }
+        
+        socket.emit('game:check_host', { gameId, userId }, (response: any) => {
+          const isHost = response?.isHost || false;
+          console.log(`👑 [GameWebSocket] Résultat vérification hôte serveur pour ${gameId}: ${isHost}`);
+          resolve(isHost);
         });
       });
     } catch (error) {
@@ -392,14 +411,14 @@ class GameWebSocketService {
             });
             
             // Stocker les informations d'hôte si disponibles
-            if (response.data?.game?.hostId) {
-              this.storeHostInfo(gameId, response.data.game.hostId);
+            if (response.data?.room?.hostId) {
+              this.storeHostInfo(gameId, response.data.room.hostId);
             }
             
             // Mettre à jour le timestamp de phase
-            if (response.data?.game?.currentPhase) {
+            if (response.data?.room?.currentPhase) {
               this.phaseChangeTimestamps.set(gameId, {
-                phase: response.data.game.currentPhase,
+                phase: response.data.room.currentPhase,
                 timestamp: Date.now()
               });
             }

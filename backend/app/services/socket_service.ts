@@ -3,6 +3,9 @@ import { Server } from 'socket.io'
 import { createAdapter } from '@socket.io/redis-adapter'
 import type { Server as HttpServer } from 'node:http'
 import redisProvider from '#providers/redis_provider'
+import type { Socket } from 'socket.io'
+import Game from '#models/game'
+import Room from '#models/room'
 
 export class SocketService {
   private io: Server | null = null
@@ -111,6 +114,56 @@ export class SocketService {
 
         // Envoyer un événement de confirmation pour tester la connexion
         socket.emit('connection:success', { message: 'Connexion WebSocket établie avec succès' })
+
+        // Gestionnaire pour la vérification de l'hôte
+        socket.on(
+          'game:check_host',
+          async (data: { gameId: string | number; userId: string | number }, callback) => {
+            try {
+              const { gameId, userId } = data
+
+              if (!gameId || !userId) {
+                console.error("❌ [WebSocket] Paramètres manquants pour la vérification de l'hôte")
+                if (typeof callback === 'function') {
+                  callback({ isHost: false, error: 'Paramètres manquants' })
+                }
+                return
+              }
+
+              const game = await Game.find(gameId)
+              if (!game) {
+                console.error(`❌ [WebSocket] Jeu ${gameId} non trouvé`)
+                if (typeof callback === 'function') {
+                  callback({ isHost: false, error: 'Jeu non trouvé' })
+                }
+                return
+              }
+
+              const room = await Room.find(game.roomId)
+              if (!room) {
+                console.error(`❌ [WebSocket] Salle non trouvée pour le jeu ${gameId}`)
+                if (typeof callback === 'function') {
+                  callback({ isHost: false, error: 'Salle non trouvée' })
+                }
+                return
+              }
+
+              const isHost = String(room.hostId) === String(userId)
+              console.log(
+                `👑 [WebSocket] Vérification hôte: hostId=${room.hostId}, userId=${userId}, isHost=${isHost}`
+              )
+
+              if (typeof callback === 'function') {
+                callback({ isHost })
+              }
+            } catch (error) {
+              console.error("❌ [WebSocket] Erreur lors de la vérification de l'hôte:", error)
+              if (typeof callback === 'function') {
+                callback({ isHost: false, error: 'Erreur serveur' })
+              }
+            }
+          }
+        )
 
         // Gestion des salles
         socket.on('join-room', (data) => {

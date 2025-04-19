@@ -42,6 +42,44 @@ export default function GameScreen() {
   const [loadingError, setLoadingError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   
+  const determineEffectivePhase = (serverPhase: string, serverRound: number, currentUser: any): string => {
+    console.log('Détermination de la phase effective:', {
+      serverPhase,
+      serverRound,
+      currentUser,
+      currentRound: gameState.currentRound,
+      phase: gameState.phase
+    })
+
+    // Si le serveur est en phase de question et que c'est le tour du joueur actuel
+    if (serverPhase === 'question' && serverRound === currentUser?.currentRound) {
+      console.log('Phase de question détectée pour le joueur actuel')
+      return 'question'
+    }
+
+    // Si le serveur est en phase de réponse et que c'est le tour du joueur actuel
+    if (serverPhase === 'answer' && serverRound === currentUser?.currentRound) {
+      console.log('Phase de réponse détectée pour le joueur actuel')
+      return 'answer'
+    }
+
+    // Si le serveur est en phase de vote
+    if (serverPhase === 'vote') {
+      console.log('Phase de vote détectée')
+      return 'vote'
+    }
+
+    // Si le serveur est en phase de résultats
+    if (serverPhase === 'results') {
+      console.log('Phase de résultats détectée')
+      return 'results'
+    }
+
+    // Par défaut, utiliser la phase du serveur
+    console.log('Utilisation de la phase du serveur par défaut:', serverPhase)
+    return serverPhase
+  }
+
   const fetchGameData = useCallback(async () => {
     try {
       console.log(`🎮 Récupération des données du jeu ${id}...`);
@@ -126,22 +164,10 @@ export default function GameScreen() {
       }
 
       // Déterminer la phase effective en fonction de l'état du jeu et du joueur
-      const determineEffectivePhase = (serverPhase: string, isTarget: boolean, hasAnswered: boolean, hasVoted: boolean): GamePhase => {
-        console.log(`🎮 Détermination phase - Serveur: ${serverPhase}, isTarget: ${isTarget}, hasAnswered: ${hasAnswered}, hasVoted: ${hasVoted}`);
-      
-        return PhaseManager.determineEffectivePhase(
-          serverPhase,
-          isTarget,
-          hasAnswered,
-          hasVoted
-        ) as GamePhase;
-      };
-
       const effectivePhase = determineEffectivePhase(
         gameData.game.currentPhase,
-        isTargetPlayer,
-        gameData.currentUserState?.hasAnswered || false,
-        gameData.currentUserState?.hasVoted || false
+        gameData.game.currentRound,
+        gameData.players?.find((p: any) => p.id === user?.id)
       );
 
       // Afficher un log détaillé pour le débogage
@@ -273,9 +299,8 @@ export default function GameScreen() {
                 ...prev,
                 phase: PhaseManager.determineEffectivePhase(
                   'question',
-                  data.question?.targetPlayer?.id === String(user?.id),
-                  false,
-                  false
+                  data.round,
+                  data.question?.targetPlayer?.id === String(user?.id)
                 ) as GamePhase,
                 currentRound: data.round,
                 currentQuestion: data.question,

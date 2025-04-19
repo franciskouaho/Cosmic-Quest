@@ -46,6 +46,11 @@ export class PhaseManager {
         console.log(`🎯 [PhaseManager] Cible a déjà voté`);
         return 'waiting';
       }
+      // La cible ne peut jamais être en phase answer
+      if (serverPhase === 'answer') {
+        console.log(`🎯 [PhaseManager] Cible ne peut pas être en phase answer`);
+        return 'waiting';
+      }
       console.log(`🎯 [PhaseManager] Cible en attente`);
       return 'waiting';
     }
@@ -58,14 +63,19 @@ export class PhaseManager {
         return hasAnswered ? 'waiting' : 'question';
       case 'answer':
         console.log(`📝 [PhaseManager] Phase answer - hasAnswered: ${hasAnswered}`);
-        return hasAnswered ? 'waiting' : 'question';
+        return hasAnswered ? 'waiting' : 'answer';
       case 'vote':
         if (hasVoted) {
           console.log(`🗳️ [PhaseManager] Joueur a déjà voté`);
           return 'waiting';
         }
-        console.log(`🗳️ [PhaseManager] Phase vote - hasAnswered: ${hasAnswered}`);
-        return hasAnswered ? 'vote' : 'waiting_for_vote';
+        // Un joueur ne peut voter que s'il a répondu
+        if (!hasAnswered) {
+          console.log(`🗳️ [PhaseManager] Joueur n'a pas répondu, ne peut pas voter`);
+          return 'waiting_for_vote';
+        }
+        console.log(`🗳️ [PhaseManager] Phase vote - Joueur peut voter`);
+        return 'vote';
       default:
         console.log(`❓ [PhaseManager] Phase inconnue: ${serverPhase}`);
         return serverPhase;
@@ -102,11 +112,11 @@ export class PhaseManager {
       'results': ['question']
     };
     
-    // Permettre certaines transitions de récupération
+    // Ne plus autoriser les transitions non standard
     if ((fromPhase === 'question' && toPhase === 'results') ||
         (fromPhase === 'vote' && toPhase === 'question')) {
-      console.warn(`⚠️ Autorisation d'une transition non standard mais récupérable: ${fromPhase} -> ${toPhase}`);
-      return true;
+      console.error(`❌ [PhaseManager] Transition non standard rejetée: ${fromPhase} -> ${toPhase}`);
+      return false;
     }
     
     return validTransitions[fromPhase]?.includes(toPhase) || false;
